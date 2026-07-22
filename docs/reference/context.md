@@ -586,6 +586,47 @@ history = memory.get_conversation_history(conversation_id="conv_001", max_items=
 | `max_memory_size` | `int` | `10000` | Max items before LRU eviction |
 | `retention_policy` | `str` | `"unlimited"` | `"N_days"` (e.g. `"30_days"`) or `"unlimited"` |
 
+### Markdown Round Trips
+
+`AgentMemory` can export human-editable Markdown and import the edited files back.
+Each file contains one memory item, with required metadata in YAML frontmatter and
+the memory content in the Markdown body:
+
+```markdown
+---
+id: mem_compliance_rule
+created_at: '2026-07-22T09:00:00+00:00'
+updated_at: '2026-07-22T10:30:00+00:00'
+type: compliance
+tags:
+- trading
+- approval
+---
+
+All trades must be pre-approved.
+```
+
+```python
+from pathlib import Path
+
+# A single selected memory can be returned as Markdown text.
+document = memory.export(format="markdown", type="compliance")
+
+# Export a memory set as one stable Markdown file per item.
+memory.export(format="markdown", destination="memory_export/")
+
+# New IDs create memories; existing IDs are updated in place.
+count = memory.import_data(Path("memory_export/"), format="markdown")
+```
+
+The required frontmatter fields are `id`, `created_at`, `updated_at`, and either
+`type` or `kind`. Optional metadata can be edited at the top level. Imports reject
+malformed or duplicate fields before changing memory, and re-importing unchanged
+files is idempotent. Memory-local `entities` and `relationships` are preserved as
+provenance but are not applied to `ContextGraph` by Markdown import. Use a dedicated
+export directory: matching files are overwritten, but unrelated or stale Markdown
+files are not deleted automatically.
+
 
 ## PolicyEngine
 
