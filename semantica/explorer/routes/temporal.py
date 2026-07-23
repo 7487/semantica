@@ -117,7 +117,7 @@ async def temporal_patterns(
         return TemporalPatternResponse(patterns=[])
     except Exception as exc:
         logger.warning("temporal_patterns failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Temporal pattern detection failed")
 
 
 @router.get("/bounds", response_model=TemporalBoundsResponse)

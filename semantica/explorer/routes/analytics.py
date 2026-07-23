@@ -5,7 +5,7 @@ Analytics routes for graph metrics and validation.
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from ..dependencies import get_session
 from ..schemas import AnalyticsResponse, ValidationIssue, ValidationReportResponse
