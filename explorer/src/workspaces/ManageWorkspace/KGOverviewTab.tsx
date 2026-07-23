@@ -163,11 +163,7 @@ export function KGOverviewTab() {
         </button>
       </div>
 
-      {error && (
-        <div style={{ margin: "12px 22px", padding: "10px 14px", borderRadius: "var(--ws-radius-sm)", background: "var(--ws-red-soft)", border: "1px solid rgba(255,123,114,0.28)", color: "#fca5a5", fontSize: 13 }}>
-          {error}
-        </div>
-      )}
+
 
       <div className="ws-scroll" style={{ flex: 1, padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
         {/* Stat cards */}

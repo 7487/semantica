@@ -72,11 +72,9 @@ export function SparqlWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
       });
-      if (!res.ok && res.status !== 400 && res.status !== 500) {
-         // Some specific errors may return 400/500 with JSON payload
-         if (!res.headers.get("content-type")?.includes("application/json")) {
-           throw new Error(`HTTP ${res.status}`);
-         }
+      if (!res.headers.get("content-type")?.includes("application/json")) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text.substring(0, 100)}`);
       }
       const data = await res.json();
       if (res.status === 207) {
@@ -96,8 +94,9 @@ export function SparqlWorkspace() {
         }]);
       }
       setResult(data);
-    } catch {
-      setResult({ error: "Network error — could not reach the SPARQL endpoint." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Network error — could not reach the SPARQL endpoint.";
+      setResult({ error: msg });
     } finally {
       setIsLoading(false);
     }

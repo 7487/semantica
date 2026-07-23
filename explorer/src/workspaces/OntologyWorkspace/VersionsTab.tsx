@@ -51,6 +51,7 @@ export function VersionsTab() {
 
   const loadVersions = useCallback(async () => {
     if (!ontologyUri) return;
+    setError("");
     try {
       const response = await fetch(`/api/ontology/versions/${encodeURIComponent(ontologyUri)}`);
       if (response.ok) {
@@ -66,6 +67,7 @@ export function VersionsTab() {
   }, [ontologyUri]);
 
   const loadProposals = useCallback(async () => {
+    setError("");
     try {
       const response = await fetch("/api/ontology/proposals");
       if (response.ok) {

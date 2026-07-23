@@ -330,6 +330,7 @@ function SchemePanel({
   useEffect(() => {
     if (!expanded) return;
     setLoading(true);
+    setError("");
     fetch(`/api/vocabulary/hierarchy?scheme=${encodeURIComponent(scheme.uri)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);

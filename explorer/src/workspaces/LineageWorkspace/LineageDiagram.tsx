@@ -54,6 +54,7 @@ export function LineageDiagram() {
 
   useEffect(() => {
     if (!activeId) {
+      setError("");
       setNodes([]);
       setEdges([]);
       return;
@@ -66,6 +67,7 @@ export function LineageDiagram() {
     ];
 
     const fetchLineage = async () => {
+      setError("");
       try {
         const res = await fetch("/api/provenance?node_id=" + encodeURIComponent(activeId));
 

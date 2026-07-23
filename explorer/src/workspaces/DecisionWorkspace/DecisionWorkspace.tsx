@@ -100,6 +100,7 @@ export function DecisionWorkspace() {
   useEffect(() => {
     const ctrl = new AbortController();
     setListLoading(true);
+    setError("");
     fetch("/api/decisions", { signal: ctrl.signal })
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -135,6 +136,7 @@ export function DecisionWorkspace() {
     setSelected(d);
     setChainLoading(true);
     setChain([]);
+    setError("");
     try {
       const res = await fetch(`/api/decisions/${encodeURIComponent(d.decision_id)}/chain`, { signal: ctrl.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
