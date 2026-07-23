@@ -1,11 +1,11 @@
-﻿"""
+"""
 Analytics routes for graph metrics and validation.
 """
 
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, Response
 
 from ..dependencies import get_session
 from ..schemas import AnalyticsResponse, ValidationIssue, ValidationReportResponse
@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api/analytics", tags=["Analytics"])
 
 @router.get("", response_model=AnalyticsResponse)
 async def get_analytics(
+    response: Response,
     metrics: Optional[str] = Query(
         None,
         description="Comma-separated metrics to compute: centrality,community,connectivity",
@@ -25,6 +26,7 @@ async def get_analytics(
     requested = set((metrics or "centrality,community,connectivity").split(","))
     graph_dict = await asyncio.to_thread(session.build_graph_dict)
     result: dict = {}
+    any_failed = False
 
     if "centrality" in requested and session.centrality is not None:
         try:
@@ -34,6 +36,7 @@ async def get_analytics(
             )
         except Exception as exc:
             result["centrality"] = {"error": str(exc)}
+            any_failed = True
 
     if "community" in requested and session.community is not None:
         try:
@@ -43,6 +46,7 @@ async def get_analytics(
             )
         except Exception as exc:
             result["community"] = {"error": str(exc)}
+            any_failed = True
 
     if "connectivity" in requested and session.connectivity is not None:
         try:
@@ -52,6 +56,10 @@ async def get_analytics(
             )
         except Exception as exc:
             result["connectivity"] = {"error": str(exc)}
+            any_failed = True
+
+    if any_failed:
+        response.status_code = 207
 
     return AnalyticsResponse(**result)
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Temporal routes for snapshots, diffs, and pattern detection.
 """
 
@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone, UTC
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
 
 from ..dependencies import get_session
@@ -117,7 +117,7 @@ async def temporal_patterns(
         return TemporalPatternResponse(patterns=[])
     except Exception as exc:
         logger.warning("temporal_patterns failed: %s", exc, exc_info=True)
-        return TemporalPatternResponse(patterns=[])
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/bounds", response_model=TemporalBoundsResponse)

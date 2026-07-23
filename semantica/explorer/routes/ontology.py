@@ -1402,6 +1402,7 @@ async def create_ontology(
         except Exception as exc:
             logger.exception("Failed to generate ontology from sample data; falling back to minimal ontology.")
             logger.warning(f"OntologyEngine.from_data error: {exc}")
+            raise HTTPException(status_code=500, detail=str(exc))
 
     elif body.mode == "text" and body.schema_text:
         try:
@@ -1472,6 +1473,7 @@ async def create_ontology(
         except Exception as exc:
             logger.exception("Failed to generate ontology from schema text; falling back to minimal ontology.")
             logger.warning(f"OntologyEngine.from_text error: {exc}")
+            raise HTTPException(status_code=500, detail=str(exc))
 
     nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
     edges_added = await asyncio.to_thread(session.add_edges, edges)
