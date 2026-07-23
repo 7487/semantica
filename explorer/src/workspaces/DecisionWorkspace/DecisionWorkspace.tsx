@@ -92,6 +92,7 @@ export function DecisionWorkspace() {
   const [chainLoading, setChainLoading] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [filter, setFilter] = useState("");
+  const [error, setError] = useState("");
 
   // Tracks the active chain request so stale responses from rapid selections are ignored.
   const chainCtrlRef = useRef<AbortController | null>(null);
@@ -100,13 +101,22 @@ export function DecisionWorkspace() {
     const ctrl = new AbortController();
     setListLoading(true);
     fetch("/api/decisions", { signal: ctrl.signal })
-      .then((r) => r.ok ? r.json() : Promise.reject(r.status))
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (r.status === 207) setError(data.message || "Warning: Partial success loading decisions.");
+        return data;
+      })
       .then((data) => {
         if (ctrl.signal.aborted) return;
         setDecisions(data);
         if (data.length > 0) void loadChain(data[0]);
       })
-      .catch((e) => { if (e?.name !== "AbortError") console.error(e); })
+      .catch((e) => {
+        if (e?.name !== "AbortError") {
+          setError(e instanceof Error ? e.message : "Failed to load decisions.");
+        }
+      })
       .finally(() => {
         if (!ctrl.signal.aborted) setListLoading(false);
       });
@@ -127,11 +137,16 @@ export function DecisionWorkspace() {
     setChain([]);
     try {
       const res = await fetch(`/api/decisions/${encodeURIComponent(d.decision_id)}/chain`, { signal: ctrl.signal });
-      if (!res.ok) throw new Error(`${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (res.status === 207 && !ctrl.signal.aborted) {
+        setError(data.message || "Warning: Partial success loading chain.");
+      }
       if (!ctrl.signal.aborted) setChain(data.chain || []);
     } catch (e) {
-      if (e instanceof Error && e.name !== "AbortError") console.error(e);
+      if (e instanceof Error && e.name !== "AbortError") {
+        setError(e.message);
+      }
     } finally {
       if (!ctrl.signal.aborted) setChainLoading(false);
     }
@@ -212,6 +227,12 @@ export function DecisionWorkspace() {
       {/* ── Detail pane ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
         <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse 60% 40% at 70% 20%, rgba(74,163,255,0.04), transparent 55%)", pointerEvents: "none" }} />
+
+        {error ? (
+          <div style={{ padding: 12, borderRadius: 14, color: "#ffb4c2", background: "rgba(255,157,175,0.1)", border: "1px solid rgba(255,157,175,0.18)", margin: "16px 16px 0 16px", zIndex: 2, position: "relative" }}>
+            {error}
+          </div>
+        ) : null}
 
         {selected ? (
           <div className="ws-scroll ws-padded ws-animate-in" style={{ position: "relative", zIndex: 1 }}>

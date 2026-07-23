@@ -72,7 +72,17 @@ export function SparqlWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
       });
+      if (!res.ok && res.status !== 400 && res.status !== 500) {
+         // Some specific errors may return 400/500 with JSON payload
+         if (!res.headers.get("content-type")?.includes("application/json")) {
+           throw new Error(`HTTP ${res.status}`);
+         }
+      }
       const data = await res.json();
+      if (res.status === 207) {
+        data.error = data.message || "Warning: Partial success running query.";
+      }
+
       if (data.error && data.error_line && monaco && editorRef.current) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (monaco as any).editor.setModelMarkers((editorRef.current as any).getModel(), "sparql", [{
@@ -81,6 +91,7 @@ export function SparqlWorkspace() {
           endLineNumber: data.error_line,
           endColumn: 100,
           message: data.error,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           severity: (monaco as any).MarkerSeverity.Error,
         }]);
       }

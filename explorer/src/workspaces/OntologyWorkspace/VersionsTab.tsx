@@ -47,6 +47,7 @@ export function VersionsTab() {
   const [comparePair, setComparePair] = useState<{ v1: string; v2: string } | null>(null);
   const [compareResult, setCompareResult] = useState<Record<string, any> | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const loadVersions = useCallback(async () => {
     if (!ontologyUri) return;
@@ -55,9 +56,12 @@ export function VersionsTab() {
       if (response.ok) {
         const data = await response.json();
         setVersions(data);
+        if (response.status === 207) setError(data.message || "Warning: Partial success loading versions.");
+      } else {
+        setError(`Failed to load versions (${response.status})`);
       }
-    } catch (error) {
-      console.error("Failed to load versions:", error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load versions.");
     }
   }, [ontologyUri]);
 
@@ -67,9 +71,12 @@ export function VersionsTab() {
       if (response.ok) {
         const data = await response.json();
         setProposals(data);
+        if (response.status === 207) setError(data.message || "Warning: Partial success loading proposals.");
+      } else {
+        setError(`Failed to load proposals (${response.status})`);
       }
-    } catch (error) {
-      console.error("Failed to load proposals:", error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load proposals.");
     }
   }, []);
 
@@ -79,54 +86,76 @@ export function VersionsTab() {
   }, [loadVersions, loadProposals]);
 
   const approveProposal = useCallback(async (proposalId: string) => {
+    setError("");
     try {
       const response = await fetch(`/api/ontology/proposals/${proposalId}/approve`, {
         method: "POST",
       });
       if (response.ok) {
-        alert("Proposal approved");
+        if (response.status === 207) {
+          const data = await response.json().catch(() => ({}));
+          setError(data.message || "Warning: Partial success approving proposal.");
+        } else {
+          alert("Proposal approved");
+        }
         loadProposals();
+      } else {
+        setError(`Failed to approve proposal (${response.status})`);
       }
-    } catch (error) {
-      console.error("Failed to approve proposal:", error);
-      alert("Failed to approve proposal");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve proposal.");
     }
   }, [loadProposals]);
 
   const rejectProposal = useCallback(async (proposalId: string) => {
+    setError("");
     try {
       const response = await fetch(`/api/ontology/proposals/${proposalId}/reject`, {
         method: "POST",
       });
       if (response.ok) {
-        alert("Proposal rejected");
+        if (response.status === 207) {
+          const data = await response.json().catch(() => ({}));
+          setError(data.message || "Warning: Partial success rejecting proposal.");
+        } else {
+          alert("Proposal rejected");
+        }
         loadProposals();
+      } else {
+        setError(`Failed to reject proposal (${response.status})`);
       }
-    } catch (error) {
-      console.error("Failed to reject proposal:", error);
-      alert("Failed to reject proposal");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reject proposal.");
     }
   }, [loadProposals]);
 
   const publishProposal = useCallback(async (proposalId: string) => {
+    setError("");
     try {
       const response = await fetch(`/api/ontology/proposals/${proposalId}/publish`, {
         method: "POST",
       });
       if (response.ok) {
-        alert("Proposal published");
+        if (response.status === 207) {
+          const data = await response.json().catch(() => ({}));
+          setError(data.message || "Warning: Partial success publishing proposal.");
+        } else {
+          alert("Proposal published");
+        }
         loadProposals();
         loadVersions();
+      } else {
+        setError(`Failed to publish proposal (${response.status})`);
       }
-    } catch (error) {
-      console.error("Failed to publish proposal:", error);
-      alert("Failed to publish proposal");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to publish proposal.");
     }
   }, [loadProposals, loadVersions]);
 
   const runVersionComparison = useCallback(async () => {
     if (!comparePair || !ontologyUri) return;
     setIsLoading(true);
+    setError("");
     try {
       const response = await fetch(`/api/ontology/versions/${encodeURIComponent(ontologyUri)}/compare`, {
         method: "POST",
@@ -138,11 +167,13 @@ export function VersionsTab() {
       });
       if (response.ok) {
         const data = await response.json();
+        if (response.status === 207) setError(data.message || "Warning: Partial success comparing versions.");
         setCompareResult(data);
+      } else {
+        setError(`Failed to compare versions (${response.status})`);
       }
-    } catch (error) {
-      console.error("Failed to compare versions:", error);
-      alert("Failed to compare versions");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to compare versions.");
     } finally {
       setIsLoading(false);
     }
@@ -265,6 +296,8 @@ export function VersionsTab() {
     marginBottom: "12px",
   };
 
+  const errorStyle: React.CSSProperties = { padding: "12px", borderRadius: "14px", color: "#ffb4c2", background: "rgba(255,157,175,0.1)", border: "1px solid rgba(255,157,175,0.18)", marginBottom: "16px" };
+
   return (
     <div style={containerStyle}>
       <div style={headerStyle}>
@@ -277,6 +310,8 @@ export function VersionsTab() {
           style={{ ...inputStyle, width: "300px", marginBottom: 0 }}
         />
       </div>
+
+      {error ? <div style={errorStyle}>{error}</div> : null}
 
       <div style={sectionStyle}>
         <h2 style={sectionTitleStyle}>
