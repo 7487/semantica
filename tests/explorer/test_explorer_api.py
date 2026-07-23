@@ -474,6 +474,16 @@ class TestTemporal:
         assert response.status_code == 200
         assert "patterns" in response.json()
 
+    def test_patterns_failure_returns_500(self, client, monkeypatch):
+        session = client.app.state.session
+
+        def _boom():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(session, "build_graph_dict", _boom)
+        response = client.get("/api/temporal/patterns")
+        assert response.status_code == 500
+
     def test_bounds(self, client):
         response = client.get("/api/temporal/bounds")
         assert response.status_code == 200
@@ -488,12 +498,73 @@ class TestAnalytics:
         assert response.status_code == 200
         assert "centrality" in response.json()
 
+    def test_analytics_partial_failure_returns_207(self, client, monkeypatch):
+        session = client.app.state.session
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(session.centrality, "calculate_degree_centrality", _boom)
+        response = client.get("/api/analytics?metrics=centrality,community")
+        assert response.status_code == 207
+        payload = response.json()
+        assert payload["centrality"]["error"]
+        assert payload["community"] is not None and "error" not in payload["community"]
+
+    def test_analytics_total_failure_returns_500(self, client, monkeypatch):
+        session = client.app.state.session
+
+        def _boom(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(session.centrality, "calculate_degree_centrality", _boom)
+        response = client.get("/api/analytics?metrics=centrality")
+        assert response.status_code == 500
+
     def test_validation(self, client):
         response = client.get("/api/analytics/validation")
         assert response.status_code == 200
         payload = response.json()
         assert "valid" in payload
         assert "issues" in payload
+
+
+class TestOntologyCreateFailures:
+    def test_create_from_sample_data_failure_returns_500(self, client, monkeypatch):
+        from semantica.ontology import OntologyEngine
+
+        def _boom(self, *_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(OntologyEngine, "from_data", _boom)
+        response = client.post(
+            "/api/ontology/create",
+            json={
+                "mode": "data",
+                "namespace": "http://example.org/create-failure-data",
+                "name": "Create Failure (data)",
+                "sample_data": "id,name\n1,Alice\n2,Bob",
+            },
+        )
+        assert response.status_code == 500
+
+    def test_create_from_text_failure_returns_500(self, client, monkeypatch):
+        from semantica.ontology import OntologyEngine
+
+        def _boom(self, *_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(OntologyEngine, "from_text", _boom)
+        response = client.post(
+            "/api/ontology/create",
+            json={
+                "mode": "text",
+                "namespace": "http://example.org/create-failure-text",
+                "name": "Create Failure (text)",
+                "schema_text": "Class: Person\nProperty: knows",
+            },
+        )
+        assert response.status_code == 500
 
 
 class TestEnrichment:
