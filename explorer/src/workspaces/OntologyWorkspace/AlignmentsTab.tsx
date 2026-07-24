@@ -54,15 +54,20 @@ export function AlignmentsTab() {
       loadAlignments(),
     ]);
 
+    const errors: string[] = [];
     if (registryResult.status === "fulfilled") {
       setRegistry(registryResult.value);
       setSourceOntology((current) => current || registryResult.value[0]?.uri || "");
       setTargetOntology((current) => current || registryResult.value[1]?.uri || registryResult.value[0]?.uri || "");
+    } else {
+      errors.push(registryResult.reason instanceof Error ? registryResult.reason.message : "Failed to load ontology registry.");
     }
     if (alignmentResult.status === "fulfilled") {
       setAlignments(alignmentResult.value);
+    } else {
+      errors.push(alignmentResult.reason instanceof Error ? alignmentResult.reason.message : "Failed to load alignments.");
     }
-
+    if (errors.length) setError(errors.join(" "));
   }, []);
 
   useEffect(() => {

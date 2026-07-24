@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Explorer frontend workspaces silently swallowed network/server errors** (#767, #790) by @Sameer6305
+  - `ShaclStudio.tsx`, `VersionsTab.tsx`, `SKOSVocabularyManager.tsx`, `EntityResolutionTab.tsx`, `LineageDiagram.tsx`, `DecisionWorkspace.tsx`, `KGOverviewTab.tsx`, `OntologyManager.tsx`, `OntologySearch.tsx`, `ReasoningWorkspace.tsx`, and `SparqlWorkspace.tsx` now render a visible error banner instead of only `console.error()`-ing failed fetches
+  - Added explicit `response.status === 207` (Multi-Status) handling across these workspaces so partial backend failures surface a warning instead of reading as a full success (`response.ok` is `true` for all 2xx codes, including 207)
+  - Added defensive JSON parsing so an unexpected non-JSON (e.g. HTML 500) response body no longer crashes the app with `SyntaxError: Unexpected token < in JSON`
+  - Fixed `KGOverviewTab.tsx` dropping the `/api/graph/nodes` partial-success warning whenever `/api/graph/stats` also returned 207 — both warnings are now shown (appended) instead of one being silently discarded
+  - Fixed `HealthTab.tsx`'s registry load still using a bare `.catch(() => {})` that swallowed errors identically to the pattern fixed elsewhere in this same folder; failures now populate the existing error banner
+  - Fixed `AlignmentsTab.tsx`'s `reload()` using `Promise.allSettled` but never handling the `"rejected"` branches for the registry/alignments fetches, so both failures previously vanished with no error surfaced and no logging
+
 - **`tests/explorer/test_explorer_api.py` failed with `TypeError: Client.__init__() got an unexpected keyword argument 'app'` on current httpx** (#788, #789) by @Sameer6305
   - `httpx>=0.28.0` removed the `app=` kwarg that Starlette's `TestClient` relies on to wrap a FastAPI app for testing; `httpx` wasn't pinned anywhere in `pyproject.toml`, so different environments could independently resolve an incompatible transitive version and hit the same break
   - Added an explicit `httpx<0.28.0` constraint to the main `[project.dependencies]` array (not just a dev extra), so it applies globally across production, dev, and CI installs

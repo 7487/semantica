@@ -20,7 +20,11 @@ async function parseResponse<T>(response: Response): Promise<T> {
     }
     throw new Error(detail);
   }
-  return response.json() as Promise<T>;
+  const data = await response.json();
+  if (response.status === 207) {
+    console.warn("Partial Success:", data.message || "Warning: 207 Multi-Status");
+  }
+  return data as T;
 }
 
 export async function loadOntologyRegistry(): Promise<OntologyEntry[]> {
