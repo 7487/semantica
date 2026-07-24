@@ -54,10 +54,19 @@ class ProvenanceManager:
         >>> lineage = prov_mgr.get_lineage("entity_1")
     """
     
+    _default_storage_path: Optional[str] = None
+
+    @classmethod
+    def set_default_storage_path(cls, path: str) -> None:
+        """Set a global default storage path for all new instances."""
+        cls._default_storage_path = path
+    
     def __init__(
         self,
         storage: Optional[ProvenanceStorage] = None,
-        storage_path: Optional[str] = None
+        storage_path: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        **kwargs
     ):
         """
         Initialize provenance manager.
@@ -65,10 +74,19 @@ class ProvenanceManager:
         Args:
             storage: Custom storage backend (optional)
             storage_path: Path to SQLite database (optional, uses in-memory if None)
+            config: Configuration dictionary (optional)
         """
         if storage:
             self.storage = storage
-        elif storage_path:
+            return
+
+        if not storage_path and config:
+            storage_path = config.get("provenance", {}).get("storage_path")
+
+        if not storage_path and self._default_storage_path:
+            storage_path = self._default_storage_path
+
+        if storage_path:
             self.storage = SQLiteStorage(storage_path)
         else:
             self.storage = InMemoryStorage()
