@@ -33,6 +33,7 @@ export function LineageDiagram() {
   const [edges, setEdges] = useState<any[]>([]);
   const [searchId, setSearchId] = useState("");
   const [activeId, setActiveId] = useState("");
+  const [error, setError] = useState("");
 
   const downloadReport = async (format: "json" | "markdown") => {
     if (!activeId) return;
@@ -55,6 +56,7 @@ export function LineageDiagram() {
   if (activeId !== prevActiveId) {
     setPrevActiveId(activeId);
     if (!activeId) {
+      setError("");
       setNodes([]);
       setEdges([]);
     }
@@ -71,22 +73,24 @@ export function LineageDiagram() {
     ];
 
     const fetchLineage = async () => {
+      setError("");
       try {
         const res = await fetch("/api/provenance?node_id=" + encodeURIComponent(activeId));
 
         if (!res.ok) {
           const text = await res.text();
-          console.error(`HTTP ${res.status}: API Route missing or failed.`, text.substring(0, 100));
-          return;
+          throw new Error(`HTTP ${res.status}: API Route missing or failed. ${text.substring(0, 100)}`);
         }
 
         const contentType = res.headers.get("content-type");
         if (!contentType || !contentType.includes("application/json")) {
-          console.error("Backend returned non-JSON response (likely an HTML fallback). Check FastAPI routing.");
-          return;
+          throw new Error("Backend returned non-JSON response (likely an HTML fallback).");
         }
 
         const data = await res.json();
+        if (res.status === 207) {
+          setError(data.message || "Warning: Partial success loading lineage.");
+        }
 
         const counters: Record<string, number> = { "group_agent": 0, "group_activity": 0, "group_entity": 0 };
 
@@ -117,7 +121,7 @@ export function LineageDiagram() {
           setEdges(mappedEdges);
         }
       } catch (err) {
-        console.error(err);
+        setError(err instanceof Error ? err.message : "Failed to load lineage.");
       }
     };
     void fetchLineage();
@@ -151,6 +155,12 @@ export function LineageDiagram() {
           Export MD
         </button>
       </div>
+
+      {error ? (
+        <div style={{ position: "absolute", top: 60, left: 14, right: 14, zIndex: 10, padding: 12, borderRadius: 14, color: "#ffb4c2", background: "rgba(255,157,175,0.1)", border: "1px solid rgba(255,157,175,0.18)" }}>
+          {error}
+        </div>
+      ) : null}
 
       {activeId ? (
         <ReactFlow nodes={nodes} edges={edges} fitView>

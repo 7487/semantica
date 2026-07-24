@@ -72,7 +72,15 @@ export function SparqlWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
       });
+      if (!res.headers.get("content-type")?.includes("application/json")) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text.substring(0, 100)}`);
+      }
       const data = await res.json();
+      if (res.status === 207) {
+        data.error = data.message || "Warning: Partial success running query.";
+      }
+
       if (data.error && data.error_line && monaco && editorRef.current) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (monaco as any).editor.setModelMarkers((editorRef.current as any).getModel(), "sparql", [{
@@ -81,12 +89,14 @@ export function SparqlWorkspace() {
           endLineNumber: data.error_line,
           endColumn: 100,
           message: data.error,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           severity: (monaco as any).MarkerSeverity.Error,
         }]);
       }
       setResult(data);
-    } catch {
-      setResult({ error: "Network error — could not reach the SPARQL endpoint." });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Network error — could not reach the SPARQL endpoint.";
+      setResult({ error: msg });
     } finally {
       setIsLoading(false);
     }

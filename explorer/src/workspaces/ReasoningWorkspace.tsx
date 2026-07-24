@@ -57,6 +57,7 @@ export function ReasoningWorkspace() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `Status ${response.status}`);
+      if (response.status === 207) setError(data.message || "Warning: Partial success reasoning.");
       setResult(data);
       if (data.mutated) queryClient.invalidateQueries({ queryKey: ["graph", "full-load"] });
     } catch (e) {

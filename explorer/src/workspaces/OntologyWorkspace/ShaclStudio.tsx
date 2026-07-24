@@ -33,7 +33,10 @@ export function ShaclStudio({ onJumpToNode }: ShaclStudioProps) {
         setRegistry(entries);
         setSelectedUri((current) => current || entries[0]?.uri || "");
       })
-      .catch(() => { /* backend unavailable — leave registry empty */ });
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load ontology registry.");
+      });
     return () => {
       cancelled = true;
     };

@@ -189,9 +189,11 @@ function DetailPanel({
   useEffect(() => {
     let ignore = false;
     fetch(`/api/ontology/entity/${encodeURIComponent(uri)}`)
-      .then((r) => {
+      .then(async (r) => {
         if (!r.ok) throw new Error("Not found");
-        return r.json();
+        const data = await r.json();
+        if (r.status === 207) setError(data.message || "Warning: Partial success loading entity.");
+        return data;
       })
       .then((data) => {
         if (!ignore) setDetail(data);

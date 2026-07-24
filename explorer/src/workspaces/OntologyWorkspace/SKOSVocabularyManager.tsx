@@ -88,9 +88,11 @@ function ConceptDetailPanel({
   useEffect(() => {
     let ignore = false;
     fetch(`/api/ontology/skos/concept/${encodeURIComponent(uri)}`)
-      .then((r) => {
+      .then(async (r) => {
         if (!r.ok) throw new Error("Concept not found");
-        return r.json();
+        const data = await r.json();
+        if (r.status === 207) setError(data.message || "Warning: Partial success loading concept.");
+        return data;
       })
       .then((data) => {
         if (!ignore) setDetail(data);
@@ -339,6 +341,7 @@ function SchemePanel({
   const [expanded, setExpanded] = useState(true);
   const [hierarchy, setHierarchy] = useState<ConceptNode[]>([]);
   const [loading, setLoading] = useState(expanded);
+  const [error, setError] = useState("");
 
   const [prevExpanded, setPrevExpanded] = useState(expanded);
   const [prevSchemeUri, setPrevSchemeUri] = useState(scheme.uri);
@@ -347,6 +350,7 @@ function SchemePanel({
     setPrevSchemeUri(scheme.uri);
     if (expanded) {
       setLoading(true);
+      setError("");
       setHierarchy([]);
     }
   }
@@ -355,12 +359,20 @@ function SchemePanel({
     let ignore = false;
     if (!expanded) return;
     fetch(`/api/vocabulary/hierarchy?scheme=${encodeURIComponent(scheme.uri)}`)
-      .then((r) => (r.ok ? r.json() : []))
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (r.status === 207 && !ignore) setError(data.message || "Warning: Partial success loading hierarchy.");
+        return data;
+      })
       .then((data) => {
         if (!ignore) setHierarchy(data);
       })
-      .catch(() => {
-        if (!ignore) setHierarchy([]);
+      .catch((err) => {
+        if (!ignore) {
+          setHierarchy([]);
+          setError(err instanceof Error ? err.message : "Failed to load hierarchy.");
+        }
       })
       .finally(() => {
         if (!ignore) setLoading(false);
@@ -402,6 +414,7 @@ function SchemePanel({
 
       {expanded && (
         <div style={{ paddingBottom: 8 }}>
+          {error ? <div style={errorStyle}>{error}</div> : null}
           {loading ? (
             <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", gap: 8 }}>
               <Loader2 size={12} color="#4aa3ff" style={{ animation: "spin 0.8s linear infinite" }} />
@@ -447,7 +460,12 @@ export function SKOSVocabularyManager({ schemeUri }: Props) {
 
   useEffect(() => {
     fetch("/api/ontology/skos/schemes")
-      .then((r) => (r.ok ? r.json() : []))
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Failed to load schemes (${r.status})`);
+        const data = await r.json();
+        if (r.status === 207) setError(data.message || "Warning: Partial success loading schemes.");
+        return data;
+      })
       .then(setSchemes)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -459,6 +477,7 @@ export function SKOSVocabularyManager({ schemeUri }: Props) {
 
   return (
     <div style={managerShellStyle}>
+      {error ? <div style={errorStyle}>{error}</div> : null}
       {/* Search bar */}
       <div style={skosToolbarStyle}>
         <div style={skosSearchBarStyle}>
@@ -662,6 +681,8 @@ const navLinkStyle: React.CSSProperties = {
   padding: "2px 0",
   textAlign: "left",
 };
+
+const errorStyle: React.CSSProperties = { padding: 12, borderRadius: 14, color: "#ffb4c2", background: "rgba(255,157,175,0.1)", border: "1px solid rgba(255,157,175,0.18)", margin: "0 10px 10px 10px", fontSize: 12 };
 
 const centerStyle: React.CSSProperties = {
   display: "flex",

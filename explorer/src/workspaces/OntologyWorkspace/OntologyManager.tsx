@@ -257,6 +257,11 @@ export function OntologyManager() {
     setActionMsg(null);
   }
 
+  const flashMsg = useCallback((type: "ok" | "err", text: string) => {
+    setActionMsg({ type, text });
+    setTimeout(() => setActionMsg(null), 3000);
+  }, []);
+
   const fetchRegistry = useCallback(async () => {
     setLoading(true);
     setActionMsg(null);
@@ -264,17 +269,17 @@ export function OntologyManager() {
       const params = new URLSearchParams();
       if (searchQ) params.set("q", searchQ);
       const res = await fetch(`/api/ontology/registry?${params}`);
-      if (res.ok) {
-        setEntries(await res.json());
-      } else {
-        setEntries([]);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setEntries(data);
+      if (res.status === 207) flashMsg("err", data.message || "Warning: Partial success loading registry.");
     } catch {
       setEntries([]);
+      flashMsg("err", "Failed to load ontology registry");
     } finally {
       setLoading(false);
     }
-  }, [searchQ, statusFilter]);
+  }, [searchQ, statusFilter, flashMsg]);
 
   useEffect(() => {
     let ignore = false;
@@ -298,11 +303,6 @@ export function OntologyManager() {
     void fetchInitial();
     return () => { ignore = true; };
   }, [searchQ, statusFilter]);
-
-  const flashMsg = (type: "ok" | "err", text: string) => {
-    setActionMsg({ type, text });
-    setTimeout(() => setActionMsg(null), 3000);
-  };
 
   const handleToggle = useCallback(async (uri: string) => {
     try {

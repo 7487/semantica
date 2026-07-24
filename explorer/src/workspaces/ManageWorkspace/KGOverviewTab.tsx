@@ -81,35 +81,41 @@ export function KGOverviewTab() {
         fetch("/api/graph/nodes?limit=500"),
       ]);
 
-      if (statsRes.ok) {
-        const statsData: KGStats = await statsRes.json();
-        setStats(statsData);
+      if (!statsRes.ok) throw new Error(`Stats fetch failed (${statsRes.status})`);
+      if (!nodesRes.ok) throw new Error(`Nodes fetch failed (${nodesRes.status})`);
+
+      const statsData: KGStats = await statsRes.json();
+      setStats(statsData);
+      if (statsRes.status === 207) {
+        setError((statsData as any).message || "Warning: Partial success loading stats.");
       }
 
-      if (nodesRes.ok) {
-        const nodesData: NodeListResponse = await nodesRes.json();
-        const nodes = nodesData.nodes ?? [];
-        setNodeTypeMap(buildTypeMap(nodes, "type"));
+      const nodesData: NodeListResponse = await nodesRes.json();
+      const nodes = nodesData.nodes ?? [];
+      setNodeTypeMap(buildTypeMap(nodes, "type"));
+      if (nodesRes.status === 207) {
+        const nodesMessage = (nodesData as any).message || "Warning: Partial success loading nodes.";
+        setError((prev) => (prev ? `${prev} ${nodesMessage}` : nodesMessage));
+      }
 
-        // Simulate neighbor counts via edges fetch for top-N
-        const edgesRes = await fetch("/api/graph/edges?limit=2000");
-        if (edgesRes.ok) {
-          const edgesData = await edgesRes.json();
-          const edges: { source: string; target: string }[] = edgesData.edges ?? [];
-          const degreeMap: Record<string, number> = {};
-          for (const edge of edges) {
-            degreeMap[edge.source] = (degreeMap[edge.source] ?? 0) + 1;
-            degreeMap[edge.target] = (degreeMap[edge.target] ?? 0) + 1;
-          }
-          const sorted = nodes
-            .map((n) => ({ node: n, neighborCount: degreeMap[n.id] ?? 0 }))
-            .sort((a, b) => b.neighborCount - a.neighborCount)
-            .slice(0, 10);
-          setTopNodes(sorted);
+      // Simulate neighbor counts via edges fetch for top-N
+      const edgesRes = await fetch("/api/graph/edges?limit=2000");
+      if (edgesRes.ok) {
+        const edgesData = await edgesRes.json();
+        const edges: { source: string; target: string }[] = edgesData.edges ?? [];
+        const degreeMap: Record<string, number> = {};
+        for (const edge of edges) {
+          degreeMap[edge.source] = (degreeMap[edge.source] ?? 0) + 1;
+          degreeMap[edge.target] = (degreeMap[edge.target] ?? 0) + 1;
         }
+        const sorted = nodes
+          .map((n) => ({ node: n, neighborCount: degreeMap[n.id] ?? 0 }))
+          .sort((a, b) => b.neighborCount - a.neighborCount)
+          .slice(0, 10);
+        setTopNodes(sorted);
       }
-    } catch {
-      setError("Failed to load graph overview. Ensure the server is running.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load graph overview. Ensure the server is running.");
     } finally {
       setLoading(false);
     }
@@ -178,6 +184,12 @@ export function KGOverviewTab() {
 
   return (
     <div className="ws-page">
+      {error ? (
+        <div style={{ margin: "16px 22px 0 22px", padding: 12, borderRadius: 14, color: "#ffb4c2", background: "rgba(255,157,175,0.1)", border: "1px solid rgba(255,157,175,0.18)" }}>
+          {error}
+        </div>
+      ) : null}
+
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 22px", borderBottom: "1px solid var(--ws-border)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -195,11 +207,7 @@ export function KGOverviewTab() {
         </button>
       </div>
 
-      {error && (
-        <div style={{ margin: "12px 22px", padding: "10px 14px", borderRadius: "var(--ws-radius-sm)", background: "var(--ws-red-soft)", border: "1px solid rgba(255,123,114,0.28)", color: "#fca5a5", fontSize: 13 }}>
-          {error}
-        </div>
-      )}
+
 
       <div className="ws-scroll" style={{ flex: 1, padding: "18px 22px", display: "flex", flexDirection: "column", gap: 16 }}>
         {/* Stat cards */}
