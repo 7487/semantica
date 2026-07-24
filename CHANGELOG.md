@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added an explicit `httpx<0.28.0` constraint to the main `[project.dependencies]` array (not just a dev extra), so it applies globally across production, dev, and CI installs
   - Without the pin, the full test suite fails to even complete collection (fails immediately on `tests/explorer/test_vocabulary.py` with the same `TestClient` error); with it, `tests/explorer/test_explorer_api.py` goes from 7 failed/12 passed/58 errors to 77 passed, 0 errors
 
+- **Explorer backend routes returned HTTP 200 with error/empty bodies on failure, defeating frontend error handling** (#770, #787) by @Sameer6305 and @KaifAhmad1
+  - `GET /api/temporal/patterns` now raises `HTTPException(500)` on a genuine computation failure instead of silently returning an empty-but-valid `TemporalPatternResponse`; the `ImportError` fallback (optional `kg` extra not installed) is unchanged and still degrades gracefully to an empty list
+  - `POST /api/ontology/create` now raises `HTTPException(500)` when ontology generation fails in either the `sample_data` or `schema_text` mode, instead of silently falling back to a partial/minimal ontology with a misleading `nodes_added` count
+  - `GET /api/analytics` sets `response.status_code = 207` (Multi-Status) when some, but not all, of the requested metrics fail, and raises `HTTPException(500)` when every requested metric fails — a plain 2xx (including 207) reads as success to callers that only check `response.ok`, so an all-failed request now surfaces as a hard error rather than a body full of `{"error": ...}`
+  - Added regression tests covering all three failure paths (`test_patterns_failure_returns_500`, `test_analytics_partial_failure_returns_207`, `test_analytics_total_failure_returns_500`, and two `TestOntologyCreateFailures` cases)
+
 ## [0.6.0] - 2026-07-21
 
 ### Added
