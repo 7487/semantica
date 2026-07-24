@@ -93,8 +93,9 @@ export function KGOverviewTab() {
       const nodesData: NodeListResponse = await nodesRes.json();
       const nodes = nodesData.nodes ?? [];
       setNodeTypeMap(buildTypeMap(nodes, "type"));
-      if (nodesRes.status === 207 && statsRes.status !== 207) { // Only overwrite error if not already set, or just append
-         setError((prev) => prev ? prev + " " + ((nodesData as any).message || "") : ((nodesData as any).message || "Warning: Partial success loading nodes."));
+      if (nodesRes.status === 207) {
+        const nodesMessage = (nodesData as any).message || "Warning: Partial success loading nodes.";
+        setError((prev) => (prev ? `${prev} ${nodesMessage}` : nodesMessage));
       }
 
       // Simulate neighbor counts via edges fetch for top-N

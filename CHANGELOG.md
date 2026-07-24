@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Explorer backend routes returned HTTP 200 with error/empty bodies on failure, defeating frontend error handling** (#770, #787) by @Sameer6305 and @KaifAhmad1
+- **Explorer frontend workspaces silently swallowed network/server errors** (#767, #790) by @Sameer6305
+  - `ShaclStudio.tsx`, `VersionsTab.tsx`, `SKOSVocabularyManager.tsx`, `EntityResolutionTab.tsx`, `LineageDiagram.tsx`, `DecisionWorkspace.tsx`, `KGOverviewTab.tsx`, `OntologyManager.tsx`, `OntologySearch.tsx`, `ReasoningWorkspace.tsx`, and `SparqlWorkspace.tsx` now render a visible error banner instead of only `console.error()`-ing failed fetches
+  - Added explicit `response.status === 207` (Multi-Status) handling across these workspaces so partial backend failures surface a warning instead of reading as a full success (`response.ok` is `true` for all 2xx codes, including 207)
+  - Added defensive JSON parsing so an unexpected non-JSON (e.g. HTML 500) response body no longer crashes the app with `SyntaxError: Unexpected token < in JSON`
+  - Fixed `KGOverviewTab.tsx` dropping the `/api/graph/nodes` partial-success warning whenever `/api/graph/stats` also returned 207 — both warnings are now shown (appended) instead of one being silently discarded
+  - Fixed `HealthTab.tsx`'s registry load still using a bare `.catch(() => {})` that swallowed errors identically to the pattern fixed elsewhere in this same folder; failures now populate the existing error banner
+  - Fixed `AlignmentsTab.tsx`'s `reload()` using `Promise.allSettled` but never handling the `"rejected"` branches for the registry/alignments fetches, so both failures previously vanished with no error surfaced and no logging
   - `GET /api/temporal/patterns` now raises `HTTPException(500)` on a genuine computation failure instead of silently returning an empty-but-valid `TemporalPatternResponse`; the `ImportError` fallback (optional `kg` extra not installed) is unchanged and still degrades gracefully to an empty list
   - `POST /api/ontology/create` now raises `HTTPException(500)` when ontology generation fails in either the `sample_data` or `schema_text` mode, instead of silently falling back to a partial/minimal ontology with a misleading `nodes_added` count
   - `GET /api/analytics` sets `response.status_code = 207` (Multi-Status) when some, but not all, of the requested metrics fail, and raises `HTTPException(500)` when every requested metric fails — a plain 2xx (including 207) reads as success to callers that only check `response.ok`, so an all-failed request now surfaces as a hard error rather than a body full of `{"error": ...}`
