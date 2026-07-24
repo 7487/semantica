@@ -124,6 +124,10 @@ export function KGOverviewTab() {
   useEffect(() => {
     let ignore = false;
     async function fetchInitial() {
+      if (!ignore) {
+        setLoading(true);
+        setError("");
+      }
       try {
         const [statsRes, nodesRes] = await Promise.all([
           fetch("/api/graph/stats"),

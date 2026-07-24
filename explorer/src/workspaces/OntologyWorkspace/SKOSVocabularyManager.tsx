@@ -352,6 +352,8 @@ function SchemePanel({
       setLoading(true);
       setError("");
       setHierarchy([]);
+    } else {
+      setLoading(false);
     }
   }
 

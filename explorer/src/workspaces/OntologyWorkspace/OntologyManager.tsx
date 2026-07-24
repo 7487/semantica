@@ -249,10 +249,8 @@ export function OntologyManager() {
   const [actionMsg, setActionMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const [prevSearchQ, setPrevSearchQ] = useState(searchQ);
-  const [prevStatusFilter, setPrevStatusFilter] = useState(statusFilter);
-  if (searchQ !== prevSearchQ || statusFilter !== prevStatusFilter) {
+  if (searchQ !== prevSearchQ) {
     setPrevSearchQ(searchQ);
-    setPrevStatusFilter(statusFilter);
     setLoading(true);
     setActionMsg(null);
   }
@@ -279,7 +277,7 @@ export function OntologyManager() {
     } finally {
       setLoading(false);
     }
-  }, [searchQ, statusFilter, flashMsg]);
+  }, [searchQ, flashMsg]);
 
   useEffect(() => {
     let ignore = false;
@@ -302,7 +300,7 @@ export function OntologyManager() {
     }
     void fetchInitial();
     return () => { ignore = true; };
-  }, [searchQ, statusFilter]);
+  }, [searchQ]);
 
   const handleToggle = useCallback(async (uri: string) => {
     try {
