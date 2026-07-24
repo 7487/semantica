@@ -25,12 +25,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     console.error("ErrorBoundary caught an error:", error, errorInfo);
   }
 
-  componentDidUpdate() {
+  componentDidUpdate(_prevProps: ErrorBoundaryProps, prevState: ErrorBoundaryState) {
     // If the component has successfully rendered (hasError is false)
     // and we were previously tracking retries, reset the retry counter.
-    // This ensures a transient error that recovers doesn't permanently leave the
-    // component one strike closer to a hard failure.
-    if (!this.state.hasError && this.state.retryCount > 0) {
+    // By checking prevState.hasError, we ensure this reset only triggers
+    // exactly once upon the recovery transition.
+    if (prevState.hasError && !this.state.hasError && this.state.retryCount > 0) {
       this.setState({ retryCount: 0 });
     }
   }
