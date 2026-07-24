@@ -116,8 +116,51 @@ export function KGOverviewTab() {
   }, []);
 
   useEffect(() => {
-    void fetchOverview();
-  }, [fetchOverview]);
+    let ignore = false;
+    async function fetchInitial() {
+      try {
+        const [statsRes, nodesRes] = await Promise.all([
+          fetch("/api/graph/stats"),
+          fetch("/api/graph/nodes?limit=500"),
+        ]);
+
+        if (!ignore) {
+          if (statsRes.ok) {
+            const statsData: KGStats = await statsRes.json();
+            setStats(statsData);
+          }
+
+          if (nodesRes.ok) {
+            const nodesData: NodeListResponse = await nodesRes.json();
+            const nodes = nodesData.nodes ?? [];
+            setNodeTypeMap(buildTypeMap(nodes, "type"));
+
+            const edgesRes = await fetch("/api/graph/edges?limit=2000");
+            if (edgesRes.ok) {
+              const edgesData = await edgesRes.json();
+              const edges: { source: string; target: string }[] = edgesData.edges ?? [];
+              const degreeMap: Record<string, number> = {};
+              for (const edge of edges) {
+                degreeMap[edge.source] = (degreeMap[edge.source] ?? 0) + 1;
+                degreeMap[edge.target] = (degreeMap[edge.target] ?? 0) + 1;
+              }
+              const sorted = nodes
+                .map((n) => ({ node: n, neighborCount: degreeMap[n.id] ?? 0 }))
+                .sort((a, b) => b.neighborCount - a.neighborCount)
+                .slice(0, 10);
+              setTopNodes(sorted);
+            }
+          }
+        }
+      } catch {
+        if (!ignore) setError("Failed to load graph overview. Ensure the server is running.");
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, []);
 
   const nodeTypeEntries = Object.entries(nodeTypeMap).sort((a, b) => b[1] - a[1]);
   const edgeTypeEntries = stats?.edge_types

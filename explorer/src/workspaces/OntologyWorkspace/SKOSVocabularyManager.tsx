@@ -77,17 +77,33 @@ function ConceptDetailPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const [prevUri, setPrevUri] = useState(uri);
+  if (uri !== prevUri) {
+    setPrevUri(uri);
     setLoading(true);
     setError("");
+    setDetail(null);
+  }
+
+  useEffect(() => {
+    let ignore = false;
     fetch(`/api/ontology/skos/concept/${encodeURIComponent(uri)}`)
       .then((r) => {
         if (!r.ok) throw new Error("Concept not found");
         return r.json();
       })
-      .then(setDetail)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!ignore) setDetail(data);
+      })
+      .catch((e) => {
+        if (!ignore) setError(e.message);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [uri]);
 
   const renderUriList = (label: string, uris: string[]) => {
@@ -322,16 +338,36 @@ function SchemePanel({
 }) {
   const [expanded, setExpanded] = useState(true);
   const [hierarchy, setHierarchy] = useState<ConceptNode[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(expanded);
+
+  const [prevExpanded, setPrevExpanded] = useState(expanded);
+  const [prevSchemeUri, setPrevSchemeUri] = useState(scheme.uri);
+  if (expanded !== prevExpanded || scheme.uri !== prevSchemeUri) {
+    setPrevExpanded(expanded);
+    setPrevSchemeUri(scheme.uri);
+    if (expanded) {
+      setLoading(true);
+      setHierarchy([]);
+    }
+  }
 
   useEffect(() => {
+    let ignore = false;
     if (!expanded) return;
-    setLoading(true);
     fetch(`/api/vocabulary/hierarchy?scheme=${encodeURIComponent(scheme.uri)}`)
       .then((r) => (r.ok ? r.json() : []))
-      .then(setHierarchy)
-      .catch(() => setHierarchy([]))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!ignore) setHierarchy(data);
+      })
+      .catch(() => {
+        if (!ignore) setHierarchy([]);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [scheme.uri, expanded]);
 
   const totalConcepts = countConcepts(hierarchy);
@@ -410,7 +446,6 @@ export function SKOSVocabularyManager({ schemeUri }: Props) {
   const [selectedUri, setSelectedUri] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoading(true);
     fetch("/api/ontology/skos/schemes")
       .then((r) => (r.ok ? r.json() : []))
       .then(setSchemes)

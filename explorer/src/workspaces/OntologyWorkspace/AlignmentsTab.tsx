@@ -66,8 +66,27 @@ export function AlignmentsTab() {
   }, []);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    let ignore = false;
+    async function fetchInitial() {
+      const [registryResult, alignmentResult] = await Promise.allSettled([
+        loadOntologyRegistry(),
+        loadAlignments(),
+      ]);
+
+      if (!ignore) {
+        if (registryResult.status === "fulfilled") {
+          setRegistry(registryResult.value);
+          setSourceOntology((current) => current || registryResult.value[0]?.uri || "");
+          setTargetOntology((current) => current || registryResult.value[1]?.uri || registryResult.value[0]?.uri || "");
+        }
+        if (alignmentResult.status === "fulfilled") {
+          setAlignments(alignmentResult.value);
+        }
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, []);
 
   const relationCounts = useMemo(() => {
     const counts = new Map<string, number>();

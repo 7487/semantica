@@ -248,6 +248,15 @@ export function OntologyManager() {
   const [rightPanel, setRightPanel] = useState<RightPanel>("none");
   const [actionMsg, setActionMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
+  const [prevSearchQ, setPrevSearchQ] = useState(searchQ);
+  const [prevStatusFilter, setPrevStatusFilter] = useState(statusFilter);
+  if (searchQ !== prevSearchQ || statusFilter !== prevStatusFilter) {
+    setPrevSearchQ(searchQ);
+    setPrevStatusFilter(statusFilter);
+    setLoading(true);
+    setActionMsg(null);
+  }
+
   const fetchRegistry = useCallback(async () => {
     setLoading(true);
     setActionMsg(null);
@@ -268,8 +277,27 @@ export function OntologyManager() {
   }, [searchQ, statusFilter]);
 
   useEffect(() => {
-    fetchRegistry();
-  }, [fetchRegistry]);
+    let ignore = false;
+    async function fetchInitial() {
+      try {
+        const params = new URLSearchParams();
+        if (searchQ) params.set("q", searchQ);
+        const res = await fetch(`/api/ontology/registry?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!ignore) setEntries(data);
+        } else {
+          if (!ignore) setEntries([]);
+        }
+      } catch {
+        if (!ignore) setEntries([]);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, [searchQ, statusFilter]);
 
   const flashMsg = (type: "ok" | "err", text: string) => {
     setActionMsg({ type, text });

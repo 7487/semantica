@@ -178,17 +178,31 @@ function DetailPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const [prevUri, setPrevUri] = useState(uri);
+  if (uri !== prevUri) {
+    setPrevUri(uri);
     setLoading(true);
     setError("");
+    setDetail(null);
+  }
+
+  useEffect(() => {
+    let ignore = false;
     fetch(`/api/ontology/entity/${encodeURIComponent(uri)}`)
       .then((r) => {
         if (!r.ok) throw new Error("Not found");
         return r.json();
       })
-      .then(setDetail)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!ignore) setDetail(data);
+      })
+      .catch((e) => {
+        if (!ignore) setError(e.message);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => { ignore = true; };
   }, [uri]);
 
   return (

@@ -74,9 +74,34 @@ export function VersionsTab() {
   }, []);
 
   useEffect(() => {
-    loadVersions();
-    loadProposals();
-  }, [loadVersions, loadProposals]);
+    let ignore = false;
+    async function fetchInitial() {
+      try {
+        const [propRes] = await Promise.all([
+          fetch("/api/ontology/proposals"),
+        ]);
+        if (propRes.ok) {
+          const propData = await propRes.json();
+          if (!ignore) setProposals(propData);
+        }
+      } catch (e) {
+        console.error("Failed to load proposals", e);
+      }
+      
+      if (!ontologyUri) return;
+      try {
+        const verRes = await fetch(`/api/ontology/versions/${encodeURIComponent(ontologyUri)}`);
+        if (verRes.ok) {
+          const verData = await verRes.json();
+          if (!ignore) setVersions(verData);
+        }
+      } catch (e) {
+        console.error("Failed to load versions", e);
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, [ontologyUri]);
 
   const approveProposal = useCallback(async (proposalId: string) => {
     try {
