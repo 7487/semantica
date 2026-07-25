@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Checkov flagged the knowledge-explorer Helm chart for using the default Kubernetes namespace** ([code scanning alert #779](https://github.com/semantica-agi/semantica/security/code-scanning/779), [#778](https://github.com/semantica-agi/semantica/security/code-scanning/778), [#777](https://github.com/semantica-agi/semantica/security/code-scanning/777), `CKV_K8S_21`) by @KaifAhmad1
   - `templates/service.yaml`, `templates/deployment.yaml`, and `templates/configmap.yaml` all already set `metadata.namespace` to `{{ .Release.Namespace }}`, which is only bound at `helm install`/`helm template` time; Checkov's helm framework renders the chart without a namespace override, so it always resolves to `default` and trips `CKV_K8S_21` even though the chart is namespace-agnostic by design
-  - Added a `# checkov:skip=CKV_K8S_21` comment to each of the three files, following the same per-file suppression convention already used for the Cloud Run false positives in `deploy/gcp/cloudrun-service.yaml`, and documented the reasoning in `.checkov.yaml`
+  - Added a `checkov.io/skip1: CKV_K8S_21` metadata annotation to each of the three files to suppress the scanner artifact false-positive properly in Helm templates, and documented the reasoning in `.checkov.yaml`
 
 - **No React error boundaries around lazy-loaded Explorer workspaces — a single render error crashed the whole app** (#768, #794) by @Sameer6305
   - Added an `ErrorBoundary` class component (`explorer/src/ErrorBoundary.tsx`) and wrapped each lazy-loaded workspace's `<Suspense>` block in `App.tsx` with it, keyed on the active sub-view so navigating away from and back to a crashed tab remounts it cleanly

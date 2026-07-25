@@ -1,6 +1,4 @@
-# checkov:skip=CKV_K8S_21: namespace is set via .Release.Namespace, bound only at helm install/template time
-# Checkov's helm renderer runs without a namespace override, so this always resolves to "default" here —
-# a scanner artifact, not the deployed value; see .checkov.yaml
+
 apiVersion: v1
 kind: Service
 metadata:
@@ -8,6 +6,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "knowledge-explorer.labels" . | nindent 4 }}
+  annotations:
+    checkov.io/skip1: CKV_K8S_21=namespace is set via .Release.Namespace, bound only at helm install/template time
 spec:
   type: {{ .Values.service.type }}
   ports:

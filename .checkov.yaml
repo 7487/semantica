@@ -8,5 +8,5 @@
 # which is only bound at `helm install`/`helm template` time. Checkov's helm
 # framework renders the chart without a namespace override, so it always
 # resolves to "default" and trips CKV_K8S_21 even though the chart is
-# namespace-agnostic by design. Suppressed the same way, per-file.
+# namespace-agnostic by design. Suppressed via metadata annotations on each resource.
 skip-check: []
