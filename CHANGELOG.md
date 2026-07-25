@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **No React error boundaries around lazy-loaded Explorer workspaces — a single render error crashed the whole app** (#768, #794) by @Sameer6305
+  - Added an `ErrorBoundary` class component (`explorer/src/ErrorBoundary.tsx`) and wrapped each lazy-loaded workspace's `<Suspense>` block in `App.tsx` with it, keyed on the active sub-view so navigating away from and back to a crashed tab remounts it cleanly
+  - Failed retries are capped at 3 before the fallback UI switches from "Try Again" to a "Reload Application" dead-end, preventing infinite retry loops on deterministic crashes; raw error/stack details are logged via `console.error` only and never rendered into the fallback UI
+  - Fixed the retry counter so it resets after a retry actually succeeds and stays error-free for a few seconds, instead of never resetting (which could permanently exhaust the retry budget on unrelated, individually-recoverable transient errors) or resetting on the very next commit (which could fire prematurely while `Suspense` was still showing its fallback)
+
 - **`tests/explorer/test_explorer_api.py` failed with `TypeError: Client.__init__() got an unexpected keyword argument 'app'` on current httpx** (#788, #789) by @Sameer6305
   - `httpx>=0.28.0` removed the `app=` kwarg that Starlette's `TestClient` relies on to wrap a FastAPI app for testing; `httpx` wasn't pinned anywhere in `pyproject.toml`, so different environments could independently resolve an incompatible transitive version and hit the same break
   - Added an explicit `httpx<0.28.0` constraint to the main `[project.dependencies]` array (not just a dev extra), so it applies globally across production, dev, and CI installs
