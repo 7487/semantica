@@ -192,6 +192,7 @@ export function EntityResolutionTab() {
   }, [threshold]);
 
   const handleMerge = useCallback(async (primaryId: string, duplicateId: string) => {
+    setScanError("");
     try {
       const res = await fetch("/api/enrich/merge", {
         method: "POST",
@@ -200,6 +201,9 @@ export function EntityResolutionTab() {
       });
       if (!res.ok) throw new Error(`Merge failed (${res.status})`);
       const data = await res.json();
+      if (res.status === 207) {
+        setScanError(data.message || "Warning: Partial merge.");
+      }
       logEvent("merge", `Merged ${duplicateId} → ${primaryId} · ${data.edges_updated ?? 0} edges redirected`, {
         primary: primaryId,
         duplicate: duplicateId,
@@ -207,7 +211,7 @@ export function EntityResolutionTab() {
       });
       setPairs((prev) => prev.filter((p) => !(p.a.id === primaryId && p.b.id === duplicateId)));
     } catch (err) {
-      console.error("[EntityResolution] merge failed", err);
+      setScanError(err instanceof Error ? err.message : "Merge failed");
     }
   }, []);
 
