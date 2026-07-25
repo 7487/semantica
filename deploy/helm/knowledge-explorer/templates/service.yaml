@@ -1,3 +1,4 @@
+# checkov:skip=CKV_K8S_21:namespace is set to .Release.Namespace below, supplied at install time via `helm install -n <namespace>`; Checkov's helm-chart renderer runs without a namespace override and always resolves this to "default", which is a scanner artifact, not the deployed value
 apiVersion: v1
 kind: Service
 metadata:

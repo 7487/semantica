@@ -2,4 +2,11 @@
 # Cloud Run false-positives (CKV_K8S_21/28/30) are suppressed via per-file
 # inline checkov:skip comments in deploy/gcp/cloudrun-service.yaml rather than
 # globally here, so future real Kubernetes manifests are not silently exempted.
+#
+# The knowledge-explorer Helm chart's unconditional templates (service.yaml,
+# deployment.yaml, configmap.yaml) set metadata.namespace to .Release.Namespace,
+# which is only bound at `helm install`/`helm template` time. Checkov's helm
+# framework renders the chart without a namespace override, so it always
+# resolves to "default" and trips CKV_K8S_21 even though the chart is
+# namespace-agnostic by design. Suppressed the same way, per-file.
 skip-check: []
