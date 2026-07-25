@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **No React error boundaries around lazy-loaded Explorer workspaces — a single render error crashed the whole app** (#768, #794) by @Sameer6305
+  - Added an `ErrorBoundary` class component (`explorer/src/ErrorBoundary.tsx`) and wrapped each lazy-loaded workspace's `<Suspense>` block in `App.tsx` with it, keyed on the active sub-view so navigating away from and back to a crashed tab remounts it cleanly
+  - Failed retries are capped at 3 before the fallback UI switches from "Try Again" to a "Reload Application" dead-end, preventing infinite retry loops on deterministic crashes; raw error/stack details are logged via `console.error` only and never rendered into the fallback UI
+  - Fixed the retry counter so it resets after a retry actually succeeds and stays error-free for a few seconds, instead of never resetting (which could permanently exhaust the retry budget on unrelated, individually-recoverable transient errors) or resetting on the very next commit (which could fire prematurely while `Suspense` was still showing its fallback)
+
 - **Explorer frontend workspaces silently swallowed network/server errors** (#767, #790) by @Sameer6305
   - `ShaclStudio.tsx`, `VersionsTab.tsx`, `SKOSVocabularyManager.tsx`, `EntityResolutionTab.tsx`, `LineageDiagram.tsx`, `DecisionWorkspace.tsx`, `KGOverviewTab.tsx`, `OntologyManager.tsx`, `OntologySearch.tsx`, `ReasoningWorkspace.tsx`, and `SparqlWorkspace.tsx` now render a visible error banner instead of only `console.error()`-ing failed fetches
   - Added explicit `response.status === 207` (Multi-Status) handling across these workspaces so partial backend failures surface a warning instead of reading as a full success (`response.ok` is `true` for all 2xx codes, including 207)

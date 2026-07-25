@@ -1,4 +1,4 @@
-﻿import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   ArrowRight,
@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const DecisionWorkspace = lazy(() => import('./workspaces/DecisionWorkspace/DecisionWorkspace').then((module) => ({ default: module.DecisionWorkspace })));
 const DiffMergeWorkspace = lazy(() => import('./workspaces/DiffMergeWorkspace/DiffMergeWorkspace').then((module) => ({ default: module.DiffMergeWorkspace })));
@@ -1800,14 +1801,16 @@ export default function App() {
             </>
           }
         >
-          <Suspense fallback={<WorkspaceFallback />}>
-            {exploreView === 'graph' ? (
-              <GraphWorkspace
-                externalFocusNodeId={graphFocusRequest?.nodeId}
-                externalFocusToken={graphFocusRequest?.token}
-              />
-            ) : <VocabularyWorkspace />}
-          </Suspense>
+          <ErrorBoundary key={`explore-${exploreView}`}>
+            <Suspense fallback={<WorkspaceFallback />}>
+              {exploreView === 'graph' ? (
+                <GraphWorkspace
+                  externalFocusNodeId={graphFocusRequest?.nodeId}
+                  externalFocusToken={graphFocusRequest?.token}
+                />
+              ) : <VocabularyWorkspace />}
+            </Suspense>
+          </ErrorBoundary>
         </WorkspaceShell>
       );
     }
@@ -1829,9 +1832,11 @@ export default function App() {
             </>
           }
         >
-          <Suspense fallback={<WorkspaceFallback />}>
-            {analyzeView === 'reasoning' ? <ReasoningWorkspace /> : <SparqlWorkspace />}
-          </Suspense>
+          <ErrorBoundary key={`analyze-${analyzeView}`}>
+            <Suspense fallback={<WorkspaceFallback />}>
+              {analyzeView === 'reasoning' ? <ReasoningWorkspace /> : <SparqlWorkspace />}
+            </Suspense>
+          </ErrorBoundary>
         </WorkspaceShell>
       );
     }
@@ -1843,9 +1848,11 @@ export default function App() {
           subtitle="Inspect decision chains, causal context, and precedent matches."
           kicker="Decision Intelligence"
         >
-          <Suspense fallback={<WorkspaceFallback />}>
-            <DecisionWorkspace />
-          </Suspense>
+          <ErrorBoundary key="decisions">
+            <Suspense fallback={<WorkspaceFallback />}>
+              <DecisionWorkspace />
+            </Suspense>
+          </ErrorBoundary>
         </WorkspaceShell>
       );
     }
@@ -1873,12 +1880,14 @@ export default function App() {
             </>
           }
         >
-          <Suspense fallback={<WorkspaceFallback />}>
-            {enrichView === 'import' ? <ImportExportWorkspace /> :
-             enrichView === 'merge' ? <DiffMergeWorkspace /> :
-             enrichView === 'resolve' ? <EntityResolutionTab /> :
-             <RegistryTab />}
-          </Suspense>
+          <ErrorBoundary key={`enrich-${enrichView}`}>
+            <Suspense fallback={<WorkspaceFallback />}>
+              {enrichView === 'import' ? <ImportExportWorkspace /> :
+               enrichView === 'merge' ? <DiffMergeWorkspace /> :
+               enrichView === 'resolve' ? <EntityResolutionTab /> :
+               <RegistryTab />}
+            </Suspense>
+          </ErrorBoundary>
         </WorkspaceShell>
       );
     }
@@ -1891,15 +1900,17 @@ export default function App() {
           kicker="Schema Governance"
           compact
         >
-          <Suspense fallback={<WorkspaceFallback />}>
-            <OntologyWorkspace
-              onJumpToGraphNode={(nodeId: string) => {
-                setGraphFocusRequest({ nodeId, token: Date.now() });
-                setActiveWorkspace('explore');
-                setExploreView('graph');
-              }}
-            />
-          </Suspense>
+          <ErrorBoundary key="ontology-hub">
+            <Suspense fallback={<WorkspaceFallback />}>
+              <OntologyWorkspace
+                onJumpToGraphNode={(nodeId: string) => {
+                  setGraphFocusRequest({ nodeId, token: Date.now() });
+                  setActiveWorkspace('explore');
+                  setExploreView('graph');
+                }}
+              />
+            </Suspense>
+          </ErrorBoundary>
         </WorkspaceShell>
       );
     }
@@ -1923,14 +1934,16 @@ export default function App() {
           </>
         }
       >
-        <Suspense fallback={<WorkspaceFallback />}>
-          {manageView === 'lineage' ? <LineageDiagram /> :
-           manageView === 'kg-overview' ? <KGOverviewTab /> :
-           <OntologySummaryTab onOpenVocabularyBrowser={() => {
-             setActiveWorkspace('explore');
-             setExploreView('vocabulary');
-           }} />}
-        </Suspense>
+        <ErrorBoundary key={`manage-${manageView}`}>
+          <Suspense fallback={<WorkspaceFallback />}>
+            {manageView === 'lineage' ? <LineageDiagram /> :
+             manageView === 'kg-overview' ? <KGOverviewTab /> :
+             <OntologySummaryTab onOpenVocabularyBrowser={() => {
+               setActiveWorkspace('explore');
+               setExploreView('vocabulary');
+             }} />}
+          </Suspense>
+        </ErrorBoundary>
       </WorkspaceShell>
     );
   };
