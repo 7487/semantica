@@ -2535,6 +2535,9 @@ def provenance_audit(cli_ctx: CLIContext, since: Optional[str], fmt: str,
     cli_ctx = _require_ctx(cli_ctx)
 
     def _action() -> None:
+        if _is_dry(cli_ctx, False):
+            _dry(cli_ctx, "export audit log", since=since, format=fmt, output=output)
+            return
         try:
             from .provenance import ProvenanceManager
             pm = ProvenanceManager(config=cli_ctx.config.to_dict())

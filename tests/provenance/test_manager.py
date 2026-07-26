@@ -11,7 +11,89 @@ from semantica.provenance import ProvenanceManager, SourceReference
 
 class TestProvenanceManager:
     """Test ProvenanceManager functionality."""
-    
+
+    @pytest.fixture(autouse=True)
+    def reset_default_storage_path(self):
+        original = ProvenanceManager._default_storage_path
+        try:
+            yield
+        finally:
+            ProvenanceManager._default_storage_path = original
+
+    def test_default_storage_path_pattern(self, tmp_path):
+        """Test global default storage pattern, config kwarg, and test-isolation context manager."""
+        from semantica.provenance import default_storage_path, InMemoryStorage, SQLiteStorage
+
+        # 1. Default should fallback to InMemoryStorage when no path/config
+        prov_mgr = ProvenanceManager()
+        assert isinstance(prov_mgr.storage, InMemoryStorage)
+
+        # 2. Config kwarg should extract storage_path gracefully (CLI bug fix)
+        cfg_path = str(tmp_path / "cfg_test.db")
+        cfg = {"provenance": {"storage_path": cfg_path}}
+        prov_mgr = ProvenanceManager(config=cfg)
+        assert isinstance(prov_mgr.storage, SQLiteStorage)
+
+        # 3. Explicit storage_path arg overrides config and default
+        explicit_path = str(tmp_path / "explicit.db")
+        prov_mgr = ProvenanceManager(storage_path=explicit_path, config=cfg)
+        assert isinstance(prov_mgr.storage, SQLiteStorage)
+
+        # 4. default_storage_path context manager should temporarily set default and restore on exit
+        ctx_path = str(tmp_path / "ctx_test.db")
+        with default_storage_path(ctx_path):
+            assert ProvenanceManager._default_storage_path == ctx_path
+            prov_mgr = ProvenanceManager()
+            assert isinstance(prov_mgr.storage, SQLiteStorage)
+
+        # Should be restored after context exit
+        assert ProvenanceManager._default_storage_path is None
+        prov_mgr = ProvenanceManager()
+        assert isinstance(prov_mgr.storage, InMemoryStorage)
+
+        # 5. Guaranteed restoration even on exception
+        exc_path = str(tmp_path / "exception_test.db")
+        try:
+            with ProvenanceManager.default_storage_path(exc_path):
+                assert ProvenanceManager._default_storage_path == exc_path
+                raise RuntimeError("Test exception inside context")
+        except RuntimeError:
+            pass
+        assert ProvenanceManager._default_storage_path is None
+
+    def test_isolation_part_1_with_context_manager(self, tmp_path):
+        """Part 1: Prove context manager sets default storage path for ProvenanceManager created inside context."""
+        from semantica.provenance import default_storage_path, SQLiteStorage
+        iso_db = str(tmp_path / "iso_part1.db")
+        with default_storage_path(iso_db):
+            prov_mgr = ProvenanceManager()
+            assert isinstance(prov_mgr.storage, SQLiteStorage)
+            assert prov_mgr.storage.db_path == iso_db
+
+    def test_isolation_part_2_no_leakage_after_context(self):
+        """Part 2: Prove that in a SEPARATE test function after context exit, ProvenanceManager falls back to InMemoryStorage without leakage."""
+        from semantica.provenance import InMemoryStorage
+        assert ProvenanceManager._default_storage_path is None
+        prov_mgr = ProvenanceManager()
+        assert isinstance(prov_mgr.storage, InMemoryStorage)
+
+    def test_orchestrator_config_wiring(self, tmp_path):
+        """Test Semantica orchestrator configures ProvenanceManager._default_storage_path."""
+        from semantica.core import Semantica
+        from semantica.provenance import ProvenanceManager, InMemoryStorage, SQLiteStorage
+
+        # 1. No path set in config means InMemoryStorage fallback
+        _ = Semantica()
+        prov_mgr = ProvenanceManager()
+        assert isinstance(prov_mgr.storage, InMemoryStorage)
+
+        # 2. Config with provenance.storage_path sets default storage path
+        test_db = str(tmp_path / "orch_test.db")
+        _ = Semantica(config={"provenance": {"storage_path": test_db}})
+        assert ProvenanceManager._default_storage_path == test_db
+        prov_mgr = ProvenanceManager()
+        assert isinstance(prov_mgr.storage, SQLiteStorage)
+
     def test_initialization(self):
         """Test manager initialization."""
         prov_mgr = ProvenanceManager()
@@ -407,3 +489,42 @@ class TestProvenanceManager:
         assert e2.used_entities[0] in entity_ids, (
             "Archived history entry should be reachable via used_entities in lineage"
         )
+
+    def test_cli_lineage(self):
+        """Test CLI lineage wrapper method on ProvenanceManager."""
+        prov_mgr = ProvenanceManager()
+        prov_mgr.track_entity("e_cli", source="doc_cli")
+        res = prov_mgr.lineage("e_cli", depth=2)
+        assert res["entity_id"] == "e_cli"
+        assert res["depth"] == 2
+        assert isinstance(res["lineage"], list)
+        assert isinstance(res["sources"], list)
+
+    def test_cli_audit_log(self):
+        """Test CLI audit_log wrapper method on ProvenanceManager."""
+        prov_mgr = ProvenanceManager()
+        prov_mgr.track_entity("e_audit", source="doc_audit")
+        res_table = prov_mgr.audit_log(format="table")
+        assert isinstance(res_table, str)
+        assert "ENTITY_ID" in res_table
+        res_csv = prov_mgr.audit_log(format="csv")
+        assert "entity_id,entity_type,activity_id,agent_id,timestamp" in res_csv
+        res_json = prov_mgr.audit_log(format="json")
+        assert isinstance(res_json, list)
+
+    def test_cli_export_prov(self):
+        """Test CLI export_prov method on ProvenanceManager."""
+        prov_mgr = ProvenanceManager()
+        prov_mgr.track_entity("e_rdf", source="doc_rdf")
+        ttl = prov_mgr.export_prov(format="turtle")
+        assert "prov:Entity" in ttl or "http://www.w3.org/ns/prov#Entity" in ttl
+
+    def test_cli_check(self):
+        """Test CLI check integrity method on ProvenanceManager."""
+        prov_mgr = ProvenanceManager()
+        prov_mgr.track_entity("e_valid", source="doc_1")
+        check_res = prov_mgr.check(strict=True)
+        assert check_res["valid"] is True
+        assert check_res["total_entries"] >= 1
+        assert check_res["errors"] == 0
+

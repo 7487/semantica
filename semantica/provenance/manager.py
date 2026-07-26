@@ -24,13 +24,28 @@ Author: Semantica Contributors
 License: MIT
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from collections.abc import Mapping
 from datetime import datetime
+from contextlib import contextmanager
 
-from .schemas import ProvenanceEntry, SourceReference, PropertySource
+from .schemas import ProvenanceEntry, SourceReference
 from .storage import ProvenanceStorage, InMemoryStorage, SQLiteStorage
 from .integrity import compute_checksum
+
+
+@contextmanager
+def default_storage_path(path: Optional[str]):
+    """
+    Context manager for temporarily setting ProvenanceManager._default_storage_path.
+    Guarantees restoration to the previous value on exit (safe for tests).
+    """
+    original_path = ProvenanceManager._default_storage_path
+    ProvenanceManager._default_storage_path = path
+    try:
+        yield
+    finally:
+        ProvenanceManager._default_storage_path = original_path
 
 
 class ProvenanceManager:
@@ -57,15 +72,29 @@ class ProvenanceManager:
     _default_storage_path: Optional[str] = None
 
     @classmethod
-    def set_default_storage_path(cls, path: str) -> None:
+    def set_default_storage_path(cls, path: Optional[str]) -> None:
         """Set a global default storage path for all new instances."""
         cls._default_storage_path = path
+
+    @classmethod
+    @contextmanager
+    def default_storage_path(cls, path: Optional[str]):
+        """
+        Context manager for temporarily setting the global default storage path.
+        Guarantees restoration to the previous value on exit (safe for tests).
+        """
+        original_path = cls._default_storage_path
+        cls._default_storage_path = path
+        try:
+            yield
+        finally:
+            cls._default_storage_path = original_path
     
     def __init__(
         self,
         storage: Optional[ProvenanceStorage] = None,
         storage_path: Optional[str] = None,
-        config: Optional[Dict[str, Any]] = None,
+        config: Optional[Any] = None,
         **kwargs
     ):
         """
@@ -74,14 +103,19 @@ class ProvenanceManager:
         Args:
             storage: Custom storage backend (optional)
             storage_path: Path to SQLite database (optional, uses in-memory if None)
-            config: Configuration dictionary (optional)
+            config: Configuration dictionary or mapping (optional)
         """
         if storage:
             self.storage = storage
             return
 
         if not storage_path and config:
-            storage_path = config.get("provenance", {}).get("storage_path")
+            if isinstance(config, Mapping) or isinstance(config, dict):
+                prov_config = config.get("provenance", {})
+                if (isinstance(prov_config, Mapping) or isinstance(prov_config, dict)) and "storage_path" in prov_config:
+                    storage_path = prov_config.get("storage_path")
+                elif "storage_path" in config:
+                    storage_path = config.get("storage_path")
 
         if not storage_path and self._default_storage_path:
             storage_path = self._default_storage_path
@@ -626,3 +660,153 @@ class ProvenanceManager:
                 if e.source_document
             ))
         }
+
+    # === CLI Integration Methods ===
+
+    def lineage(self, entity_id: str, depth: int = 3) -> Dict[str, Any]:
+        """
+        Get lineage information formatted for CLI display.
+
+        Args:
+            entity_id: ID of the entity to trace lineage for
+            depth: Maximum traversal depth (default: 3)
+
+        Returns:
+            Dict containing entity_id, depth, count, lineage entries, and sources
+        """
+        base_lineage = self.get_lineage(entity_id)
+        entries = base_lineage.get("entries", [])
+        if len(entries) > depth:
+            entries = entries[:depth]
+        sources = self.get_all_sources(entity_id)
+        return {
+            "entity_id": entity_id,
+            "depth": depth,
+            "chain_length": len(entries),
+            "source_documents": base_lineage.get("source_documents", []),
+            "lineage": entries,
+            "entries": entries,
+            "sources": sources,
+            "metadata": base_lineage.get("metadata", {}),
+        }
+
+    def audit_log(
+        self, since: Optional[str] = None, format: str = "table"
+    ) -> Union[str, List[Dict[str, Any]]]:
+        """
+        Export audit log of provenance entries.
+
+        Args:
+            since: Optional ISO 8601 date string filter
+            format: Output format ('table', 'csv', 'json')
+
+        Returns:
+            Formatted audit log as string or list of dicts
+        """
+        entries = self.storage.retrieve_all()
+        if since:
+            entries = [e for e in entries if getattr(e, "timestamp", "") >= since]
+        entries.sort(key=lambda e: getattr(e, "timestamp", ""))
+
+        if format == "json":
+            return [
+                e.to_dict() if hasattr(e, "to_dict") else getattr(e, "__dict__", {})
+                for e in entries
+            ]
+        elif format == "csv":
+            lines = ["entity_id,entity_type,activity_id,agent_id,timestamp"]
+            for e in entries:
+                lines.append(
+                    f"{e.entity_id},{e.entity_type},{e.activity_id},{e.agent_id},{getattr(e, 'timestamp', '')}"
+                )
+            return "\n".join(lines)
+        else:
+            lines = [
+                f"{'ENTITY_ID':<20} {'TYPE':<15} {'ACTIVITY':<15} {'TIMESTAMP':<25}"
+            ]
+            lines.append("-" * 75)
+            for e in entries:
+                lines.append(
+                    f"{str(e.entity_id):<20} {str(e.entity_type):<15} {str(e.activity_id):<15} {str(getattr(e, 'timestamp', '')):<25}"
+                )
+            return "\n".join(lines)
+
+    def export_prov(self, format: str = "turtle") -> str:
+        """
+        Export provenance as W3C PROV-O RDF.
+
+        Args:
+            format: RDF format ('turtle', 'ntriples', 'jsonld')
+
+        Returns:
+            Serialized RDF string
+        """
+        from rdflib import Graph, Literal, Namespace, URIRef
+        from rdflib.namespace import RDF, XSD
+
+        PROV = Namespace("http://www.w3.org/ns/prov#")
+        EX = Namespace("http://example.org/ns/")
+
+        g = Graph()
+        g.bind("prov", PROV)
+        g.bind("ex", EX)
+
+        for e in self.storage.retrieve_all():
+            ent_uri = URIRef(EX[str(e.entity_id)])
+            g.add((ent_uri, RDF.type, PROV.Entity))
+
+            if getattr(e, "timestamp", None):
+                g.add(
+                    (
+                        ent_uri,
+                        PROV.generatedAtTime,
+                        Literal(e.timestamp, datatype=XSD.dateTime),
+                    )
+                )
+
+            if getattr(e, "agent_id", None) and e.agent_id != "unknown":
+                ag_uri = URIRef(EX[str(e.agent_id)])
+                g.add((ag_uri, RDF.type, PROV.Agent))
+                g.add((ent_uri, PROV.wasAttributedTo, ag_uri))
+
+            if getattr(e, "activity_id", None) and e.activity_id != "unknown":
+                act_uri = URIRef(EX[str(e.activity_id)])
+                g.add((act_uri, RDF.type, PROV.Activity))
+                g.add((ent_uri, PROV.wasGeneratedBy, act_uri))
+
+            for parent_id in getattr(e, "derived_from", []):
+                p_uri = URIRef(EX[str(parent_id)])
+                g.add((ent_uri, PROV.wasDerivedFrom, p_uri))
+
+        rdf_format = "json-ld" if format == "jsonld" else format
+        return g.serialize(format=rdf_format)
+
+    def check(self, strict: bool = False) -> Dict[str, Any]:
+        """
+        Validate provenance integrity.
+
+        Args:
+            strict: Whether to perform strict validation
+
+        Returns:
+            Dictionary with validation results
+        """
+        entries = self.storage.retrieve_all()
+        all_ids = {e.entity_id for e in entries}
+
+        missing_refs = []
+        for e in entries:
+            for p in getattr(e, "derived_from", []):
+                if p not in all_ids:
+                    missing_refs.append(f"{e.entity_id} -> {p}")
+
+        valid = len(missing_refs) == 0 if strict else True
+
+        return {
+            "valid": valid,
+            "total_entries": len(entries),
+            "missing_references": missing_refs,
+            "strict": strict,
+            "errors": len(missing_refs) if strict else 0,
+        }
+

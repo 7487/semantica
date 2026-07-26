@@ -27,11 +27,11 @@ License: MIT
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from ..utils.exceptions import ConfigurationError, ProcessingError
+from ..utils.exceptions import ProcessingError
 from ..utils.logging import get_logger, log_execution_time
 from ..utils.progress_tracker import get_progress_tracker
 from .config_manager import Config, ConfigManager
-from .lifecycle import LifecycleManager, SystemState
+from .lifecycle import LifecycleManager
 from .plugin_registry import PluginRegistry
 
 
@@ -92,7 +92,9 @@ class Semantica:
 
         # Configure global provenance storage path if specified
         try:
-            prov_storage_path = self.config.get("provenance", {}).get("storage_path")
+            prov_storage_path = self.config.get("provenance.storage_path")
+            if not prov_storage_path and isinstance(self.config.get("provenance"), dict):
+                prov_storage_path = self.config.get("provenance", {}).get("storage_path")
             if prov_storage_path:
                 from ..provenance import ProvenanceManager
                 ProvenanceManager.set_default_storage_path(prov_storage_path)
@@ -640,10 +642,10 @@ class Semantica:
         try:
             # Import key modules to verify they're available
             # These imports don't create instances, just verify module availability
-            from ..ingest import FileIngestor
-            from ..kg import GraphBuilder
-            from ..parse import DocumentParser
-            from ..pipeline import PipelineBuilder
+            from ..ingest import FileIngestor  # noqa: F401
+            from ..kg import GraphBuilder  # noqa: F401
+            from ..parse import DocumentParser  # noqa: F401
+            from ..pipeline import PipelineBuilder  # noqa: F401
 
             self.logger.debug("Framework modules verified and available")
         except (ImportError, OSError) as e:
