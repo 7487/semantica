@@ -28,6 +28,7 @@ from typing import Optional, List, Dict, Any, Union
 from collections.abc import Mapping
 from datetime import datetime
 from contextlib import contextmanager
+import copy
 import threading
 
 from .schemas import ProvenanceEntry, SourceReference
@@ -116,7 +117,11 @@ class ProvenanceManager:
         if not storage_path and config:
             if isinstance(config, Mapping) or isinstance(config, dict):
                 prov_config = config.get("provenance", {})
-                if (isinstance(prov_config, Mapping) or isinstance(prov_config, dict)) and "storage_path" in prov_config:
+                prov_has_path = (
+                    isinstance(prov_config, (Mapping, dict))
+                    and "storage_path" in prov_config
+                )
+                if prov_has_path:
                     storage_path = prov_config.get("storage_path")
                 elif "storage_path" in config:
                     storage_path = config.get("storage_path")
@@ -164,12 +169,6 @@ class ProvenanceManager:
         if not isinstance(entity_id, str):
             raise TypeError(f"entity_id must be a string, got {type(entity_id).__name__}")
         
-        if not isinstance(entity_id, str):
-            raise TypeError(f"entity_id must be a string, got {type(entity_id).__name__}")
-        
-        if not isinstance(entity_id, str):
-            raise TypeError(f"entity_id must be a string, got {type(entity_id).__name__}")
-        
         # Check if entity already exists
         existing = self.storage.retrieve(entity_id)
         parent_id = kwargs.get("parent_entity_id")
@@ -205,7 +204,6 @@ class ProvenanceManager:
         if existing:
             # Create a history entry for the previous state
             # Use timestamp or counter for uniqueness
-            import copy
             history_entry = copy.deepcopy(existing)
             history_id = f"{entity_id}:v:{existing.last_updated}"
             
@@ -724,8 +722,9 @@ class ProvenanceManager:
         elif format == "csv":
             lines = ["entity_id,entity_type,activity_id,agent_id,timestamp"]
             for e in entries:
+                ts = getattr(e, "timestamp", "")
                 lines.append(
-                    f"{e.entity_id},{e.entity_type},{e.activity_id},{e.agent_id},{getattr(e, 'timestamp', '')}"
+                    f"{e.entity_id},{e.entity_type},{e.activity_id},{e.agent_id},{ts}"
                 )
             return "\n".join(lines)
         else:
@@ -734,8 +733,10 @@ class ProvenanceManager:
             ]
             lines.append("-" * 75)
             for e in entries:
+                ts = str(getattr(e, "timestamp", ""))
                 lines.append(
-                    f"{str(e.entity_id):<20} {str(e.entity_type):<15} {str(e.activity_id):<15} {str(getattr(e, 'timestamp', '')):<25}"
+                    f"{str(e.entity_id):<20} {str(e.entity_type):<15}"
+                    f" {str(e.activity_id):<15} {ts:<25}"
                 )
             return "\n".join(lines)
 
@@ -788,7 +789,10 @@ class ProvenanceManager:
 
             for u_id in getattr(e, "used_entities", []):
                 u_uri = URIRef(EX[str(u_id)])
-                g.add((ent_uri, PROV.wasDerivedFrom, u_uri))
+                # Emit wasDerivedFrom only when this used entity is not the same
+                # as parent_entity_id — which already carries that triple above.
+                if u_id != getattr(e, "parent_entity_id", None):
+                    g.add((ent_uri, PROV.wasDerivedFrom, u_uri))
                 if getattr(e, "activity_id", None) and e.activity_id != "unknown":
                     act_uri = URIRef(EX[str(e.activity_id)])
                     g.add((act_uri, PROV.used, u_uri))
