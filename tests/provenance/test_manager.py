@@ -498,6 +498,9 @@ class TestProvenanceManager:
         assert res["entity_id"] == "e_cli"
         assert res["depth"] == 2
         assert isinstance(res["lineage"], list)
+        assert len(res["lineage"]) > 0
+        assert len(res["entries"]) > 0
+        assert res["lineage"][0]["entity_id"] == "e_cli"
         assert isinstance(res["sources"], list)
 
     def test_cli_audit_log(self):

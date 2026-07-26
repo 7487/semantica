@@ -557,9 +557,11 @@ class ProvenanceManager:
                 if isinstance(meta, dict):
                     aggregated_metadata.update(meta)
         
+        chain_dicts = [entry.to_dict() for entry in lineage_entries]
         return {
             "entity_id": entity_id,
-            "lineage_chain": [entry.to_dict() for entry in lineage_entries],
+            "lineage_chain": chain_dicts,
+            "entries": chain_dicts,
             "source_documents": list(set(
                 e.source_document for e in lineage_entries 
                 if e.source_document
@@ -675,7 +677,7 @@ class ProvenanceManager:
             Dict containing entity_id, depth, count, lineage entries, and sources
         """
         base_lineage = self.get_lineage(entity_id)
-        entries = base_lineage.get("entries", [])
+        entries = base_lineage.get("lineage_chain") or base_lineage.get("entries", [])
         if len(entries) > depth:
             entries = entries[:depth]
         sources = self.get_all_sources(entity_id)
