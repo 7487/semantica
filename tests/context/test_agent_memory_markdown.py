@@ -257,6 +257,29 @@ def test_reimporting_unchanged_markdown_does_not_rewrite_memory():
     assert memory.count() == 1
 
 
+def test_naive_and_aware_equivalent_timestamps_match_idempotently():
+    memory = AgentMemory()
+    utc_dt = datetime(2026, 7, 22, 9, 0, 0, tzinfo=timezone.utc)
+    naive_dt = utc_dt.astimezone().replace(tzinfo=None)
+    memory.store(
+        "Unchanged",
+        metadata={"type": "note", "updated_at": "2026-07-22T10:00:00+00:00"},
+        memory_id="mem_test",
+        timestamp=naive_dt,
+    )
+    document = markdown_document(
+        required_frontmatter("mem_test", created_at="2026-07-22T09:00:00+00:00"),
+        "Unchanged",
+    )
+
+    with patch.object(
+        memory, "_replace_memory_item", wraps=memory._replace_memory_item
+    ) as replace:
+        assert memory.import_data(document, format="markdown") == 1
+
+    replace.assert_not_called()
+
+
 def test_kind_is_accepted_as_the_type_alias():
     frontmatter = required_frontmatter()
     frontmatter["kind"] = frontmatter.pop("type")

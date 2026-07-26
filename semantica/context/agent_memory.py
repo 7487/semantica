@@ -2126,7 +2126,8 @@ class AgentMemory:
 
         return (
             existing.content == memory["content"]
-            and existing.timestamp == memory["timestamp"]
+            and self._timestamp_comparison_key(existing.timestamp)
+            == self._timestamp_comparison_key(memory["timestamp"])
             and existing.metadata == memory["metadata"]
             and existing.entities == memory["entities"]
             and existing.relationships == memory["relationships"]
