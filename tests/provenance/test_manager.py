@@ -518,16 +518,42 @@ class TestProvenanceManager:
     def test_cli_export_prov(self):
         """Test CLI export_prov method on ProvenanceManager."""
         prov_mgr = ProvenanceManager()
-        prov_mgr.track_entity("e_rdf", source="doc_rdf")
+        prov_mgr.track_entity("e_parent", source="doc_rdf")
+        prov_mgr.track_entity(
+            "e_child",
+            source="doc_rdf",
+            parent_entity_id="e_parent",
+            used_entities=["e_parent"],
+            activity_id="act_transform",
+        )
         ttl = prov_mgr.export_prov(format="turtle")
         assert "prov:Entity" in ttl or "http://www.w3.org/ns/prov#Entity" in ttl
+        assert "wasDerivedFrom" in ttl
+        assert "used" in ttl
 
     def test_cli_check(self):
         """Test CLI check integrity method on ProvenanceManager."""
         prov_mgr = ProvenanceManager()
-        prov_mgr.track_entity("e_valid", source="doc_1")
+        prov_mgr.track_entity("e_valid_parent", source="doc_1")
+        prov_mgr.track_entity(
+            "e_valid_child",
+            source="doc_1",
+            parent_entity_id="e_valid_parent",
+            used_entities=["e_valid_parent"],
+        )
         check_res = prov_mgr.check(strict=True)
         assert check_res["valid"] is True
-        assert check_res["total_entries"] >= 1
+        assert check_res["total_entries"] >= 2
         assert check_res["errors"] == 0
+
+        # Confirm non-strict mode still reports valid=False and errors > 0 when references are missing
+        prov_mgr.track_entity(
+            "e_broken_child",
+            source="doc_1",
+            parent_entity_id="non_existent_parent",
+        )
+        check_broken = prov_mgr.check(strict=False)
+        assert check_broken["valid"] is False
+        assert check_broken["errors"] >= 1
+        assert "e_broken_child -> non_existent_parent" in check_broken["missing_references"]
 

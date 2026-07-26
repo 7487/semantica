@@ -235,7 +235,8 @@ class ProvenanceManager:
             metadata=metadata or {},
             first_seen=existing.first_seen if existing else datetime.utcnow().isoformat(),
             last_updated=datetime.utcnow().isoformat(),
-            parent_entity_id=parent_id  # Link to history or explicit parent
+            parent_entity_id=parent_id,  # Link to history or explicit parent
+            used_entities=kwargs.get("used_entities", []),
         )
 
         # Make the archived history entry discoverable via trace_lineage()'s
@@ -776,9 +777,16 @@ class ProvenanceManager:
                 g.add((act_uri, RDF.type, PROV.Activity))
                 g.add((ent_uri, PROV.wasGeneratedBy, act_uri))
 
-            for parent_id in getattr(e, "derived_from", []):
-                p_uri = URIRef(EX[str(parent_id)])
+            if getattr(e, "parent_entity_id", None):
+                p_uri = URIRef(EX[str(e.parent_entity_id)])
                 g.add((ent_uri, PROV.wasDerivedFrom, p_uri))
+
+            for u_id in getattr(e, "used_entities", []):
+                u_uri = URIRef(EX[str(u_id)])
+                g.add((ent_uri, PROV.wasDerivedFrom, u_uri))
+                if getattr(e, "activity_id", None) and e.activity_id != "unknown":
+                    act_uri = URIRef(EX[str(e.activity_id)])
+                    g.add((act_uri, PROV.used, u_uri))
 
         rdf_format = "json-ld" if format == "jsonld" else format
         return g.serialize(format=rdf_format)
@@ -798,17 +806,21 @@ class ProvenanceManager:
 
         missing_refs = []
         for e in entries:
-            for p in getattr(e, "derived_from", []):
-                if p not in all_ids:
-                    missing_refs.append(f"{e.entity_id} -> {p}")
+            if getattr(e, "parent_entity_id", None):
+                if e.parent_entity_id not in all_ids:
+                    missing_refs.append(f"{e.entity_id} -> {e.parent_entity_id}")
+            for u_id in getattr(e, "used_entities", []):
+                if u_id not in all_ids:
+                    missing_refs.append(f"{e.entity_id} -> {u_id}")
 
-        valid = len(missing_refs) == 0 if strict else True
+        valid = len(missing_refs) == 0
+        errors = len(missing_refs)
 
         return {
             "valid": valid,
             "total_entries": len(entries),
             "missing_references": missing_refs,
             "strict": strict,
-            "errors": len(missing_refs) if strict else 0,
+            "errors": errors,
         }
 

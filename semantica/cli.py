@@ -2608,6 +2608,10 @@ def provenance_check(cli_ctx: CLIContext, strict: bool, local_json: bool) -> Non
             _jecho(result if isinstance(result, dict) else {"valid": bool(result)})
         else:
             _ok(cli_ctx, f"Provenance check: {result}")
+        if strict and isinstance(result, dict) and not result.get("valid", True):
+            raise click.ClickException(
+                f"Provenance integrity check failed: {result.get('errors')} error(s)"
+            )
 
     _run_with_error_handling(_action)
 
