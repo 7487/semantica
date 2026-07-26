@@ -60,10 +60,12 @@ License: MIT
 
 import copy
 import hashlib
+import os
 import re
+import tempfile
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -204,6 +206,7 @@ class AgentMemory:
         # In-memory storage
         self.memory_items: Dict[str, MemoryItem] = {}
         self.memory_index: deque = deque(maxlen=self.max_memory_size)
+        self._vector_ids: Dict[str, List[str]] = {}
 
         # Hierarchical Memory: Short-term buffer
         # Note: We use a list for flexible pruning (tokens & count).
@@ -234,6 +237,7 @@ class AgentMemory:
             "memory_items": {k: v.to_dict() for k, v in self.memory_items.items()},
             "memory_index": list(self.memory_index),
             "short_term_memory": [item.to_dict() for item in self.short_term_memory],
+            "vector_ids": self._vector_ids,
             "stats": self.stats,
         }
 
@@ -279,6 +283,11 @@ class AgentMemory:
         self.short_term_memory = [
             MemoryItem.from_dict(item) for item in data.get("short_term_memory", [])
         ]
+        self._vector_ids = {
+            memory_id: list(vector_ids)
+            for memory_id, vector_ids in data.get("vector_ids", {}).items()
+            if isinstance(vector_ids, list)
+        }
         self.stats = data.get(
             "stats",
             {"total_items": 0, "items_by_type": {}, "last_accessed": None},
@@ -323,6 +332,30 @@ class AgentMemory:
             memory_id = options.get("memory_id") or self._generate_memory_id()
             timestamp = options.get("timestamp") or datetime.now()
 
+            if memory_id in self.memory_items:
+                replacement_options = dict(options)
+                replacement_options.pop("memory_id", None)
+                replacement_options.pop("timestamp", None)
+                replaced = self._replace_memory_item(
+                    memory_id,
+                    content,
+                    metadata=metadata or {},
+                    entities=entities or [],
+                    relationships=relationships or [],
+                    timestamp=timestamp,
+                    **replacement_options,
+                )
+                if not replaced:
+                    raise RuntimeError(
+                        f"Failed to replace existing memory item: {memory_id}"
+                    )
+                self.progress_tracker.stop_tracking(
+                    tracking_id,
+                    status="completed",
+                    message=f"Stored memory: {memory_id}",
+                )
+                return memory_id
+
             # Create memory item
             memory_item = MemoryItem(
                 content=content,
@@ -341,24 +374,11 @@ class AgentMemory:
             skip_vector = options.get("skip_vector", False)
             if self.vector_store and not skip_vector:
                 try:
-                    self.progress_tracker.update_tracking(
-                        tracking_id, message="Generating embedding..."
+                    vector_ids = self._store_memory_vector(
+                        memory_item, tracking_id=tracking_id
                     )
-                    embedding = self._generate_embedding(content)
-                    memory_item.embedding = embedding
-
-                    # Store in vector store
-                    if hasattr(self.vector_store, "store_vectors"):
-                        # Use concrete VectorStore implementation
-                        if isinstance(memory_item.embedding, list):
-                            vectors = [np.array(memory_item.embedding)]
-                        else:
-                            vectors = [memory_item.embedding]
-                        meta = [memory_item.metadata]
-                        self.vector_store.store_vectors(vectors=vectors, metadata=meta)
-                    elif hasattr(self.vector_store, "add"):
-                        # Use VectorStore protocol
-                        self.vector_store.add([memory_item])
+                    if vector_ids:
+                        self._vector_ids[memory_id] = vector_ids
                 except Exception as e:
                     self.logger.warning(f"Failed to store in vector store: {e}")
 
@@ -384,7 +404,7 @@ class AgentMemory:
             self.logger.debug(f"Stored memory item: {memory_id}")
 
             # Apply retention policy
-            self._apply_retention_policy()
+            self._apply_retention_policy(skip_vector=skip_vector)
 
             self.progress_tracker.stop_tracking(
                 tracking_id, status="completed", message=f"Stored memory: {memory_id}"
@@ -551,7 +571,7 @@ class AgentMemory:
             "relationships": memory_item.relationships,
         }
 
-    def delete_memory(self, memory_id: str) -> bool:
+    def delete_memory(self, memory_id: str, *, skip_vector: bool = False) -> bool:
         """
         Delete memory item.
 
@@ -564,12 +584,17 @@ class AgentMemory:
         if memory_id not in self.memory_items:
             return False
 
-        # Remove from vector store
-        if self.vector_store and hasattr(self.vector_store, "delete"):
-            try:
-                self.vector_store.delete(memory_id)
-            except Exception as e:
-                self.logger.warning(f"Failed to delete from vector store: {e}")
+        # Remove from vector store unless a caller is staging an atomic local update.
+        if not skip_vector:
+            if self.vector_store:
+                try:
+                    vector_ids = list(self._vector_ids.get(memory_id, [])) or [
+                        memory_id
+                    ]
+                    self._delete_vector_ids(vector_ids)
+                except Exception as e:
+                    self.logger.warning(f"Failed to delete from vector store: {e}")
+            self._vector_ids.pop(memory_id, None)
 
         memory_item = self.memory_items[memory_id]
 
@@ -746,6 +771,102 @@ class AgentMemory:
             return self.vector_store.embed(content)
         return None
 
+    def _store_memory_vector(
+        self, memory_item: MemoryItem, tracking_id: Optional[str] = None
+    ) -> List[str]:
+        """Store one memory embedding and return adapter-provided vector IDs."""
+        if not self.vector_store:
+            return []
+
+        if tracking_id is not None:
+            self.progress_tracker.update_tracking(
+                tracking_id, message="Generating embedding..."
+            )
+
+        memory_item.embedding = self._generate_embedding(memory_item.content)
+        stored_ids: Any = None
+        fallback_to_memory_id = False
+
+        if hasattr(self.vector_store, "store_vectors"):
+            embedding = memory_item.embedding
+            vectors = (
+                [np.array(embedding)] if isinstance(embedding, list) else [embedding]
+            )
+            stored_ids = self.vector_store.store_vectors(
+                vectors=vectors, metadata=[memory_item.metadata]
+            )
+        elif hasattr(self.vector_store, "add"):
+            stored_ids = self.vector_store.add([memory_item])
+            fallback_to_memory_id = True
+        else:
+            return []
+
+        if isinstance(stored_ids, str):
+            return [stored_ids]
+        if isinstance(stored_ids, (list, tuple)):
+            return [str(vector_id) for vector_id in stored_ids]
+        if fallback_to_memory_id and memory_item.memory_id:
+            return [memory_item.memory_id]
+        return []
+
+    def _delete_vector_ids(self, vector_ids: List[str]) -> None:
+        """Delete adapter vector IDs using Semantica's supported interfaces."""
+        if not self.vector_store or not vector_ids:
+            return
+
+        if hasattr(self.vector_store, "delete_vectors"):
+            deleted = self.vector_store.delete_vectors(vector_ids)
+        elif hasattr(self.vector_store, "delete"):
+            deleted = self.vector_store.delete(vector_ids)
+        else:
+            return
+
+        if deleted is False:
+            raise RuntimeError(f"Vector store did not delete IDs: {vector_ids}")
+
+    def _sync_committed_vector_changes(
+        self, previous_state: Dict[str, Any], changed_ids: List[str]
+    ) -> None:
+        """Best-effort vector sync after in-memory changes can no longer roll back."""
+        if not self.vector_store:
+            return
+
+        previous_items = previous_state["memory_items"]
+        previous_vector_ids = previous_state["vector_ids"]
+
+        for memory_id in changed_ids:
+            memory_item = self.memory_items.get(memory_id)
+            if memory_item is None:
+                continue
+
+            old_ids = list(previous_vector_ids.get(memory_id, []))
+            if memory_id in previous_items and not old_ids:
+                old_ids = [memory_id]
+
+            try:
+                new_ids = self._store_memory_vector(memory_item)
+                if new_ids:
+                    self._vector_ids[memory_id] = new_ids
+                    stale_ids = [
+                        vector_id for vector_id in old_ids if vector_id not in new_ids
+                    ]
+                    self._delete_vector_ids(stale_ids)
+            except Exception as exc:
+                self.logger.warning(
+                    f"Failed to synchronize vector for memory {memory_id}: {exc}"
+                )
+
+        removed_ids = set(previous_items).difference(self.memory_items)
+        for memory_id in removed_ids:
+            vector_ids = list(previous_vector_ids.get(memory_id, [])) or [memory_id]
+            try:
+                self._delete_vector_ids(vector_ids)
+            except Exception as exc:
+                self.logger.warning(
+                    f"Failed to delete vector for memory {memory_id}: {exc}"
+                )
+            self._vector_ids.pop(memory_id, None)
+
     def _update_knowledge_graph(
         self,
         entities: List[EntityDict],
@@ -834,7 +955,9 @@ class AgentMemory:
                 from dateutil.parser import parse
 
                 start_date = parse(start_date)
-            if memory_item.timestamp < start_date:
+            if self._timestamp_comparison_key(
+                memory_item.timestamp
+            ) < self._timestamp_comparison_key(start_date):
                 return False
 
         if "end_date" in filters:
@@ -843,10 +966,17 @@ class AgentMemory:
                 from dateutil.parser import parse
 
                 end_date = parse(end_date)
-            if memory_item.timestamp > end_date:
+            if self._timestamp_comparison_key(
+                memory_item.timestamp
+            ) > self._timestamp_comparison_key(end_date):
                 return False
 
         return True
+
+    @staticmethod
+    def _timestamp_comparison_key(timestamp: datetime) -> datetime:
+        """Convert aware or local-naive timestamps to a comparable UTC value."""
+        return timestamp.astimezone(timezone.utc)
 
     def _keyword_search(
         self, query: str, max_results: int, filters: Dict[str, Any]
@@ -882,7 +1012,7 @@ class AgentMemory:
 
         return results
 
-    def _apply_retention_policy(self) -> None:
+    def _apply_retention_policy(self, *, skip_vector: bool = False) -> None:
         """Apply memory retention policy."""
         if self.retention_policy == "unlimited":
             return
@@ -901,11 +1031,13 @@ class AgentMemory:
         # Delete old items
         memory_ids_to_delete = []
         for memory_id, memory_item in self.memory_items.items():
-            if memory_item.timestamp < cutoff_date:
+            if self._timestamp_comparison_key(
+                memory_item.timestamp
+            ) < self._timestamp_comparison_key(cutoff_date):
                 memory_ids_to_delete.append(memory_id)
 
         for memory_id in memory_ids_to_delete:
-            self.delete_memory(memory_id)
+            self.delete_memory(memory_id, skip_vector=skip_vector)
 
         if memory_ids_to_delete:
             self.logger.info(
@@ -1042,8 +1174,10 @@ class AgentMemory:
     ) -> bool:
         """Replace a memory while retaining its identity and recoverable state."""
         state = self._snapshot_memory_state()
+        replacement_options = dict(options)
+        sync_vector = not replacement_options.pop("skip_vector", False)
         try:
-            self.delete_memory(memory_id)
+            self.delete_memory(memory_id, skip_vector=True)
             new_id = self.store(
                 content,
                 metadata=metadata,
@@ -1051,7 +1185,8 @@ class AgentMemory:
                 relationships=relationships,
                 memory_id=memory_id,
                 timestamp=timestamp,
-                **options,
+                skip_vector=True,
+                **replacement_options,
             )
         except Exception:
             self._restore_memory_state(state)
@@ -1060,6 +1195,8 @@ class AgentMemory:
         if new_id != memory_id or not self.exists(memory_id):
             self._restore_memory_state(state)
             return False
+        if sync_vector:
+            self._sync_committed_vector_changes(state, [memory_id])
         return True
 
     def _snapshot_memory_state(self) -> Dict[str, Any]:
@@ -1068,6 +1205,7 @@ class AgentMemory:
             "memory_items": dict(self.memory_items),
             "memory_index": deque(self.memory_index, maxlen=self.memory_index.maxlen),
             "short_term_memory": list(self.short_term_memory),
+            "vector_ids": copy.deepcopy(self._vector_ids),
             "stats": copy.deepcopy(self.stats),
         }
 
@@ -1076,6 +1214,7 @@ class AgentMemory:
         self.memory_items = state["memory_items"]
         self.memory_index = state["memory_index"]
         self.short_term_memory = state["short_term_memory"]
+        self._vector_ids = state["vector_ids"]
         self.stats = state["stats"]
 
     def delete(self, memory_id: str) -> bool:
@@ -1307,7 +1446,9 @@ class AgentMemory:
         """
         results = []
         sorted_items = sorted(
-            self.memory_items.items(), key=lambda x: x[1].timestamp, reverse=True
+            self.memory_items.items(),
+            key=lambda item: self._timestamp_comparison_key(item[1].timestamp),
+            reverse=True,
         )
         for memory_id, _ in sorted_items[:limit]:
             mem_dict = self.get_memory(memory_id)
@@ -1344,9 +1485,13 @@ class AgentMemory:
 
             end_date = parse(end_date)
 
+        normalized_start = self._timestamp_comparison_key(start_date)
+        normalized_end = self._timestamp_comparison_key(end_date)
+
         results = []
         for memory_id, memory_item in self.memory_items.items():
-            if start_date <= memory_item.timestamp <= end_date:
+            normalized_timestamp = self._timestamp_comparison_key(memory_item.timestamp)
+            if normalized_start <= normalized_timestamp <= normalized_end:
                 mem_dict = self.get_memory(memory_id)
                 if mem_dict:
                     results.append(mem_dict)
@@ -1584,13 +1729,44 @@ class AgentMemory:
         for filename, document in documents:
             file_path = destination_path / filename
             try:
-                file_path.write_text(document, encoding="utf-8")
+                self._write_markdown_file(file_path, document)
             except OSError as exc:
                 raise OSError(
                     f"Failed to write Markdown memory to {file_path}"
                 ) from exc
 
         return str(destination_path)
+
+    @staticmethod
+    def _write_markdown_file(file_path: Path, document: str) -> None:
+        """Atomically replace a Markdown file without following output symlinks."""
+        if file_path.is_symlink():
+            raise ValueError(
+                f"Refusing to overwrite Markdown symbolic link: {file_path}"
+            )
+
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=str(file_path.parent),
+                prefix=f".{file_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                temporary_file.write(document)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+
+            # os.replace swaps the directory entry itself, so a raced symlink is
+            # replaced rather than followed.
+            os.replace(temporary_path, file_path)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     def _memory_to_markdown(self, memory: Dict[str, Any]) -> str:
         memory_id = memory.get("memory_id")
@@ -1893,6 +2069,7 @@ class AgentMemory:
 
         state = self._snapshot_memory_state()
         imported = 0
+        changed_ids = []
         current_source = "markdown document"
         current_memory_id = "unknown"
         try:
@@ -1910,6 +2087,7 @@ class AgentMemory:
                         entities=memory["entities"],
                         relationships=memory["relationships"],
                         timestamp=memory["timestamp"],
+                        skip_vector=True,
                         skip_graph=True,
                     )
                 else:
@@ -1920,6 +2098,7 @@ class AgentMemory:
                         relationships=memory["relationships"],
                         memory_id=current_memory_id,
                         timestamp=memory["timestamp"],
+                        skip_vector=True,
                         skip_graph=True,
                     )
                     success = stored_id == current_memory_id and self.exists(
@@ -1928,6 +2107,7 @@ class AgentMemory:
 
                 if not success:
                     raise RuntimeError("memory store did not confirm the requested ID")
+                changed_ids.append(current_memory_id)
                 imported += 1
         except Exception as exc:
             self._restore_memory_state(state)
@@ -1936,6 +2116,7 @@ class AgentMemory:
                 f"from {current_source}: {exc}"
             ) from exc
 
+        self._sync_committed_vector_changes(state, changed_ids)
         return imported
 
     def _markdown_record_matches(self, memory_id: str, memory: Dict[str, Any]) -> bool:

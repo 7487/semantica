@@ -1,11 +1,50 @@
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
 from semantica.context.agent_memory import AgentMemory
+
+
+class TrackingVectorStore:
+    def __init__(self):
+        self.items = {}
+        self.events = []
+        self.fail_after_add = False
+
+    def add(self, items):
+        memory_ids = []
+        for item in items:
+            self.items[item.memory_id] = deepcopy(item)
+            memory_ids.append(item.memory_id)
+        self.events.append(("add", memory_ids))
+        if self.fail_after_add:
+            raise RuntimeError("vector add failed after mutation")
+        return memory_ids
+
+    def delete(self, memory_ids):
+        self.events.append(("delete", list(memory_ids)))
+        for memory_id in memory_ids:
+            self.items.pop(memory_id, None)
+        return True
+
+
+class TrackingConcreteVectorStore:
+    def __init__(self):
+        self.events = []
+        self.next_id = 0
+
+    def store_vectors(self, vectors, metadata):
+        vector_id = f"vec_{self.next_id}"
+        self.next_id += 1
+        self.events.append(("store", vector_id))
+        return [vector_id]
+
+    def delete_vectors(self, vector_ids):
+        self.events.append(("delete", list(vector_ids)))
+        return True
 
 
 def markdown_document(frontmatter, body=""):
@@ -168,6 +207,38 @@ def test_public_update_preserves_id_and_statistics():
     assert list(memory.memory_index) == ["mem_update"]
     assert memory.stats["total_items"] == 1
     assert memory.stats["items_by_type"] == {"decision": 1}
+
+
+def test_reusing_custom_id_replaces_item_without_statistics_drift():
+    vector_store = TrackingVectorStore()
+    memory = AgentMemory(vector_store=vector_store)
+    memory.store(
+        "Original",
+        metadata={"type": "note"},
+        memory_id="mem_reused",
+        timestamp=datetime(2026, 7, 22, 9, 0, 0),
+    )
+
+    vector_store.events.clear()
+    memory.store(
+        "Replacement",
+        metadata={"type": "decision"},
+        memory_id="mem_reused",
+        timestamp=datetime(2026, 7, 22, 10, 0, 0),
+    )
+
+    assert memory.get("mem_reused")["content"] == "Replacement"
+    assert list(memory.memory_index) == ["mem_reused"]
+    assert [item.memory_id for item in memory.short_term_memory] == ["mem_reused"]
+    assert memory.stats["total_items"] == 1
+    assert memory.stats["items_by_type"] == {"decision": 1}
+    assert vector_store.items["mem_reused"].content == "Replacement"
+    assert vector_store.events == [("add", ["mem_reused"])]
+
+    assert memory.delete_memory("mem_reused")
+    assert memory.stats["total_items"] == 0
+    assert memory.stats["items_by_type"] == {}
+    assert vector_store.items == {}
 
 
 def test_reimporting_unchanged_markdown_does_not_rewrite_memory():
@@ -333,6 +404,132 @@ def test_operational_failure_restores_existing_in_memory_state():
     assert [item.memory_id for item in memory.short_term_memory] == ["mem_existing"]
 
 
+def test_failed_markdown_update_does_not_mutate_vector_store_before_rollback():
+    vector_store = TrackingVectorStore()
+    memory = AgentMemory(vector_store=vector_store)
+    memory.store(
+        "Original",
+        metadata={"type": "note"},
+        memory_id="mem_existing",
+        timestamp=datetime(2026, 7, 22, 9, 0, 0),
+    )
+    vector_store.events.clear()
+    original_store = memory.store
+
+    def fail_after_local_store(*args, **kwargs):
+        original_store(*args, **kwargs)
+        raise RuntimeError("local store failed")
+
+    with patch.object(memory, "store", side_effect=fail_after_local_store):
+        with pytest.raises(RuntimeError, match="local store failed"):
+            memory.import_data(
+                markdown_document(required_frontmatter("mem_existing"), "Replacement"),
+                format="markdown",
+            )
+
+    assert memory.get("mem_existing")["content"] == "Original"
+    assert vector_store.items["mem_existing"].content == "Original"
+    assert vector_store.events == []
+
+
+def test_vector_sync_runs_after_markdown_commit_and_never_triggers_rollback():
+    vector_store = TrackingVectorStore()
+    memory = AgentMemory(vector_store=vector_store)
+    memory.store(
+        "Original",
+        metadata={"type": "note"},
+        memory_id="mem_existing",
+        timestamp=datetime(2026, 7, 22, 9, 0, 0),
+    )
+    vector_store.events.clear()
+    vector_store.fail_after_add = True
+
+    assert (
+        memory.import_data(
+            markdown_document(required_frontmatter("mem_existing"), "Replacement"),
+            format="markdown",
+        )
+        == 1
+    )
+
+    assert memory.get("mem_existing")["content"] == "Replacement"
+    assert vector_store.items["mem_existing"].content == "Replacement"
+    assert vector_store.events == [("add", ["mem_existing"])]
+
+
+def test_markdown_update_replaces_concrete_adapter_vector_id_after_commit():
+    vector_store = TrackingConcreteVectorStore()
+    memory = AgentMemory(vector_store=vector_store)
+    memory.store(
+        "Original",
+        metadata={"type": "note"},
+        memory_id="mem_existing",
+        timestamp=datetime(2026, 7, 22, 9, 0, 0),
+    )
+    assert memory._vector_ids == {"mem_existing": ["vec_0"]}
+    vector_store.events.clear()
+
+    assert (
+        memory.import_data(
+            markdown_document(required_frontmatter("mem_existing"), "Replacement"),
+            format="markdown",
+        )
+        == 1
+    )
+
+    assert memory._vector_ids == {"mem_existing": ["vec_1"]}
+    assert vector_store.events == [("store", "vec_1"), ("delete", ["vec_0"])]
+
+
+def test_vector_id_mapping_survives_save_and_load(tmp_path):
+    vector_store = TrackingConcreteVectorStore()
+    memory = AgentMemory(vector_store=vector_store)
+    memory.store(
+        "Persisted",
+        metadata={"type": "note"},
+        memory_id="mem_persisted",
+    )
+    memory.save(str(tmp_path))
+
+    restored = AgentMemory(vector_store=vector_store)
+    restored.load(str(tmp_path))
+    vector_store.events.clear()
+
+    assert restored._vector_ids == {"mem_persisted": ["vec_0"]}
+    assert restored.delete_memory("mem_persisted")
+    assert vector_store.events == [("delete", ["vec_0"])]
+
+
+def test_failed_multi_file_import_never_starts_vector_synchronization(tmp_path):
+    vector_store = TrackingVectorStore()
+    memory = AgentMemory(vector_store=vector_store)
+    for name in ("a-first.md", "b-second.md"):
+        memory_id = name[:-3]
+        (tmp_path / name).write_text(
+            markdown_document(required_frontmatter(memory_id), name),
+            encoding="utf-8",
+        )
+
+    original_store = memory.store
+    calls = 0
+
+    def fail_on_second_store(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        stored_id = original_store(*args, **kwargs)
+        if calls == 2:
+            raise RuntimeError("second local store failed")
+        return stored_id
+
+    with patch.object(memory, "store", side_effect=fail_on_second_store):
+        with pytest.raises(RuntimeError, match="second local store failed"):
+            memory.import_data(tmp_path, format="markdown")
+
+    assert memory.count() == 0
+    assert vector_store.events == []
+    assert vector_store.items == {}
+
+
 def test_import_does_not_report_retention_pruned_memory_as_successful():
     memory = AgentMemory(retention_policy="1_days")
     fields = required_frontmatter(
@@ -346,6 +543,44 @@ def test_import_does_not_report_retention_pruned_memory_as_successful():
 
     assert memory.count() == 0
     assert memory.stats["total_items"] == 0
+
+
+def test_timezone_aware_import_supports_retention_sorting_and_date_filters():
+    now_utc = datetime.now(timezone.utc)
+    memory = AgentMemory(retention_policy="1_days")
+    memory.store(
+        "Naive memory",
+        metadata={"type": "note"},
+        memory_id="mem_naive",
+        timestamp=datetime.now(),
+    )
+    fields = required_frontmatter(
+        "mem_aware",
+        created_at=now_utc.isoformat(),
+        updated_at=now_utc.isoformat(),
+    )
+
+    assert (
+        memory.import_data(markdown_document(fields, "Aware memory"), "markdown") == 1
+    )
+    assert memory.get("mem_aware")["timestamp"].endswith("+00:00")
+    assert {item["memory_id"] for item in memory.get_recent()} == {
+        "mem_naive",
+        "mem_aware",
+    }
+
+    start = now_utc - timedelta(hours=1)
+    end = now_utc + timedelta(hours=1)
+    assert {item["memory_id"] for item in memory.get_by_date(start, end)} == {
+        "mem_naive",
+        "mem_aware",
+    }
+    assert {
+        item["memory_id"]
+        for item in memory.retrieve(
+            "memory", start_date=start.isoformat(), end_date=end.isoformat()
+        )
+    } == {"mem_naive", "mem_aware"}
 
 
 def test_exported_filenames_cannot_escape_or_collide_with_destination(tmp_path):
@@ -369,6 +604,28 @@ def test_exported_filenames_cannot_escape_or_collide_with_destination(tmp_path):
     assert len({path.name.casefold() for path in exported_files}) == 4
     assert all(path.parent == destination for path in exported_files)
     assert not (tmp_path / "outside.md").exists()
+
+
+def test_markdown_export_rejects_symlink_without_touching_target(tmp_path):
+    memory = AgentMemory()
+    memory.store(
+        "Protected content",
+        metadata={"type": "note", "updated_at": "2026-07-22T10:00:00"},
+        memory_id="mem_symlink",
+        timestamp=datetime(2026, 7, 22, 9, 0, 0),
+    )
+    destination = tmp_path / "export"
+    destination.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("do not overwrite", encoding="utf-8")
+    output_path = destination / memory._memory_markdown_filename("mem_symlink")
+    output_path.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        memory.export(format="markdown", destination=destination)
+
+    assert output_path.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "do not overwrite"
 
 
 def test_empty_markdown_export_and_import_are_no_ops():
