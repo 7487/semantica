@@ -55,11 +55,9 @@ export function LineageDiagram() {
   const [prevActiveId, setPrevActiveId] = useState(activeId);
   if (activeId !== prevActiveId) {
     setPrevActiveId(activeId);
-    if (!activeId) {
-      setError("");
-      setNodes([]);
-      setEdges([]);
-    }
+    setError("");
+    setNodes([]);
+    setEdges([]);
   }
 
   useEffect(() => {

@@ -286,21 +286,23 @@ export function OntologyManager() {
         const params = new URLSearchParams();
         if (searchQ) params.set("q", searchQ);
         const res = await fetch(`/api/ontology/registry?${params}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (!ignore) setEntries(data);
-        } else {
-          if (!ignore) setEntries([]);
-        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (ignore) return;
+        setEntries(data);
+        if (res.status === 207) flashMsg("err", data.message || "Warning: Partial success loading registry.");
       } catch {
-        if (!ignore) setEntries([]);
+        if (!ignore) {
+          setEntries([]);
+          flashMsg("err", "Failed to load ontology registry");
+        }
       } finally {
         if (!ignore) setLoading(false);
       }
     }
     void fetchInitial();
     return () => { ignore = true; };
-  }, [searchQ]);
+  }, [searchQ, flashMsg]);
 
   const handleToggle = useCallback(async (uri: string) => {
     try {
