@@ -369,7 +369,9 @@ export function GraphWorkspaceShell() {
     }
   }, []);
 
-  useEffect(() => {
+  const [prevFetchedAt, setPrevFetchedAt] = useState(snapshot?.fetchedAt);
+  if (snapshot?.fetchedAt !== prevFetchedAt) {
+    setPrevFetchedAt(snapshot?.fetchedAt);
     if (snapshot) {
       setIsGraphStageReady(false);
       setActiveNodeCount(null);
@@ -383,7 +385,7 @@ export function GraphWorkspaceShell() {
         stableSamples: 0,
       });
     }
-  }, [snapshot?.fetchedAt]);
+  }
 
   useEffect(() => {
     let cancelled = false;

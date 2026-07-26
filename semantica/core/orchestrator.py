@@ -90,6 +90,15 @@ class Semantica:
         )
         self.lifecycle_manager.register_component("config_manager", self.config_manager)
 
+        # Configure global provenance storage path if specified
+        try:
+            prov_storage_path = self.config.get("provenance", {}).get("storage_path")
+            if prov_storage_path:
+                from ..provenance import ProvenanceManager
+                ProvenanceManager.set_default_storage_path(prov_storage_path)
+        except Exception as e:
+            self.logger.warning(f"Failed to configure provenance storage: {e}")
+
         # Module placeholders (to be initialized)
         self._modules: Dict[str, Any] = {}
         self._initialized: bool = False

@@ -248,6 +248,18 @@ export function OntologyManager() {
   const [rightPanel, setRightPanel] = useState<RightPanel>("none");
   const [actionMsg, setActionMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
+  const [prevSearchQ, setPrevSearchQ] = useState(searchQ);
+  if (searchQ !== prevSearchQ) {
+    setPrevSearchQ(searchQ);
+    setLoading(true);
+    setActionMsg(null);
+  }
+
+  const flashMsg = useCallback((type: "ok" | "err", text: string) => {
+    setActionMsg({ type, text });
+    setTimeout(() => setActionMsg(null), 3000);
+  }, []);
+
   const fetchRegistry = useCallback(async () => {
     setLoading(true);
     setActionMsg(null);
@@ -265,16 +277,32 @@ export function OntologyManager() {
     } finally {
       setLoading(false);
     }
-  }, [searchQ, statusFilter]);
+  }, [searchQ, flashMsg]);
 
   useEffect(() => {
-    fetchRegistry();
-  }, [fetchRegistry]);
-
-  const flashMsg = (type: "ok" | "err", text: string) => {
-    setActionMsg({ type, text });
-    setTimeout(() => setActionMsg(null), 3000);
-  };
+    let ignore = false;
+    async function fetchInitial() {
+      try {
+        const params = new URLSearchParams();
+        if (searchQ) params.set("q", searchQ);
+        const res = await fetch(`/api/ontology/registry?${params}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (ignore) return;
+        setEntries(data);
+        if (res.status === 207) flashMsg("err", data.message || "Warning: Partial success loading registry.");
+      } catch {
+        if (!ignore) {
+          setEntries([]);
+          flashMsg("err", "Failed to load ontology registry");
+        }
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, [searchQ, flashMsg]);
 
   const handleToggle = useCallback(async (uri: string) => {
     try {

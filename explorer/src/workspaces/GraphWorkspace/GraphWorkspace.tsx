@@ -2351,16 +2351,17 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
     showPluginDock: openDockPanels.length > 0,
   };
 
-  useEffect(() => {
-    if (!openDockPanels.length) {
-      setActiveDockPanelId(null);
-      return;
-    }
+  const openDockPanelIdsString = openDockPanels.map((p) => p.id).join("|");
+  const [prevOpenDockPanelIdsString, setPrevOpenDockPanelIdsString] = useState(openDockPanelIdsString);
 
-    if (!activeDockPanelId || !openDockPanels.some((panel) => panel.id === activeDockPanelId)) {
+  if (openDockPanelIdsString !== prevOpenDockPanelIdsString) {
+    setPrevOpenDockPanelIdsString(openDockPanelIdsString);
+    if (!openDockPanels.length) {
+      if (activeDockPanelId !== null) setActiveDockPanelId(null);
+    } else if (!activeDockPanelId || !openDockPanels.some((panel) => panel.id === activeDockPanelId)) {
       setActiveDockPanelId(openDockPanels[0].id);
     }
-  }, [activeDockPanelId, openDockPanels]);
+  }
 
   const viewModeItems = useMemo<GraphToolbarItem[]>(() => {
     if (!hasGraphContent) {

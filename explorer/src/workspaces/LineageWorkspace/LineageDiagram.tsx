@@ -52,13 +52,17 @@ export function LineageDiagram() {
     document.body.removeChild(anchor);
   };
 
+  const [prevActiveId, setPrevActiveId] = useState(activeId);
+  if (activeId !== prevActiveId) {
+    setPrevActiveId(activeId);
+    setError("");
+    setNodes([]);
+    setEdges([]);
+  }
+
   useEffect(() => {
-    if (!activeId) {
-      setError("");
-      setNodes([]);
-      setEdges([]);
-      return;
-    }
+    let ignore = false;
+    if (!activeId) return;
 
     const xLanes = [
       { id: "group_agent", type: "group", position: { x: 50, y: 50 }, style: { width: 800, height: 120 } },
@@ -93,7 +97,7 @@ export function LineageDiagram() {
           counters[n.parent_id] = c + 1;
           return {
             id: n.id,
-            data: { label: n.label + "\\n(" + n.prov_type + ")" },
+            data: { label: n.label + "\n(" + n.prov_type + ")" },
             position: { x: 50 + c * 180, y: 30 },
             parentId: n.parent_id,
             extent: "parent",
@@ -110,13 +114,16 @@ export function LineageDiagram() {
           style: { stroke: "#58a6ff" }
         }));
 
-        setNodes([...xLanes, ...mappedNodes]);
-        setEdges(mappedEdges);
+        if (!ignore) {
+          setNodes([...xLanes, ...mappedNodes]);
+          setEdges(mappedEdges);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load lineage.");
       }
     };
-    fetchLineage();
+    void fetchLineage();
+    return () => { ignore = true; };
   }, [activeId]);
 
   return (

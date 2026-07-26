@@ -32,23 +32,31 @@ export function HealthTab({ onFixInEditor }: HealthTabProps) {
     };
   }, []);
 
-  const loadHealth = useCallback(async (uri: string) => {
-    if (!uri) return;
-    setLoading(true);
-    setError("");
-    try {
-      setHealth(await loadOntologyHealth(uri));
-    } catch {
-      // Backend unavailable — show "select an ontology" placeholder, not an error
-      setHealth(null);
-    } finally {
-      setLoading(false);
+  const [prevUri, setPrevUri] = useState(selectedUri);
+  if (selectedUri !== prevUri) {
+    setPrevUri(selectedUri);
+    if (selectedUri) {
+      setLoading(true);
+      setError("");
     }
-  }, []);
+  }
 
   useEffect(() => {
-    void loadHealth(selectedUri);
-  }, [selectedUri, loadHealth]);
+    let ignore = false;
+    async function fetchHealth() {
+      if (!selectedUri) return;
+      try {
+        const data = await loadOntologyHealth(selectedUri);
+        if (!ignore) setHealth(data);
+      } catch {
+        if (!ignore) setHealth(null);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    void fetchHealth();
+    return () => { ignore = true; };
+  }, [selectedUri]);
 
   const exportReport = useCallback(() => {
     if (!health) return;

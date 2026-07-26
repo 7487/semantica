@@ -40,19 +40,6 @@ export function ProposalReview({ proposalId }: { proposalId: string }) {
   const [selectedElement, setSelectedElement] = useState<string | null>(null);
   const [commentText, setCommentText] = useState("");
 
-  const loadProposal = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/ontology/proposals/${proposalId}`);
-      if (response.ok) {
-        const data = await response.json();
-        setProposal(data);
-        generateDiff(data);
-      }
-    } catch (error) {
-      console.error("Failed to load proposal:", error);
-    }
-  }, [proposalId]);
-
   const generateDiff = useCallback((prop: Proposal) => {
     const changes: DiffChange[] = [];
 
@@ -75,9 +62,38 @@ export function ProposalReview({ proposalId }: { proposalId: string }) {
     setDiff(changes);
   }, []);
 
+  const loadProposal = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/ontology/proposals/${proposalId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setProposal(data);
+        generateDiff(data);
+      }
+    } catch (error) {
+      console.error("Failed to load proposal:", error);
+    }
+  }, [proposalId, generateDiff]);
+
   useEffect(() => {
-    loadProposal();
-  }, [loadProposal]);
+    let ignore = false;
+    async function fetchInitial() {
+      try {
+        const response = await fetch(`/api/ontology/proposals/${proposalId}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (!ignore) {
+            setProposal(data);
+            generateDiff(data);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load proposal:", error);
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, [proposalId, generateDiff]);
 
   const addComment = useCallback(async () => {
     if (!selectedElement || !commentText || !proposal) return;

@@ -122,8 +122,64 @@ export function KGOverviewTab() {
   }, []);
 
   useEffect(() => {
-    void fetchOverview();
-  }, [fetchOverview]);
+    let ignore = false;
+    async function fetchInitial() {
+      if (!ignore) {
+        setLoading(true);
+        setError("");
+      }
+      try {
+        const [statsRes, nodesRes] = await Promise.all([
+          fetch("/api/graph/stats"),
+          fetch("/api/graph/nodes?limit=500"),
+        ]);
+
+        if (!statsRes.ok) throw new Error(`Stats fetch failed (${statsRes.status})`);
+        if (!nodesRes.ok) throw new Error(`Nodes fetch failed (${nodesRes.status})`);
+
+        const statsData: KGStats = await statsRes.json();
+        if (!ignore) {
+          setStats(statsData);
+          if (statsRes.status === 207) {
+            setError((statsData as { message?: string }).message || "Warning: Partial success loading stats.");
+          }
+        }
+
+        const nodesData: NodeListResponse = await nodesRes.json();
+        const nodes = nodesData.nodes ?? [];
+        if (!ignore) {
+          setNodeTypeMap(buildTypeMap(nodes, "type"));
+          if (nodesRes.status === 207) {
+            const nodesMessage = (nodesData as { message?: string }).message || "Warning: Partial success loading nodes.";
+            setError((prev) => (prev ? `${prev} ${nodesMessage}` : nodesMessage));
+          }
+        }
+
+        // Simulate neighbor counts via edges fetch for top-N
+        const edgesRes = await fetch("/api/graph/edges?limit=2000");
+        if (edgesRes.ok) {
+          const edgesData = await edgesRes.json();
+          const edges: { source: string; target: string }[] = edgesData.edges ?? [];
+          const degreeMap: Record<string, number> = {};
+          for (const edge of edges) {
+            degreeMap[edge.source] = (degreeMap[edge.source] ?? 0) + 1;
+            degreeMap[edge.target] = (degreeMap[edge.target] ?? 0) + 1;
+          }
+          const sorted = nodes
+            .map((n) => ({ node: n, neighborCount: degreeMap[n.id] ?? 0 }))
+            .sort((a, b) => b.neighborCount - a.neighborCount)
+            .slice(0, 10);
+          if (!ignore) setTopNodes(sorted);
+        }
+      } catch (err) {
+        if (!ignore) setError(err instanceof Error ? err.message : "Failed to load graph overview. Ensure the server is running.");
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, []);
 
   const nodeTypeEntries = Object.entries(nodeTypeMap).sort((a, b) => b[1] - a[1]);
   const edgeTypeEntries = stats?.edge_types

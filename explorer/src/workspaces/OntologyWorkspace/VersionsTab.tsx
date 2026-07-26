@@ -83,9 +83,43 @@ export function VersionsTab() {
   }, []);
 
   useEffect(() => {
-    loadVersions();
-    loadProposals();
-  }, [loadVersions, loadProposals]);
+    let ignore = false;
+    async function fetchInitial() {
+      if (!ignore) setError("");
+      try {
+        const propRes = await fetch("/api/ontology/proposals");
+        if (propRes.ok) {
+          const propData = await propRes.json();
+          if (!ignore) {
+            setProposals(propData);
+            if (propRes.status === 207) setError(propData.message || "Warning: Partial success loading proposals.");
+          }
+        } else if (!ignore) {
+          setError(`Failed to load proposals (${propRes.status})`);
+        }
+      } catch (err) {
+        if (!ignore) setError(err instanceof Error ? err.message : "Failed to load proposals.");
+      }
+
+      if (!ontologyUri) return;
+      try {
+        const verRes = await fetch(`/api/ontology/versions/${encodeURIComponent(ontologyUri)}`);
+        if (verRes.ok) {
+          const verData = await verRes.json();
+          if (!ignore) {
+            setVersions(verData);
+            if (verRes.status === 207) setError(verData.message || "Warning: Partial success loading versions.");
+          }
+        } else if (!ignore) {
+          setError((prev) => prev || `Failed to load versions (${verRes.status})`);
+        }
+      } catch (err) {
+        if (!ignore) setError((prev) => prev || (err instanceof Error ? err.message : "Failed to load versions."));
+      }
+    }
+    void fetchInitial();
+    return () => { ignore = true; };
+  }, [ontologyUri]);
 
   const approveProposal = useCallback(async (proposalId: string) => {
     setError("");

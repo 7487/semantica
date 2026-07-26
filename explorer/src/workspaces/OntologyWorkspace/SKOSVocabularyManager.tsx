@@ -77,9 +77,16 @@ function ConceptDetailPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const [prevUri, setPrevUri] = useState(uri);
+  if (uri !== prevUri) {
+    setPrevUri(uri);
     setLoading(true);
     setError("");
+    setDetail(null);
+  }
+
+  useEffect(() => {
+    let ignore = false;
     fetch(`/api/ontology/skos/concept/${encodeURIComponent(uri)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error("Concept not found");
@@ -87,9 +94,18 @@ function ConceptDetailPanel({
         if (r.status === 207) setError(data.message || "Warning: Partial success loading concept.");
         return data;
       })
-      .then(setDetail)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!ignore) setDetail(data);
+      })
+      .catch((e) => {
+        if (!ignore) setError(e.message);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [uri]);
 
   const renderUriList = (label: string, uris: string[]) => {
@@ -324,26 +340,48 @@ function SchemePanel({
 }) {
   const [expanded, setExpanded] = useState(true);
   const [hierarchy, setHierarchy] = useState<ConceptNode[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(expanded);
   const [error, setError] = useState("");
 
+  const [prevExpanded, setPrevExpanded] = useState(expanded);
+  const [prevSchemeUri, setPrevSchemeUri] = useState(scheme.uri);
+  if (expanded !== prevExpanded || scheme.uri !== prevSchemeUri) {
+    setPrevExpanded(expanded);
+    setPrevSchemeUri(scheme.uri);
+    if (expanded) {
+      setLoading(true);
+      setError("");
+      setHierarchy([]);
+    } else {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
+    let ignore = false;
     if (!expanded) return;
-    setLoading(true);
-    setError("");
     fetch(`/api/vocabulary/hierarchy?scheme=${encodeURIComponent(scheme.uri)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
-        if (r.status === 207) setError(data.message || "Warning: Partial success loading hierarchy.");
+        if (r.status === 207 && !ignore) setError(data.message || "Warning: Partial success loading hierarchy.");
         return data;
       })
-      .then(setHierarchy)
-      .catch((err) => {
-        setHierarchy([]);
-        setError(err instanceof Error ? err.message : "Failed to load hierarchy.");
+      .then((data) => {
+        if (!ignore) setHierarchy(data);
       })
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!ignore) {
+          setHierarchy([]);
+          setError(err instanceof Error ? err.message : "Failed to load hierarchy.");
+        }
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
   }, [scheme.uri, expanded]);
 
   const totalConcepts = countConcepts(hierarchy);
@@ -423,7 +461,6 @@ export function SKOSVocabularyManager({ schemeUri }: Props) {
   const [selectedUri, setSelectedUri] = useState<string | null>(null);
 
   useEffect(() => {
-    setLoading(true);
     fetch("/api/ontology/skos/schemes")
       .then(async (r) => {
         if (!r.ok) throw new Error(`Failed to load schemes (${r.status})`);
