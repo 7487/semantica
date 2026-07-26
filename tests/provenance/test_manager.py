@@ -61,6 +61,47 @@ class TestProvenanceManager:
             pass
         assert ProvenanceManager._default_storage_path is None
 
+        # 6. Nested contexts should restore correctly from stack
+        outer_path = str(tmp_path / "outer.db")
+        inner_path = str(tmp_path / "inner.db")
+        with default_storage_path(outer_path):
+            assert ProvenanceManager._default_storage_path == outer_path
+            with default_storage_path(inner_path):
+                assert ProvenanceManager._default_storage_path == inner_path
+            assert ProvenanceManager._default_storage_path == outer_path
+        assert ProvenanceManager._default_storage_path is None
+
+    def test_default_storage_path_concurrency_safety(self, tmp_path):
+        """Test that default_storage_path context manager is thread-safe under concurrent use."""
+        import threading
+        import time
+        from semantica.provenance import default_storage_path, SQLiteStorage
+
+        errors = []
+
+        def _worker(path, delay):
+            try:
+                with default_storage_path(path):
+                    time.sleep(delay)
+                    prov_mgr = ProvenanceManager()
+                    assert isinstance(prov_mgr.storage, SQLiteStorage)
+                    assert prov_mgr.storage.db_path == path
+            except Exception as e:
+                errors.append(e)
+
+        path_a = str(tmp_path / "thread_a.db")
+        path_b = str(tmp_path / "thread_b.db")
+
+        t1 = threading.Thread(target=_worker, args=(path_a, 0.05))
+        t2 = threading.Thread(target=_worker, args=(path_b, 0.01))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert not errors, f"Errors in concurrent context worker: {errors}"
+        assert ProvenanceManager._default_storage_path is None
+
     def test_isolation_part_1_with_context_manager(self, tmp_path):
         """Part 1: Prove context manager sets default storage path for ProvenanceManager created inside context."""
         from semantica.provenance import default_storage_path, SQLiteStorage

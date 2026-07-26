@@ -28,6 +28,7 @@ from typing import Optional, List, Dict, Any, Union
 from collections.abc import Mapping
 from datetime import datetime
 from contextlib import contextmanager
+import threading
 
 from .schemas import ProvenanceEntry, SourceReference
 from .storage import ProvenanceStorage, InMemoryStorage, SQLiteStorage
@@ -40,12 +41,8 @@ def default_storage_path(path: Optional[str]):
     Context manager for temporarily setting ProvenanceManager._default_storage_path.
     Guarantees restoration to the previous value on exit (safe for tests).
     """
-    original_path = ProvenanceManager._default_storage_path
-    ProvenanceManager._default_storage_path = path
-    try:
+    with ProvenanceManager.default_storage_path(path):
         yield
-    finally:
-        ProvenanceManager._default_storage_path = original_path
 
 
 class ProvenanceManager:
@@ -70,11 +67,14 @@ class ProvenanceManager:
     """
     
     _default_storage_path: Optional[str] = None
+    _lock = threading.RLock()
+    _path_stack: List[Optional[str]] = []
 
     @classmethod
     def set_default_storage_path(cls, path: Optional[str]) -> None:
         """Set a global default storage path for all new instances."""
-        cls._default_storage_path = path
+        with cls._lock:
+            cls._default_storage_path = path
 
     @classmethod
     @contextmanager
@@ -83,12 +83,16 @@ class ProvenanceManager:
         Context manager for temporarily setting the global default storage path.
         Guarantees restoration to the previous value on exit (safe for tests).
         """
-        original_path = cls._default_storage_path
-        cls._default_storage_path = path
+        cls._lock.acquire()
         try:
+            cls._path_stack.append(cls._default_storage_path)
+            cls._default_storage_path = path
             yield
         finally:
-            cls._default_storage_path = original_path
+            cls._default_storage_path = (
+                cls._path_stack.pop() if cls._path_stack else None
+            )
+            cls._lock.release()
     
     def __init__(
         self,
@@ -117,8 +121,9 @@ class ProvenanceManager:
                 elif "storage_path" in config:
                     storage_path = config.get("storage_path")
 
-        if not storage_path and self._default_storage_path:
-            storage_path = self._default_storage_path
+        if not storage_path:
+            with self._lock:
+                storage_path = self._default_storage_path
 
         if storage_path:
             self.storage = SQLiteStorage(storage_path)
@@ -678,7 +683,7 @@ class ProvenanceManager:
             Dict containing entity_id, depth, count, lineage entries, and sources
         """
         base_lineage = self.get_lineage(entity_id)
-        entries = base_lineage.get("lineage_chain") or base_lineage.get("entries", [])
+        entries = base_lineage.get("lineage_chain", [])
         if len(entries) > depth:
             entries = entries[:depth]
         sources = self.get_all_sources(entity_id)
