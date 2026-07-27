@@ -397,3 +397,179 @@ def test_ontology_namespace_helper_handles_all_uri_forms():
     assert _ontology_namespace("http://example.org/onto-a/") == "http://example.org/onto-a/"
     assert _ontology_namespace("http://example.org/onto-a#") == "http://example.org/onto-a#"
     assert _ontology_namespace("http://example.org/onto-a#schema") == "http://example.org/onto-a#"
+
+
+@pytest.mark.asyncio
+async def test_data_graph_turtle_preserves_slash_namespace_for_local_terms(client):
+    from semantica.explorer.routes.ontology import _data_graph_turtle_for_uri
+    from unittest.mock import MagicMock
+
+    graph = client.app.state.session.graph
+    onto_uri = "http://example.org/onto-slash/"
+    graph.add_node(
+        onto_uri,
+        node_type="owl:Ontology",
+        content="Slash Ontology",
+        **{"rdfs:label": "Slash Ontology", "uri": onto_uri},
+    )
+    person_a = "http://example.org/onto-slash/Person"
+    person_inst = "http://example.org/onto-slash/person-1"
+    graph.add_node(
+        person_inst,
+        node_type="owl:NamedIndividual",
+        content="Person 1",
+        scheme_uri=onto_uri,
+        **{
+            "rdf:type": person_a,
+            "onto:name": "Alice",
+            "name": "Alice Unprefixed",
+        },
+    )
+
+    ttl = await _data_graph_turtle_for_uri(MagicMock(), client.app.state.session, onto_uri)
+    assert "http://example.org/onto-slash/name" in ttl or "onto:name" in ttl
+    assert "http://example.org/onto-slash#name" not in ttl
+    assert "http://example.org/onto-slash/Person" in ttl or "onto:Person" in ttl
+    assert "http://example.org/onto-slash#Person" not in ttl
+
+
+@pytest.mark.asyncio
+async def test_data_graph_turtle_serializes_list_of_dicts_as_uri_references(client):
+    from semantica.explorer.routes.ontology import _data_graph_turtle_for_uri
+    from unittest.mock import MagicMock
+
+    graph = client.app.state.session.graph
+    onto_uri = "http://example.org/onto-jsonld/"
+    graph.add_node(
+        onto_uri,
+        node_type="owl:Ontology",
+        content="JSON-LD Ontology",
+        **{"rdfs:label": "JSON-LD Ontology", "uri": onto_uri},
+    )
+    node_inst = "http://example.org/onto-jsonld/item-1"
+    graph.add_node(
+        node_inst,
+        node_type="owl:Class",
+        content="Item 1",
+        scheme_uri=onto_uri,
+        **{
+            "rdfs:seeAlso": [
+                {"@id": "http://example.org/external/ref1"},
+                {"uri": "http://example.org/external/ref2"},
+            ],
+        },
+    )
+
+    ttl = await _data_graph_turtle_for_uri(MagicMock(), client.app.state.session, onto_uri)
+    assert "<http://example.org/external/ref1>" in ttl
+    assert "<http://example.org/external/ref2>" in ttl
+    assert "{'" not in ttl and "'@id'" not in ttl
+
+
+
+
+def test_validate_shacl_rejects_oversized_turtle(client):
+    shacl_turtle = """
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix onto: <http://example.org/onto-a#> .
+
+onto:PersonShape a sh:NodeShape ;
+    sh:targetClass onto:Person .
+"""
+    with patch("semantica.explorer.routes.ontology._MAX_SHACL_TURTLE_BYTES", 20):
+        response = client.post(
+            "/api/ontology/shacl/validate",
+            json={
+                "uri": "http://example.org/onto-a",
+                "shacl_turtle": shacl_turtle,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "error"
+        assert "exceeds maximum allowed size" in payload["message"]
+
+
+def test_validate_shacl_rejects_too_many_triples(client):
+    shacl_turtle = """
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix onto: <http://example.org/onto-a#> .
+
+onto:PersonShape a sh:NodeShape ;
+    sh:targetClass onto:Person .
+"""
+    with patch("semantica.explorer.routes.ontology._MAX_SHACL_TRIPLES", 1):
+        response = client.post(
+            "/api/ontology/shacl/validate",
+            json={
+                "uri": "http://example.org/onto-a",
+                "shacl_turtle": shacl_turtle,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "error"
+        assert "exceeds maximum allowed limit" in payload["message"]
+
+
+def test_validate_shacl_handles_timeout(client):
+    shacl_turtle = """
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix onto: <http://example.org/onto-a#> .
+
+onto:PersonShape a sh:NodeShape ;
+    sh:targetClass onto:Person .
+"""
+    import time
+
+    def slow_validate(*args, **kwargs):
+        time.sleep(0.3)
+        return MagicMock(conforms=True, violations=[])
+
+    with patch("semantica.explorer.routes.ontology._MAX_SHACL_TIMEOUT_SECONDS", 0.05), \
+         patch("semantica.ontology.OntologyEngine.validate_graph", side_effect=slow_validate):
+        response = client.post(
+            "/api/ontology/shacl/validate",
+            json={
+                "uri": "http://example.org/onto-a",
+                "shacl_turtle": shacl_turtle,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "error"
+        assert "timed out" in payload["message"]
+
+
+def test_validate_shacl_returns_unavailable_for_truncated_graph(client):
+    shacl_turtle = """
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix onto: <http://example.org/onto-a#> .
+
+onto:PersonShape a sh:NodeShape ;
+    sh:targetClass onto:Person .
+"""
+    with patch("semantica.explorer.routes.ontology._MAX_ANALYSIS_NODES", 0):
+        response = client.post(
+            "/api/ontology/shacl/validate",
+            json={
+                "uri": "http://example.org/onto-a",
+                "shacl_turtle": shacl_turtle,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "unavailable"
+        assert "exceeds maximum analysis limit" in payload["message"]
+        assert payload["conforms"] is False
+
+
+def test_health_shacl_dimension_returns_critical_for_truncated_graph(client):
+    with patch("semantica.explorer.routes.ontology._MAX_ANALYSIS_NODES", 0):
+        payload = client.get("/api/ontology/health?uri=http%3A%2F%2Fexample.org%2Fonto-a").json()
+        shacl_dim = next(d for d in payload["dimensions"] if d["key"] == "shacl")
+        assert shacl_dim["status"] == "critical"
+        assert shacl_dim["score"] == 0.0
+        assert "exceeds maximum analysis limit" in shacl_dim["detail"]
+
+

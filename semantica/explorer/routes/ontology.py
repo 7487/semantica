@@ -36,6 +36,12 @@ _MAX_FETCH_BYTES = 20 * 1024 * 1024  # 20 MB
 _MAX_ANALYSIS_NODES = 5_000   # cap for health/suggest/shacl node scans to avoid OOM
 _MAX_ENTITIES_PER_SIDE = 500  # per-ontology cap for the O(n²) pairwise suggestion loop
 
+
+class GraphTruncationError(Exception):
+    """Raised when a graph exceeds _MAX_ANALYSIS_NODES so analysis would be truncated."""
+    pass
+
+
 _CLASS_TYPES = frozenset({
     "owl:Class", "rdfs:Class",
     "http://www.w3.org/2002/07/owl#Class",
@@ -105,6 +111,43 @@ _INGEST_FORMAT_SUFFIXES: Dict[str, str] = {
     "trig": ".trig",
     "nquads": ".nq",
 }
+
+
+# ---------------------------------------------------------------------------
+# SHACL Validation Resource Guardrails
+# ---------------------------------------------------------------------------
+_MAX_SHACL_TURTLE_BYTES: int = int(
+    os.environ.get("SEMANTICA_MAX_SHACL_TURTLE_BYTES", "262144")
+)  # 256 KB
+_MAX_SHACL_TRIPLES: int = int(
+    os.environ.get("SEMANTICA_MAX_SHACL_TRIPLES", "1000")
+)  # 1,000 triples
+_MAX_SHACL_TIMEOUT_SECONDS: float = float(
+    os.environ.get("SEMANTICA_MAX_SHACL_TIMEOUT", "15.0")
+)
+_MAX_SHACL_CONCURRENCY: int = int(
+    os.environ.get("SEMANTICA_MAX_SHACL_CONCURRENCY", "4")
+)
+_shacl_validation_semaphore: Optional[
+    Tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]
+] = None
+
+
+def _get_shacl_semaphore() -> asyncio.Semaphore:
+    global _shacl_validation_semaphore
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    if (
+        _shacl_validation_semaphore is None
+        or _shacl_validation_semaphore[0] != current_loop
+    ):
+        _shacl_validation_semaphore = (
+            current_loop,
+            asyncio.Semaphore(_MAX_SHACL_CONCURRENCY),
+        )
+    return _shacl_validation_semaphore[1]
 
 
 # ---------------------------------------------------------------------------
@@ -579,7 +622,17 @@ def _as_uri_list(value: Any) -> List[str]:
     if value is None or value == "":
         return []
     if isinstance(value, list):
-        return [str(item) for item in value if item]
+        result = []
+        for item in value:
+            if item is None or item == "":
+                continue
+            if isinstance(item, dict):
+                uri = item.get("uri") or item.get("id") or item.get("@id")
+                if uri:
+                    result.append(str(uri))
+            else:
+                result.append(str(item))
+        return result
     if isinstance(value, dict):
         uri = value.get("uri") or value.get("id") or value.get("@id")
         return [str(uri)] if uri else []
@@ -2138,6 +2191,14 @@ async def ontology_health(
             status=shacl_status,
             detail=shacl_detail,
         )
+    except GraphTruncationError as exc:
+        shacl_dimension = HealthDimension(
+            key="shacl",
+            label="SHACL Conformance",
+            score=0.0,
+            status="critical",
+            detail=str(exc),
+        )
     except ImportError:
         shacl_dimension = HealthDimension(
             key="shacl",
@@ -2210,8 +2271,17 @@ async def _generated_shacl_for_uri(
     if entry is None:
         raise HTTPException(status_code=404, detail="Ontology not found in registry.")
 
-    nodes, _ = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
-    edges, _ = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
+    nodes, total_nodes = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
+    edges, total_edges = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
+    if total_nodes > _MAX_ANALYSIS_NODES or total_edges > _MAX_ANALYSIS_NODES:
+        logger.warning(
+            "shacl-generate: graph for %s is too large to analyse (nodes=%d, edges=%d, limit=%d); skipping.",
+            uri, total_nodes, total_edges, _MAX_ANALYSIS_NODES,
+        )
+        raise GraphTruncationError(
+            f"Graph size (nodes={total_nodes}, edges={total_edges}) exceeds maximum analysis limit ({_MAX_ANALYSIS_NODES}). "
+            "SHACL validation is skipped because the graph is too large to validate fully under current limits."
+        )
     entities = _ontology_entities(nodes, uri)
     ontology_dict = _ontology_dict_from_nodes(uri, entry.name, entities, edges)
 
@@ -2246,8 +2316,17 @@ async def _data_graph_turtle_for_uri(
     if uri not in registry:
         raise HTTPException(status_code=404, detail="Ontology not found in registry.")
 
-    nodes, _ = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
-    edges, _ = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
+    nodes, total_nodes = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
+    edges, total_edges = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
+    if total_nodes > _MAX_ANALYSIS_NODES or total_edges > _MAX_ANALYSIS_NODES:
+        logger.warning(
+            "shacl-data-graph: graph for %s is too large to analyse (nodes=%d, edges=%d, limit=%d); skipping.",
+            uri, total_nodes, total_edges, _MAX_ANALYSIS_NODES,
+        )
+        raise GraphTruncationError(
+            f"Graph size (nodes={total_nodes}, edges={total_edges}) exceeds maximum analysis limit ({_MAX_ANALYSIS_NODES}). "
+            "SHACL validation is skipped because the graph is too large to validate fully under current limits."
+        )
     entities = _data_graph_entities(nodes, uri)
 
     g = rdflib.Graph()
@@ -2296,8 +2375,10 @@ async def _data_graph_turtle_for_uri(
                 return rdflib.URIRef(prefix_map[prefix] + rest)
             return rdflib.URIRef(val_str)
         if val_str.startswith("#"):
-            return rdflib.URIRef(base_ns.rstrip("#/") + val_str)
-        return rdflib.URIRef(base_ns.rstrip("#/") + "#" + val_str.lstrip("#/"))
+            val_str = val_str.lstrip("#")
+        if base_ns.endswith(("/", "#")):
+            return rdflib.URIRef(base_ns + val_str.lstrip("/"))
+        return rdflib.URIRef(base_ns + "#" + val_str.lstrip("/"))
 
     _shorthand_types = {
         "class": "owl:Class",
@@ -2376,6 +2457,10 @@ async def _data_graph_turtle_for_uri(
             for item in _as_uri_list(val) if isinstance(val, (list, dict)) else [val]:
                 if item is None or item == "":
                     continue
+                if isinstance(item, dict):
+                    item = item.get("uri") or item.get("id") or item.get("@id")
+                    if not item:
+                        continue
                 if str(key) in _uri_predicates or (
                     str(key) not in _literal_predicates
                     and str(item).strip().startswith(("http://", "https://", "urn:"))
@@ -2406,7 +2491,10 @@ async def generate_shacl(
     body: ShaclGenerateRequest,
     session: GraphSession = Depends(get_session),
 ):
-    shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, body.uri, body.quality_tier)
+    try:
+        shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, body.uri, body.quality_tier)
+    except GraphTruncationError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     return ShaclGenerateResponse(
         uri=body.uri,
         shacl_turtle=shacl_turtle,
@@ -2421,7 +2509,10 @@ async def list_shacl_shapes(
     uri: str = Query(...),
     session: GraphSession = Depends(get_session),
 ):
-    shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, uri)
+    try:
+        shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, uri)
+    except GraphTruncationError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     return ShaclShapesResponse(
         uri=uri,
         shapes=shapes,
@@ -2439,11 +2530,35 @@ async def validate_shacl(
     if not body.shacl_turtle.strip():
         raise HTTPException(status_code=422, detail="SHACL Turtle cannot be empty.")
 
+    _shacl_bytes = body.shacl_turtle.encode("utf-8")
+    if len(_shacl_bytes) > _MAX_SHACL_TURTLE_BYTES:
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="error",
+            message=(
+                f"SHACL Turtle size ({len(_shacl_bytes)} bytes) "
+                f"exceeds maximum allowed size ({_MAX_SHACL_TURTLE_BYTES} bytes)."
+            ),
+            violations=[],
+        )
+
     # Syntax-check the submitted Turtle with rdflib before claiming anything about it.
     try:
         import rdflib  # type: ignore
         g = rdflib.Graph()
         await asyncio.to_thread(g.parse, data=body.shacl_turtle, format="turtle")
+        if len(g) > _MAX_SHACL_TRIPLES:
+            return ShaclValidationResponse(
+                uri=body.uri,
+                conforms=False,
+                status="error",
+                message=(
+                    f"SHACL graph triple count ({len(g)}) "
+                    f"exceeds maximum allowed limit ({_MAX_SHACL_TRIPLES})."
+                ),
+                violations=[],
+            )
     except ImportError:
         pass  # rdflib unavailable; skip syntax check
     except Exception as exc:
@@ -2469,12 +2584,39 @@ async def validate_shacl(
         data_graph_turtle = await _data_graph_turtle_for_uri(request, session, body.uri)
         from ...ontology import OntologyEngine
         engine = OntologyEngine()
-        report = await asyncio.to_thread(
-            engine.validate_graph,
-            data_graph_turtle,
-            shacl=body.shacl_turtle,
-            data_graph_format="turtle",
-            shacl_format="turtle",
+        semaphore = _get_shacl_semaphore()
+
+        async def _run_validation():
+            async with semaphore:
+                return await asyncio.to_thread(
+                    engine.validate_graph,
+                    data_graph_turtle,
+                    shacl=body.shacl_turtle,
+                    data_graph_format="turtle",
+                    shacl_format="turtle",
+                )
+
+        report = await asyncio.wait_for(
+            _run_validation(),
+            timeout=_MAX_SHACL_TIMEOUT_SECONDS,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="error",
+            message=(
+                f"SHACL validation timed out after {_MAX_SHACL_TIMEOUT_SECONDS} seconds."
+            ),
+            violations=[],
+        )
+    except GraphTruncationError as exc:
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="unavailable",
+            message=str(exc),
+            violations=[],
         )
     except ImportError as exc:
         return ShaclValidationResponse(
