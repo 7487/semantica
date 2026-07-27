@@ -115,10 +115,10 @@ class ProvenanceManager:
             return
 
         if not storage_path and config:
-            if isinstance(config, Mapping) or isinstance(config, dict):
+            if isinstance(config, Mapping):
                 prov_config = config.get("provenance", {})
                 prov_has_path = (
-                    isinstance(prov_config, (Mapping, dict))
+                    isinstance(prov_config, Mapping)
                     and "storage_path" in prov_config
                 )
                 if prov_has_path:
@@ -239,7 +239,7 @@ class ProvenanceManager:
             first_seen=existing.first_seen if existing else datetime.utcnow().isoformat(),
             last_updated=datetime.utcnow().isoformat(),
             parent_entity_id=parent_id,  # Link to history or explicit parent
-            used_entities=kwargs.get("used_entities", []),
+            used_entities=list(kwargs.get("used_entities", [])),
         )
 
         # Make the archived history entry discoverable via trace_lineage()'s

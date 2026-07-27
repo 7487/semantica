@@ -92,9 +92,10 @@ class Semantica:
 
         # Configure global provenance storage path if specified
         try:
+            # Config.get() already resolves dotted paths against nested dicts
+            # (see get_nested_value), so this single lookup covers both
+            # top-level and config.provenance={"storage_path": ...} shapes.
             prov_storage_path = self.config.get("provenance.storage_path")
-            if not prov_storage_path and isinstance(self.config.get("provenance"), dict):
-                prov_storage_path = self.config.get("provenance", {}).get("storage_path")
             if prov_storage_path:
                 from ..provenance import ProvenanceManager
                 ProvenanceManager.set_default_storage_path(prov_storage_path)

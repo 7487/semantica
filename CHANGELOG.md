@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Global default persistent storage for `ProvenanceManager`, plus a working `provenance` CLI** (#795, #802) by @Sameer6305 and @KaifAhmad1
+  - Every ingestion/processing module (`kg_provenance.py`, `pipeline_provenance.py`, and 20+ other call sites) instantiated its own `ProvenanceManager()` with no `storage_path`, so all of them silently fell back to `InMemoryStorage` and the SQLite audit trail was never actually written. `ProvenanceManager.set_default_storage_path(path)` now sets a class-level default that every no-arg instantiation picks up, and `Semantica.__init__` wires `config.provenance.storage_path` into it automatically during orchestrator init
+  - Added the thread-safe `default_storage_path(path)` context manager (`semantica.provenance.default_storage_path`) for test isolation — it stacks nested overrides and guarantees restoration of the previous default on exit, even on exception, so tests can't leak global state into each other
+  - Fixed `ProvenanceManager.__init__` raising `TypeError` on the CLI's `config=` kwarg, and implemented the four methods the CLI already called but that didn't exist on the class: `lineage()`, `audit_log()`, `export_prov()` (W3C PROV-O turtle/ntriples/jsonld via `rdflib`), and `check()` — unblocking `semantica provenance lineage|audit|export|check` end-to-end
+  - Follow-up review fixes: `track_entity` no longer aliases a caller-supplied `used_entities` list (it copied the reference and later mutated it in place via `.append()`, which could corrupt a list the caller still held); removed dead fallback branches in `orchestrator.py`/`manager.py` left over from not realizing `Config.get()` already resolves dotted paths; added a `--dry-run` option to `provenance audit` to match `provenance export` (previously only the global `--dry-run` flag worked, not a local one); and `provenance check --strict` no longer prints a green "✓" success line immediately before failing — a failing check now renders as a warning before the `ClickException` is raised
+
 ### Fixed
 
 - **`react-hooks/set-state-in-effect` cascading renders across 12 Explorer workspace files** (#769, #796) by @Sameer6305 and @KaifAhmad1
