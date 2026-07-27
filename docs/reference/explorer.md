@@ -262,7 +262,7 @@ Full interactive docs at `http://localhost:8000/docs`. All endpoints accept and 
 
     | Endpoint | Method | Description |
     | :-------- | :------ | :----------- |
-    | `/api/sparql` | `POST` | Execute a read-only SPARQL query (`SELECT`, `ASK`, `CONSTRUCT`, or `DESCRIBE`) |
+    | `/api/sparql` | `POST` | Execute a read-only SPARQL query (`SELECT`, `ASK`, `CONSTRUCT`, or `DESCRIBE`); `CONSTRUCT`/`DESCRIBE` return triples as `subject`, `predicate`, `object` columns, and `ASK` returns a `result` boolean column |
 
   </Accordion>
   <Accordion title="Decisions, Provenance, Annotations & Export">

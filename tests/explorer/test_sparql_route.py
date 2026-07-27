@@ -8,6 +8,7 @@ query-execution surface: (1) the read-only allowlist can't be bypassed, and
 """
 
 import asyncio
+import concurrent.futures
 from unittest.mock import patch
 
 import pytest
@@ -77,6 +78,9 @@ def test_ask_query_returns_boolean_like_result(client):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["error"] is None
+    assert payload["columns"] == ["result"]
+    assert payload["rows"] == [{"result": "true"}]
+    assert payload["total"] == 1
 
 
 def test_construct_query_succeeds(client):
@@ -88,6 +92,14 @@ def test_construct_query_succeeds(client):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["error"] is None
+    assert payload["columns"] == ["subject", "predicate", "object"]
+    assert payload["total"] > 0
+    assert any(
+        row["subject"] == "http://semantica.local/entity/python"
+        and row["predicate"] == "http://www.w3.org/2000/01/rdf-schema#label"
+        and row["object"] == "Python programming language"
+        for row in payload["rows"]
+    )
 
 
 def test_describe_query_succeeds(client):
@@ -95,6 +107,14 @@ def test_describe_query_succeeds(client):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["error"] is None
+    assert payload["columns"] == ["subject", "predicate", "object"]
+    assert payload["total"] > 0
+    assert any(
+        row["subject"] == "http://semantica.local/entity/python"
+        and row["predicate"] == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+        and row["object"] == "http://semantica.local/entity/language"
+        for row in payload["rows"]
+    )
 
 
 def test_lowercase_query_keyword_is_accepted(client):
@@ -134,14 +154,11 @@ def test_select_with_no_results_returns_empty_rows(client):
         "",
         "   ",
         "not a sparql query at all",
-        # A write statement smuggled after a comment/whitespace prefix, or
-        # appended after a valid-looking read query, must still be rejected
-        # since the whole string doesn't start with an allowed keyword.
+        # A write statement smuggled after a comment prefix fails prefix-matching
         "# comment\nDROP ALL",
-        "SELECT ?s WHERE { ?s ?p ?o } ; DROP ALL",
     ],
 )
-def test_write_and_non_read_queries_are_rejected(client, query):
+def test_write_and_non_read_queries_are_rejected_by_allowlist(client, query):
     resp = _post(client, query)
     assert resp.status_code == 200, "rejection is a normal 200 response with an error field, not an HTTP error"
     payload = resp.json()
@@ -151,13 +168,48 @@ def test_write_and_non_read_queries_are_rejected(client, query):
     assert payload["total"] == 0
 
 
-def test_rejected_query_never_touches_the_graph(client):
-    """A rejected query must short-circuit before any graph is built/queried."""
+def test_multi_statement_injection_is_rejected_by_parser(client):
+    """A multi-statement injection starting with SELECT passes the prefix
+    allowlist check but is rejected by rdflib's SPARQL parser as invalid
+    query syntax, preventing any mutation or secondary execution."""
+    resp = _post(client, "SELECT ?s WHERE { ?s ?p ?o } ; DROP ALL")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["error"] is not None
+    assert payload["rows"] == []
+    assert payload["columns"] == []
+    assert payload["total"] == 0
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "DROP ALL",
+        "INSERT DATA { <http://semantica.local/entity/x> a <http://semantica.local/entity/y> }",
+        "# comment\nDROP ALL",
+        "",
+    ],
+)
+def test_allowlist_rejected_query_never_touches_the_graph(client, query):
+    """An input failing _is_read_only_query must short-circuit before any graph is built/queried."""
     with patch.object(sparql_mod, "_build_rdflib_graph") as mock_build:
-        resp = _post(client, "DROP ALL")
+        resp = _post(client, query)
     assert resp.status_code == 200
     assert resp.json()["error"] is not None
     mock_build.assert_not_called()
+
+
+def test_multi_statement_injection_reaches_graph_but_fails_in_parser(client):
+    """Confirms the distinction between allowlist rejection and parser rejection:
+    a string starting with SELECT passes _is_read_only_query and builds a graph,
+    but rdflib.Graph.query() rejects the trailing '; DROP ALL' syntax."""
+    with patch.object(
+        sparql_mod, "_build_rdflib_graph", wraps=sparql_mod._build_rdflib_graph
+    ) as spy_build:
+        resp = _post(client, "SELECT ?s WHERE { ?s ?p ?o } ; DROP ALL")
+    assert resp.status_code == 200
+    assert resp.json()["error"] is not None
+    spy_build.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +250,7 @@ def test_row_cap_truncates_results(client):
     payload = resp.json()
     assert payload["error"] is None
     assert len(payload["rows"]) == 1
+    assert payload["total"] == 1
     assert payload["truncated"] is True
 
 
@@ -258,8 +311,19 @@ def test_concurrent_requests_all_complete_successfully(client):
     def _run():
         return _post(client, "SELECT ?s WHERE { ?s a <http://semantica.local/entity/language> }")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        results = list(pool.map(lambda _: _run(), range(6)))
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+    try:
+        futures = [pool.submit(_run) for _ in range(6)]
+        results = []
+        for idx, fut in enumerate(futures):
+            try:
+                results.append(fut.result(timeout=10.0))
+            except concurrent.futures.TimeoutError:
+                pytest.fail(
+                    f"Concurrent SPARQL query #{idx} deadlocked or timed out after 10.0s"
+                )
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     for resp in results:
         assert resp.status_code == 200

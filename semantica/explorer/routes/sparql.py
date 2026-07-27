@@ -1,5 +1,15 @@
-﻿"""
+"""
 SPARQL routes backed by an in-memory rdflib projection of the current graph.
+
+Security contract
+-----------------
+* Only SELECT, ASK, CONSTRUCT, and DESCRIBE are accepted (allowlist enforced
+  before graph construction so rejected queries never touch the session).
+* Multi-statement injections that start with an allowed keyword (e.g.
+  ``SELECT ... ; DROP ALL``) pass the prefix check and reach rdflib, which
+  rejects non-SELECT/ASK/CONSTRUCT/DESCRIBE update syntax in the parser.
+* The in-memory rdflib graph is a read-only projection — the live
+  ``GraphSession`` is never mutated by this route.
 """
 
 import asyncio
@@ -75,6 +85,9 @@ def _build_rdflib_graph(session: GraphSession) -> rdflib.Graph:
     return graph
 
 
+# ---------------------------------------------------------------------------
+# Resource limits (override in tests via patch.object)
+# ---------------------------------------------------------------------------
 _SPARQL_MAX_ROWS = 5_000     # hard cap on returned rows
 _SPARQL_TIMEOUT_S = 30       # seconds before abandoning the await
 _SPARQL_MAX_CONCURRENT = 4   # semaphore: max simultaneous executions
@@ -126,16 +139,40 @@ async def execute_sparql(
                 error_column=int(column_match.group(1)) if column_match else None,
             )
 
-    columns = [str(var) for var in query_results.vars] if query_results.vars else []
-    rows: List[Dict[str, Any]] = []
-    for row in query_results:
-        if len(rows) >= _SPARQL_MAX_ROWS:
-            break
-        row_data = {}
-        for index, column in enumerate(columns):
-            value = row[index]
-            row_data[column] = str(value) if value is not None else None
-        rows.append(row_data)
+    # ---------------------------------------------------------------------------
+    # Serialize results into a type-aware tabular representation.
+    # ASK      → single row: {"result": "true"|"false"}
+    # CONSTRUCT/DESCRIBE → rows of {"subject", "predicate", "object"} triples
+    # SELECT   → rows keyed by projected variable names
+    # ---------------------------------------------------------------------------
+    query_type: str = query_results.type  # always set by rdflib
+    truncated = False
 
-    truncated = len(rows) == _SPARQL_MAX_ROWS
+    if query_type == "ASK":
+        columns = ["result"]
+        rows = [{"result": "true" if query_results.askAnswer else "false"}]
+
+    elif query_type in ("CONSTRUCT", "DESCRIBE"):
+        columns = ["subject", "predicate", "object"]
+        rows = []
+        for s, p, o in query_results:  # rdflib always yields (s, p, o) 3-tuples
+            if len(rows) >= _SPARQL_MAX_ROWS:
+                truncated = True
+                break
+            rows.append({"subject": str(s), "predicate": str(p), "object": str(o)})
+
+    else:  # SELECT
+        columns = [str(var) for var in (query_results.vars or [])]
+        rows = []
+        for row in query_results:
+            if len(rows) >= _SPARQL_MAX_ROWS:
+                truncated = True
+                break
+            rows.append(
+                {
+                    column: (str(row[index]) if row[index] is not None else None)
+                    for index, column in enumerate(columns)
+                }
+            )
+
     return SparqlResponse(columns=columns, rows=rows, total=len(rows), truncated=truncated)
