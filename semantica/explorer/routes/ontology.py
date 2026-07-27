@@ -1472,8 +1472,8 @@ async def create_ontology(
             logger.info(f"Generated ontology from sample data with {len(nodes)} nodes, {len(edges)} edges")
             
         except Exception as exc:
-            logger.exception("Failed to generate ontology from sample data; falling back to minimal ontology.")
-            logger.warning(f"OntologyEngine.from_data error: {exc}")
+            logger.exception("Failed to generate ontology from sample data; aborting ontology creation.")
+            raise HTTPException(status_code=500, detail=f"Ontology generation failed: {exc}") from exc
 
     elif body.mode == "text" and body.schema_text:
         try:
@@ -1542,8 +1542,8 @@ async def create_ontology(
             logger.info(f"Generated ontology from text with {len(nodes)} nodes, {len(edges)} edges")
             
         except Exception as exc:
-            logger.exception("Failed to generate ontology from schema text; falling back to minimal ontology.")
-            logger.warning(f"OntologyEngine.from_text error: {exc}")
+            logger.exception("Failed to generate ontology from schema text; aborting ontology creation.")
+            raise HTTPException(status_code=500, detail=f"Ontology generation failed: {exc}") from exc
 
     nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
     edges_added = await asyncio.to_thread(session.add_edges, edges)
@@ -2166,8 +2166,13 @@ async def ontology_health(
     documentation_score = ((with_comment / total) * 80.0) + (20.0 if entry.version or entry.source_url else 0.0)
 
     try:
-        shacl_turtle, _ = await _generated_shacl_for_uri(request, session, uri)
-        data_graph_turtle = await _data_graph_turtle_for_uri(request, session, uri)
+        health_nodes, health_edges = await _fetch_analysis_graph(session, uri, "shacl-health")
+        shacl_turtle, _ = await _generated_shacl_for_uri(
+            request, session, uri, nodes=health_nodes, edges=health_edges
+        )
+        data_graph_turtle = await _data_graph_turtle_for_uri(
+            request, session, uri, nodes=health_nodes, edges=health_edges
+        )
         from ...ontology import OntologyEngine
         engine = OntologyEngine()
         report = await asyncio.to_thread(
@@ -2177,12 +2182,23 @@ async def ontology_health(
             data_graph_format="turtle",
             shacl_format="turtle",
         )
-        shacl_score = 100.0 if report.conforms else max(0.0, 100.0 - (report.violation_count * 20.0))
-        shacl_status = "ok" if report.conforms else "warning"
+        warning_count = len(report.warnings)
+        if not report.conforms:
+            shacl_score = max(0.0, 100.0 - (report.violation_count * 20.0))
+        elif warning_count:
+            shacl_score = max(0.0, 100.0 - (warning_count * 5.0))
+        else:
+            shacl_score = 100.0
+        shacl_status = "ok" if report.conforms and not warning_count else "warning"
+        detail_parts = []
+        if not report.conforms:
+            detail_parts.append(f"{report.violation_count} SHACL violation(s)")
+        if warning_count:
+            detail_parts.append(f"{warning_count} SHACL warning(s)")
         shacl_detail = (
             "Graph conforms to all generated SHACL constraints."
-            if report.conforms
-            else f"Graph has {report.violation_count} SHACL violation(s)."
+            if not detail_parts
+            else f"Graph has {', '.join(detail_parts)}."
         )
         shacl_dimension = HealthDimension(
             key="shacl",
@@ -2260,28 +2276,46 @@ async def ontology_health(
     )
 
 
+async def _fetch_analysis_graph(
+    session: GraphSession,
+    uri: str,
+    log_tag: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Fetch nodes/edges for SHACL analysis, raising GraphTruncationError if oversized.
+
+    Shared by `_generated_shacl_for_uri` and `_data_graph_turtle_for_uri` so callers that
+    need both (e.g. `/health`) can fetch once and pass the results to both via `nodes=`/`edges=`.
+    """
+    nodes, total_nodes = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
+    edges, total_edges = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
+    if total_nodes > _MAX_ANALYSIS_NODES or total_edges > _MAX_ANALYSIS_NODES:
+        logger.warning(
+            "%s: graph for %s is too large to analyse (nodes=%d, edges=%d, limit=%d); skipping.",
+            log_tag, uri, total_nodes, total_edges, _MAX_ANALYSIS_NODES,
+        )
+        raise GraphTruncationError(
+            f"Graph size (nodes={total_nodes}, edges={total_edges}) exceeds maximum analysis limit ({_MAX_ANALYSIS_NODES}). "
+            "SHACL validation is skipped because the graph is too large to validate fully under current limits."
+        )
+    return nodes, edges
+
+
 async def _generated_shacl_for_uri(
     request: Request,
     session: GraphSession,
     uri: str,
     quality_tier: str = "strict",
+    *,
+    nodes: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[str, List[ShaclShapeSummary]]:
     registry = {entry.uri: entry for entry in await _registry_entries(request, session)}
     entry = registry.get(uri)
     if entry is None:
         raise HTTPException(status_code=404, detail="Ontology not found in registry.")
 
-    nodes, total_nodes = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
-    edges, total_edges = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
-    if total_nodes > _MAX_ANALYSIS_NODES or total_edges > _MAX_ANALYSIS_NODES:
-        logger.warning(
-            "shacl-generate: graph for %s is too large to analyse (nodes=%d, edges=%d, limit=%d); skipping.",
-            uri, total_nodes, total_edges, _MAX_ANALYSIS_NODES,
-        )
-        raise GraphTruncationError(
-            f"Graph size (nodes={total_nodes}, edges={total_edges}) exceeds maximum analysis limit ({_MAX_ANALYSIS_NODES}). "
-            "SHACL validation is skipped because the graph is too large to validate fully under current limits."
-        )
+    if nodes is None or edges is None:
+        nodes, edges = await _fetch_analysis_graph(session, uri, "shacl-generate")
     entities = _ontology_entities(nodes, uri)
     ontology_dict = _ontology_dict_from_nodes(uri, entry.name, entities, edges)
 
@@ -2306,6 +2340,9 @@ async def _data_graph_turtle_for_uri(
     request: Request,
     session: GraphSession,
     uri: str,
+    *,
+    nodes: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     try:
         import rdflib
@@ -2316,17 +2353,8 @@ async def _data_graph_turtle_for_uri(
     if uri not in registry:
         raise HTTPException(status_code=404, detail="Ontology not found in registry.")
 
-    nodes, total_nodes = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
-    edges, total_edges = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
-    if total_nodes > _MAX_ANALYSIS_NODES or total_edges > _MAX_ANALYSIS_NODES:
-        logger.warning(
-            "shacl-data-graph: graph for %s is too large to analyse (nodes=%d, edges=%d, limit=%d); skipping.",
-            uri, total_nodes, total_edges, _MAX_ANALYSIS_NODES,
-        )
-        raise GraphTruncationError(
-            f"Graph size (nodes={total_nodes}, edges={total_edges}) exceeds maximum analysis limit ({_MAX_ANALYSIS_NODES}). "
-            "SHACL validation is skipped because the graph is too large to validate fully under current limits."
-        )
+    if nodes is None or edges is None:
+        nodes, edges = await _fetch_analysis_graph(session, uri, "shacl-data-graph")
     entities = _data_graph_entities(nodes, uri)
 
     g = rdflib.Graph()
@@ -2653,12 +2681,19 @@ async def validate_shacl(
             focus_node=str(v.focus_node) if v.focus_node is not None else None,
             source_shape=str(v.shape) if v.shape is not None else None,
         )
-        for v in report.violations
+        for v in [*report.violations, *report.warnings, *report.infos]
     ]
+    _result_counts = []
+    if report.violations:
+        _result_counts.append(f"{len(report.violations)} violation(s)")
+    if report.warnings:
+        _result_counts.append(f"{len(report.warnings)} warning(s)")
+    if report.infos:
+        _result_counts.append(f"{len(report.infos)} info result(s)")
     summary_msg = (
-        "Graph conforms to SHACL shapes."
-        if report.conforms
-        else f"SHACL validation found {len(violations)} violation(s)."
+        f"SHACL validation found {', '.join(_result_counts)}."
+        if _result_counts
+        else "Graph conforms to SHACL shapes."
     )
     return ShaclValidationResponse(
         uri=body.uri,

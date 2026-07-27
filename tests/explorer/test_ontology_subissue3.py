@@ -228,6 +228,73 @@ onto:PersonNameShape a sh:NodeShape ;
     assert "person-no-name" in str(violation["focus_node"]) or "person-no-name" in str(violation["node"])
 
 
+def test_shacl_validate_surfaces_warning_severity_results(client):
+    graph = client.app.state.session.graph
+    onto_uri = "http://example.org/onto-a"
+    person_a = "http://example.org/onto-a#Person"
+    person_inst = "http://example.org/onto-a#person-no-email"
+    graph.add_node(
+        person_inst,
+        node_type="owl:NamedIndividual",
+        content="Person Without Email",
+        scheme_uri=onto_uri,
+        **{
+            "rdf:type": person_a,
+            "rdfs:label": "Person Without Email",
+        },
+    )
+
+    shacl_turtle = """
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix onto: <http://example.org/onto-a#> .
+
+onto:PersonEmailShape a sh:NodeShape ;
+    sh:targetClass onto:Person ;
+    sh:property [
+        sh:path onto:email ;
+        sh:minCount 1 ;
+        sh:severity sh:Warning ;
+        sh:message "Person should have an email." ;
+    ] .
+"""
+
+    response = client.post(
+        "/api/ontology/shacl/validate",
+        json={
+            "uri": onto_uri,
+            "shacl_turtle": shacl_turtle,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "success"
+    # pySHACL flips conforms=False for any result regardless of severity, but
+    # previously the response body gave no explanation for that: violations
+    # was always populated from report.violations only, so a report that was
+    # "non-conforming" purely due to a Warning-severity result rendered as
+    # conforms=False with an empty violations list. Warnings/infos are now
+    # folded into the violations array so the response is self-explanatory.
+    assert payload["conforms"] is False
+    assert len(payload["violations"]) >= 1
+    warning = payload["violations"][0]
+    assert warning["severity"] == "Warning"
+    assert "warning" in payload["message"].lower()
+
+
+def test_health_dedupes_node_edge_fetch(client):
+    import semantica.explorer.routes.ontology as ont_mod
+
+    with patch.object(
+        ont_mod, "_fetch_analysis_graph", wraps=ont_mod._fetch_analysis_graph
+    ) as fetch_spy:
+        response = client.get("/api/ontology/health?uri=http%3A%2F%2Fexample.org%2Fonto-a")
+    assert response.status_code == 200
+    # /health needs both the generated SHACL shapes and the data graph for the
+    # same uri; both used to independently re-fetch nodes/edges from the
+    # session. They now share a single fetch.
+    assert fetch_spy.call_count == 1
+
+
 def test_health_returns_404_for_unknown_ontology(client):
     response = client.get("/api/ontology/health?uri=http%3A%2F%2Fnot-loaded.example%2Fonto")
     assert response.status_code == 404
