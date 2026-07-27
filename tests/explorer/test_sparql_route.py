@@ -260,6 +260,22 @@ def test_result_below_cap_is_not_marked_truncated(client):
     assert payload["truncated"] is False
 
 
+def test_row_cap_truncates_construct_results(client):
+    """CONSTRUCT/DESCRIBE share _cap_rows with SELECT; confirm the cap applies there too."""
+    with patch.object(sparql_mod, "_SPARQL_MAX_ROWS", 1):
+        resp = _post(
+            client,
+            "CONSTRUCT { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?label } "
+            "WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?label }",
+        )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["error"] is None
+    assert len(payload["rows"]) == 1
+    assert payload["total"] == 1
+    assert payload["truncated"] is True
+
+
 def test_query_timeout_returns_clean_error_not_a_crash(client):
     async def _raise_timeout(coro, timeout=None):
         coro.close()  # avoid a 'coroutine was never awaited' warning from the mock

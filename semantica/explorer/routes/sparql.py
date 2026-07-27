@@ -14,7 +14,7 @@ Security contract
 
 import asyncio
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import rdflib
 from fastapi import APIRouter, Depends
@@ -98,6 +98,22 @@ _SPARQL_MAX_CONCURRENT = 4   # semaphore: max simultaneous executions
 _sparql_semaphore = asyncio.Semaphore(_SPARQL_MAX_CONCURRENT)
 
 
+def _cap_rows(items: Any, row_builder) -> Tuple[List[Dict[str, Any]], bool]:
+    """Materialize up to ``_SPARQL_MAX_ROWS`` items via ``row_builder``, reporting truncation.
+
+    Shared by the SELECT and CONSTRUCT/DESCRIBE branches below so the row cap
+    is enforced identically regardless of query type.
+    """
+    rows: List[Dict[str, Any]] = []
+    truncated = False
+    for item in items:
+        if len(rows) >= _SPARQL_MAX_ROWS:
+            truncated = True
+            break
+        rows.append(row_builder(item))
+    return rows, truncated
+
+
 @router.post("", response_model=SparqlResponse)
 async def execute_sparql(
     req: SparqlRequest,
@@ -146,33 +162,31 @@ async def execute_sparql(
     # SELECT   → rows keyed by projected variable names
     # ---------------------------------------------------------------------------
     query_type: str = query_results.type  # always set by rdflib
-    truncated = False
 
     if query_type == "ASK":
         columns = ["result"]
         rows = [{"result": "true" if query_results.askAnswer else "false"}]
+        truncated = False
 
     elif query_type in ("CONSTRUCT", "DESCRIBE"):
         columns = ["subject", "predicate", "object"]
-        rows = []
-        for s, p, o in query_results:  # rdflib always yields (s, p, o) 3-tuples
-            if len(rows) >= _SPARQL_MAX_ROWS:
-                truncated = True
-                break
-            rows.append({"subject": str(s), "predicate": str(p), "object": str(o)})
+        rows, truncated = _cap_rows(
+            query_results,  # rdflib always yields (s, p, o) 3-tuples
+            lambda triple: {
+                "subject": str(triple[0]),
+                "predicate": str(triple[1]),
+                "object": str(triple[2]),
+            },
+        )
 
     else:  # SELECT
         columns = [str(var) for var in (query_results.vars or [])]
-        rows = []
-        for row in query_results:
-            if len(rows) >= _SPARQL_MAX_ROWS:
-                truncated = True
-                break
-            rows.append(
-                {
-                    column: (str(row[index]) if row[index] is not None else None)
-                    for index, column in enumerate(columns)
-                }
-            )
+        rows, truncated = _cap_rows(
+            query_results,
+            lambda row: {
+                column: (str(row[index]) if row[index] is not None else None)
+                for index, column in enumerate(columns)
+            },
+        )
 
     return SparqlResponse(columns=columns, rows=rows, total=len(rows), truncated=truncated)
