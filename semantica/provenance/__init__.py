@@ -43,7 +43,7 @@ License: MIT
 
 from .schemas import ProvenanceEntry, SourceReference
 from .storage import ProvenanceStorage, InMemoryStorage, SQLiteStorage
-from .manager import ProvenanceManager
+from .manager import ProvenanceManager, default_storage_path
 from .integrity import compute_checksum, verify_checksum
 
 __all__ = [
@@ -58,6 +58,7 @@ __all__ = [
     
     # Manager
     "ProvenanceManager",
+    "default_storage_path",
     
     # Utilities
     "compute_checksum",
