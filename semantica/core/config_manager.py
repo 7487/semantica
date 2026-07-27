@@ -51,7 +51,6 @@ Author: Semantica Contributors
 License: MIT
 """
 
-import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -67,7 +66,6 @@ from ..utils.helpers import (
     set_nested_value,
 )
 from ..utils.progress_tracker import get_progress_tracker
-from ..utils.validators import validate_config
 
 
 class Config:
@@ -157,6 +155,7 @@ class Config:
         self.security = config_data.get(
             "security", DEFAULT_CONFIG.get("security", {})
         )
+        self.provenance = config_data.get("provenance", {})
         self.custom = config_data.get("custom", {})
 
     def _load_from_env(self, config_dict: Dict[str, Any]) -> None:
@@ -346,6 +345,7 @@ class Config:
             "logging": self.logging,
             "quality": self.quality,
             "security": self.security,
+            "provenance": self.provenance,
             "custom": self.custom,
         }
 

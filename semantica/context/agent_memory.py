@@ -58,16 +58,59 @@ Author: Semantica Contributors
 License: MIT
 """
 
+import copy
+import hashlib
+import os
+import re
+import tempfile
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Union
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import yaml
 
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
 from ..utils.types import EntityDict, RelationshipDict
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects ambiguous duplicate mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeySafeLoader, node: yaml.MappingNode, deep: bool = False
+) -> Dict[Any, Any]:
+    loader.flatten_mapping(node)
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable key",
+                key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeySafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping
+)
 
 
 @dataclass
@@ -121,6 +164,20 @@ class AgentMemory:
     • Knowledge Graph: Structured context integration
     """
 
+    _MARKDOWN_RESERVED_FIELDS = frozenset(
+        {
+            "id",
+            "created_at",
+            "updated_at",
+            "type",
+            "kind",
+            "entities",
+            "relationships",
+            "metadata",
+        }
+    )
+    _MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown"})
+
     def __init__(self, config: Optional[Dict[str, Any]] = None, **kwargs):
         """
         Initialize agent memory.
@@ -149,6 +206,7 @@ class AgentMemory:
         # In-memory storage
         self.memory_items: Dict[str, MemoryItem] = {}
         self.memory_index: deque = deque(maxlen=self.max_memory_size)
+        self._vector_ids: Dict[str, List[str]] = {}
 
         # Hierarchical Memory: Short-term buffer
         # Note: We use a list for flexible pruning (tokens & count).
@@ -179,6 +237,7 @@ class AgentMemory:
             "memory_items": {k: v.to_dict() for k, v in self.memory_items.items()},
             "memory_index": list(self.memory_index),
             "short_term_memory": [item.to_dict() for item in self.short_term_memory],
+            "vector_ids": self._vector_ids,
             "stats": self.stats,
         }
 
@@ -206,7 +265,7 @@ class AgentMemory:
             with open(file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         elif os.path.exists(legacy_path):
-            # Legacy pickle files: refuse to load them to prevent deserialization attacks.
+            # Refuse legacy pickle files to prevent deserialization attacks.
             # Users must re-save memory in the new JSON format.
             self.logger.warning(
                 f"Legacy pickle file found at {legacy_path}. "
@@ -218,14 +277,17 @@ class AgentMemory:
             return
 
         raw_items = data.get("memory_items", {})
-        self.memory_items = {
-            k: MemoryItem.from_dict(v) for k, v in raw_items.items()
-        }
+        self.memory_items = {k: MemoryItem.from_dict(v) for k, v in raw_items.items()}
         raw_index = data.get("memory_index", [])
         self.memory_index = deque(raw_index, maxlen=self.max_memory_size)
         self.short_term_memory = [
             MemoryItem.from_dict(item) for item in data.get("short_term_memory", [])
         ]
+        self._vector_ids = {
+            memory_id: list(vector_ids)
+            for memory_id, vector_ids in data.get("vector_ids", {}).items()
+            if isinstance(vector_ids, list)
+        }
         self.stats = data.get(
             "stats",
             {"total_items": 0, "items_by_type": {}, "last_accessed": None},
@@ -253,6 +315,7 @@ class AgentMemory:
                 - memory_id: Custom memory ID
                 - timestamp: Custom timestamp
                 - skip_vector: If True, skip vector store (Short-term only)
+                - skip_graph: If True, keep entities local to the memory item
 
         Returns:
             Memory ID
@@ -268,6 +331,30 @@ class AgentMemory:
         try:
             memory_id = options.get("memory_id") or self._generate_memory_id()
             timestamp = options.get("timestamp") or datetime.now()
+
+            if memory_id in self.memory_items:
+                replacement_options = dict(options)
+                replacement_options.pop("memory_id", None)
+                replacement_options.pop("timestamp", None)
+                replaced = self._replace_memory_item(
+                    memory_id,
+                    content,
+                    metadata=metadata or {},
+                    entities=entities or [],
+                    relationships=relationships or [],
+                    timestamp=timestamp,
+                    **replacement_options,
+                )
+                if not replaced:
+                    raise RuntimeError(
+                        f"Failed to replace existing memory item: {memory_id}"
+                    )
+                self.progress_tracker.stop_tracking(
+                    tracking_id,
+                    status="completed",
+                    message=f"Stored memory: {memory_id}",
+                )
+                return memory_id
 
             # Create memory item
             memory_item = MemoryItem(
@@ -287,24 +374,11 @@ class AgentMemory:
             skip_vector = options.get("skip_vector", False)
             if self.vector_store and not skip_vector:
                 try:
-                    self.progress_tracker.update_tracking(
-                        tracking_id, message="Generating embedding..."
+                    vector_ids = self._store_memory_vector(
+                        memory_item, tracking_id=tracking_id
                     )
-                    embedding = self._generate_embedding(content)
-                    memory_item.embedding = embedding
-
-                    # Store in vector store
-                    if hasattr(self.vector_store, "store_vectors"):
-                        # Use concrete VectorStore implementation
-                        if isinstance(memory_item.embedding, list):
-                            vectors = [np.array(memory_item.embedding)]
-                        else:
-                            vectors = [memory_item.embedding]
-                        meta = [memory_item.metadata]
-                        self.vector_store.store_vectors(vectors=vectors, metadata=meta)
-                    elif hasattr(self.vector_store, "add"):
-                        # Use VectorStore protocol
-                        self.vector_store.add([memory_item])
+                    if vector_ids:
+                        self._vector_ids[memory_id] = vector_ids
                 except Exception as e:
                     self.logger.warning(f"Failed to store in vector store: {e}")
 
@@ -313,7 +387,8 @@ class AgentMemory:
             self.memory_index.append(memory_id)
 
             # 3. Update Knowledge Graph
-            if self.knowledge_graph and entities:
+            skip_graph = options.get("skip_graph", False)
+            if self.knowledge_graph and entities and not skip_graph:
                 self.progress_tracker.update_tracking(
                     tracking_id, message="Updating knowledge graph..."
                 )
@@ -329,7 +404,7 @@ class AgentMemory:
             self.logger.debug(f"Stored memory item: {memory_id}")
 
             # Apply retention policy
-            self._apply_retention_policy()
+            self._apply_retention_policy(skip_vector=skip_vector)
 
             self.progress_tracker.stop_tracking(
                 tracking_id, status="completed", message=f"Stored memory: {memory_id}"
@@ -496,7 +571,7 @@ class AgentMemory:
             "relationships": memory_item.relationships,
         }
 
-    def delete_memory(self, memory_id: str) -> bool:
+    def delete_memory(self, memory_id: str, *, skip_vector: bool = False) -> bool:
         """
         Delete memory item.
 
@@ -509,21 +584,41 @@ class AgentMemory:
         if memory_id not in self.memory_items:
             return False
 
-        # Remove from vector store
-        if self.vector_store and hasattr(self.vector_store, "delete"):
-            try:
-                self.vector_store.delete(memory_id)
-            except Exception as e:
-                self.logger.warning(f"Failed to delete from vector store: {e}")
+        # Remove from vector store unless a caller is staging an atomic local update.
+        if not skip_vector:
+            if self.vector_store:
+                try:
+                    vector_ids = list(self._vector_ids.get(memory_id, [])) or [
+                        memory_id
+                    ]
+                    self._delete_vector_ids(vector_ids)
+                except Exception as e:
+                    self.logger.warning(f"Failed to delete from vector store: {e}")
+            self._vector_ids.pop(memory_id, None)
+
+        memory_item = self.memory_items[memory_id]
 
         # Remove from memory
         del self.memory_items[memory_id]
 
-        # Remove from index
-        if memory_id in self.memory_index:
-            self.memory_index.remove(memory_id)
+        # Remove every occurrence in case a custom ID was stored more than once.
+        self.memory_index = deque(
+            (item_id for item_id in self.memory_index if item_id != memory_id),
+            maxlen=self.memory_index.maxlen,
+        )
+
+        self.short_term_memory = [
+            item for item in self.short_term_memory if item.memory_id != memory_id
+        ]
 
         self.stats["total_items"] = max(0, self.stats["total_items"] - 1)
+        item_type = memory_item.metadata.get("type", "general")
+        if item_type in self.stats["items_by_type"]:
+            self.stats["items_by_type"][item_type] = max(
+                0, self.stats["items_by_type"][item_type] - 1
+            )
+            if self.stats["items_by_type"][item_type] == 0:
+                del self.stats["items_by_type"][item_type]
 
         self.logger.debug(f"Deleted memory item: {memory_id}")
         return True
@@ -628,7 +723,6 @@ class AgentMemory:
 
     def _generate_memory_id(self) -> str:
         """Generate unique memory ID."""
-        import hashlib
         import time
 
         timestamp = str(time.time())
@@ -676,6 +770,102 @@ class AgentMemory:
         if hasattr(self.vector_store, "embed"):
             return self.vector_store.embed(content)
         return None
+
+    def _store_memory_vector(
+        self, memory_item: MemoryItem, tracking_id: Optional[str] = None
+    ) -> List[str]:
+        """Store one memory embedding and return adapter-provided vector IDs."""
+        if not self.vector_store:
+            return []
+
+        if tracking_id is not None:
+            self.progress_tracker.update_tracking(
+                tracking_id, message="Generating embedding..."
+            )
+
+        memory_item.embedding = self._generate_embedding(memory_item.content)
+        stored_ids: Any = None
+        fallback_to_memory_id = False
+
+        if hasattr(self.vector_store, "store_vectors"):
+            embedding = memory_item.embedding
+            vectors = (
+                [np.array(embedding)] if isinstance(embedding, list) else [embedding]
+            )
+            stored_ids = self.vector_store.store_vectors(
+                vectors=vectors, metadata=[memory_item.metadata]
+            )
+        elif hasattr(self.vector_store, "add"):
+            stored_ids = self.vector_store.add([memory_item])
+            fallback_to_memory_id = True
+        else:
+            return []
+
+        if isinstance(stored_ids, str):
+            return [stored_ids]
+        if isinstance(stored_ids, (list, tuple)):
+            return [str(vector_id) for vector_id in stored_ids]
+        if fallback_to_memory_id and memory_item.memory_id:
+            return [memory_item.memory_id]
+        return []
+
+    def _delete_vector_ids(self, vector_ids: List[str]) -> None:
+        """Delete adapter vector IDs using Semantica's supported interfaces."""
+        if not self.vector_store or not vector_ids:
+            return
+
+        if hasattr(self.vector_store, "delete_vectors"):
+            deleted = self.vector_store.delete_vectors(vector_ids)
+        elif hasattr(self.vector_store, "delete"):
+            deleted = self.vector_store.delete(vector_ids)
+        else:
+            return
+
+        if deleted is False:
+            raise RuntimeError(f"Vector store did not delete IDs: {vector_ids}")
+
+    def _sync_committed_vector_changes(
+        self, previous_state: Dict[str, Any], changed_ids: List[str]
+    ) -> None:
+        """Best-effort vector sync after in-memory changes can no longer roll back."""
+        if not self.vector_store:
+            return
+
+        previous_items = previous_state["memory_items"]
+        previous_vector_ids = previous_state["vector_ids"]
+
+        for memory_id in changed_ids:
+            memory_item = self.memory_items.get(memory_id)
+            if memory_item is None:
+                continue
+
+            old_ids = list(previous_vector_ids.get(memory_id, []))
+            if memory_id in previous_items and not old_ids:
+                old_ids = [memory_id]
+
+            try:
+                new_ids = self._store_memory_vector(memory_item)
+                if new_ids:
+                    self._vector_ids[memory_id] = new_ids
+                    stale_ids = [
+                        vector_id for vector_id in old_ids if vector_id not in new_ids
+                    ]
+                    self._delete_vector_ids(stale_ids)
+            except Exception as exc:
+                self.logger.warning(
+                    f"Failed to synchronize vector for memory {memory_id}: {exc}"
+                )
+
+        removed_ids = set(previous_items).difference(self.memory_items)
+        for memory_id in removed_ids:
+            vector_ids = list(previous_vector_ids.get(memory_id, [])) or [memory_id]
+            try:
+                self._delete_vector_ids(vector_ids)
+            except Exception as exc:
+                self.logger.warning(
+                    f"Failed to delete vector for memory {memory_id}: {exc}"
+                )
+            self._vector_ids.pop(memory_id, None)
 
     def _update_knowledge_graph(
         self,
@@ -765,7 +955,9 @@ class AgentMemory:
                 from dateutil.parser import parse
 
                 start_date = parse(start_date)
-            if memory_item.timestamp < start_date:
+            if self._timestamp_comparison_key(
+                memory_item.timestamp
+            ) < self._timestamp_comparison_key(start_date):
                 return False
 
         if "end_date" in filters:
@@ -774,10 +966,17 @@ class AgentMemory:
                 from dateutil.parser import parse
 
                 end_date = parse(end_date)
-            if memory_item.timestamp > end_date:
+            if self._timestamp_comparison_key(
+                memory_item.timestamp
+            ) > self._timestamp_comparison_key(end_date):
                 return False
 
         return True
+
+    @staticmethod
+    def _timestamp_comparison_key(timestamp: datetime) -> datetime:
+        """Convert aware or local-naive timestamps to a comparable UTC value."""
+        return timestamp.astimezone(timezone.utc)
 
     def _keyword_search(
         self, query: str, max_results: int, filters: Dict[str, Any]
@@ -813,7 +1012,7 @@ class AgentMemory:
 
         return results
 
-    def _apply_retention_policy(self) -> None:
+    def _apply_retention_policy(self, *, skip_vector: bool = False) -> None:
         """Apply memory retention policy."""
         if self.retention_policy == "unlimited":
             return
@@ -832,11 +1031,13 @@ class AgentMemory:
         # Delete old items
         memory_ids_to_delete = []
         for memory_id, memory_item in self.memory_items.items():
-            if memory_item.timestamp < cutoff_date:
+            if self._timestamp_comparison_key(
+                memory_item.timestamp
+            ) < self._timestamp_comparison_key(cutoff_date):
                 memory_ids_to_delete.append(memory_id)
 
         for memory_id in memory_ids_to_delete:
-            self.delete_memory(memory_id)
+            self.delete_memory(memory_id, skip_vector=skip_vector)
 
         if memory_ids_to_delete:
             self.logger.info(
@@ -917,6 +1118,8 @@ class AgentMemory:
         memory_id: str,
         content: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        entities: Optional[List[EntityDict]] = None,
+        relationships: Optional[List[RelationshipDict]] = None,
         **kwargs,
     ) -> bool:
         """
@@ -926,6 +1129,8 @@ class AgentMemory:
             memory_id: Memory ID to update
             content: New content (optional)
             metadata: New metadata (optional, merged with existing)
+            entities: Replacement entities (optional)
+            relationships: Replacement relationships (optional)
             **kwargs: Additional fields to update
 
         Returns:
@@ -942,18 +1147,75 @@ class AgentMemory:
         current_metadata = memory_item.metadata.copy()
         if metadata:
             current_metadata.update(metadata)
+        current_entities = entities if entities is not None else memory_item.entities
+        current_relationships = (
+            relationships if relationships is not None else memory_item.relationships
+        )
 
-        # Delete old and create new
-        self.delete_memory(memory_id)
-        new_id = self.store(
+        return self._replace_memory_item(
+            memory_id,
             current_content,
             metadata=current_metadata,
-            entities=memory_item.entities,
-            relationships=memory_item.relationships,
+            entities=current_entities,
+            relationships=current_relationships,
+            timestamp=kwargs.pop("timestamp", memory_item.timestamp),
             **kwargs,
         )
 
-        return new_id is not None
+    def _replace_memory_item(
+        self,
+        memory_id: str,
+        content: str,
+        metadata: Dict[str, Any],
+        entities: List[EntityDict],
+        relationships: List[RelationshipDict],
+        timestamp: datetime,
+        **options,
+    ) -> bool:
+        """Replace a memory while retaining its identity and recoverable state."""
+        state = self._snapshot_memory_state()
+        replacement_options = dict(options)
+        sync_vector = not replacement_options.pop("skip_vector", False)
+        try:
+            self.delete_memory(memory_id, skip_vector=True)
+            new_id = self.store(
+                content,
+                metadata=metadata,
+                entities=entities,
+                relationships=relationships,
+                memory_id=memory_id,
+                timestamp=timestamp,
+                skip_vector=True,
+                **replacement_options,
+            )
+        except Exception:
+            self._restore_memory_state(state)
+            raise
+
+        if new_id != memory_id or not self.exists(memory_id):
+            self._restore_memory_state(state)
+            return False
+        if sync_vector:
+            self._sync_committed_vector_changes(state, [memory_id])
+        return True
+
+    def _snapshot_memory_state(self) -> Dict[str, Any]:
+        """Capture mutable in-memory state for an update or import rollback."""
+        return {
+            "memory_items": dict(self.memory_items),
+            "memory_index": deque(self.memory_index, maxlen=self.memory_index.maxlen),
+            "short_term_memory": list(self.short_term_memory),
+            "vector_ids": copy.deepcopy(self._vector_ids),
+            "stats": copy.deepcopy(self.stats),
+        }
+
+    def _restore_memory_state(self, state: Dict[str, Any]) -> None:
+        """Restore state captured by :meth:`_snapshot_memory_state`."""
+        self.memory_items = state["memory_items"]
+        self.memory_index = state["memory_index"]
+        self.short_term_memory = state["short_term_memory"]
+        self._vector_ids = state["vector_ids"]
+        self.stats = state["stats"]
 
     def delete(self, memory_id: str) -> bool:
         """
@@ -1184,7 +1446,9 @@ class AgentMemory:
         """
         results = []
         sorted_items = sorted(
-            self.memory_items.items(), key=lambda x: x[1].timestamp, reverse=True
+            self.memory_items.items(),
+            key=lambda item: self._timestamp_comparison_key(item[1].timestamp),
+            reverse=True,
         )
         for memory_id, _ in sorted_items[:limit]:
             mem_dict = self.get_memory(memory_id)
@@ -1221,9 +1485,13 @@ class AgentMemory:
 
             end_date = parse(end_date)
 
+        normalized_start = self._timestamp_comparison_key(start_date)
+        normalized_end = self._timestamp_comparison_key(end_date)
+
         results = []
         for memory_id, memory_item in self.memory_items.items():
-            if start_date <= memory_item.timestamp <= end_date:
+            normalized_timestamp = self._timestamp_comparison_key(memory_item.timestamp)
+            if normalized_start <= normalized_timestamp <= normalized_end:
                 mem_dict = self.get_memory(memory_id)
                 if mem_dict:
                     results.append(mem_dict)
@@ -1332,14 +1600,19 @@ class AgentMemory:
 
     # Export/Import
     def export(
-        self, conversation_id: Optional[str] = None, format: str = "json", **filters
+        self,
+        conversation_id: Optional[str] = None,
+        format: str = "json",
+        destination: Optional[Union[str, Path]] = None,
+        **filters,
     ) -> Union[str, Dict[str, Any]]:
         """
         Export memories.
 
         Args:
             conversation_id: Export specific conversation (optional)
-            format: Export format ('json' or 'dict', default: 'json')
+            format: Export format ('json', 'dict', or 'markdown', default: 'json')
+            destination: Optional directory for one-file-per-memory Markdown export
             **filters: Additional filters
 
         Returns:
@@ -1369,17 +1642,19 @@ class AgentMemory:
             import json
 
             return json.dumps(export_data, indent=2, default=str)
+        if format == "markdown":
+            return self._export_markdown(memories, destination=destination)
         return export_data
 
     def import_data(
-        self, data: Union[str, Dict[str, Any]], format: str = "json"
+        self, data: Union[str, Path, Dict[str, Any]], format: str = "json"
     ) -> int:
         """
         Import memories.
 
         Args:
             data: Data to import
-            format: Data format ('json' or 'dict', default: 'json')
+            format: Data format ('json', 'dict', or 'markdown', default: 'json')
 
         Returns:
             Number of memories imported
@@ -1392,6 +1667,9 @@ class AgentMemory:
 
             if isinstance(data, str):
                 data = json.loads(data)
+        elif format == "markdown":
+            memories = self._import_markdown_payload(data)
+            return self._import_markdown_records(memories)
 
         if not isinstance(data, dict):
             raise ValueError("Invalid data format")
@@ -1413,6 +1691,488 @@ class AgentMemory:
                 self.logger.warning(f"Failed to import memory: {e}")
 
         return imported
+
+    def _export_markdown(
+        self,
+        memories: List[Dict[str, Any]],
+        destination: Optional[Union[str, Path]] = None,
+    ) -> str:
+        documents = []
+        filenames = set()
+        for memory in memories:
+            filename = self._memory_markdown_filename(memory.get("memory_id"))
+            normalized_filename = filename.casefold()
+            if normalized_filename in filenames:
+                raise ValueError(
+                    f"Cannot export Markdown: duplicate filename {filename!r}."
+                )
+            filenames.add(normalized_filename)
+            documents.append((filename, self._memory_to_markdown(memory)))
+
+        if destination is None:
+            if not documents:
+                return ""
+            if len(documents) > 1:
+                raise ValueError(
+                    "Markdown export without a destination supports one memory item. "
+                    "Pass a destination directory to export multiple items."
+                )
+            return documents[0][1]
+
+        destination_path = Path(destination)
+        if destination_path.exists() and not destination_path.is_dir():
+            raise ValueError(
+                f"Markdown export destination is not a directory: {destination_path}"
+            )
+        destination_path.mkdir(parents=True, exist_ok=True)
+
+        for filename, document in documents:
+            file_path = destination_path / filename
+            try:
+                self._write_markdown_file(file_path, document)
+            except OSError as exc:
+                raise OSError(
+                    f"Failed to write Markdown memory to {file_path}"
+                ) from exc
+
+        return str(destination_path)
+
+    @staticmethod
+    def _write_markdown_file(file_path: Path, document: str) -> None:
+        """Atomically replace a Markdown file without following output symlinks."""
+        if file_path.is_symlink():
+            raise ValueError(
+                f"Refusing to overwrite Markdown symbolic link: {file_path}"
+            )
+
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=str(file_path.parent),
+                prefix=f".{file_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                temporary_file.write(document)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+
+            # os.replace swaps the directory entry itself, so a raced symlink is
+            # replaced rather than followed.
+            os.replace(temporary_path, file_path)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    def _memory_to_markdown(self, memory: Dict[str, Any]) -> str:
+        memory_id = memory.get("memory_id")
+        source = f"memory {memory_id!r}"
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError(f"Cannot export {source}: 'memory_id' must be a string.")
+
+        raw_metadata = memory.get("metadata")
+        if raw_metadata is None:
+            raw_metadata = {}
+        if not isinstance(raw_metadata, dict):
+            raise ValueError(f"Cannot export {source}: 'metadata' must be a mapping.")
+        metadata = dict(raw_metadata)
+
+        created_at = self._parse_markdown_datetime(
+            memory.get("timestamp"), "created_at", source
+        )
+        updated_at = self._parse_markdown_datetime(
+            metadata.pop("updated_at", created_at), "updated_at", source
+        )
+        memory_type = metadata.pop("type", "general")
+        if not isinstance(memory_type, str) or not memory_type.strip():
+            raise ValueError(f"Cannot export {source}: 'type' must be a string.")
+
+        frontmatter = {
+            "id": memory_id,
+            "created_at": created_at.isoformat(),
+            "updated_at": updated_at.isoformat(),
+            "type": memory_type,
+        }
+
+        nested_metadata = {}
+        if any(not isinstance(key, str) for key in metadata):
+            raise ValueError(f"Cannot export {source}: metadata keys must be strings.")
+        for key in sorted(metadata):
+            value = metadata[key]
+            if key in self._MARKDOWN_RESERVED_FIELDS:
+                nested_metadata[key] = value
+            else:
+                frontmatter[key] = value
+
+        if nested_metadata:
+            frontmatter["metadata"] = nested_metadata
+        entities = memory.get("entities")
+        relationships = memory.get("relationships")
+        if entities is None:
+            entities = []
+        if relationships is None:
+            relationships = []
+        self._validate_markdown_mapping_list(entities, "entities", source)
+        self._validate_markdown_mapping_list(relationships, "relationships", source)
+        if entities:
+            frontmatter["entities"] = entities
+        if relationships:
+            frontmatter["relationships"] = relationships
+
+        try:
+            yaml_text = yaml.safe_dump(
+                frontmatter,
+                sort_keys=False,
+                allow_unicode=True,
+                default_flow_style=False,
+            )
+        except yaml.YAMLError as exc:
+            raise ValueError(
+                f"Cannot export {source}: metadata is not YAML serializable."
+            ) from exc
+
+        body = memory.get("content", "")
+        if not isinstance(body, str):
+            raise ValueError(f"Cannot export {source}: 'content' must be a string.")
+        return f"---\n{yaml_text}---\n\n{body}"
+
+    def _memory_markdown_filename(self, memory_id: Optional[str]) -> str:
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError(
+                "Cannot create Markdown filename without a string memory ID."
+            )
+
+        slug = re.sub(r"[^A-Za-z0-9._-]+", "-", memory_id)
+        slug = re.sub(r"-+", "-", slug).strip("._-")[:80].rstrip("._-")
+        slug = slug or "memory"
+        digest = hashlib.sha256(memory_id.encode("utf-8")).hexdigest()[:12]
+        return f"{slug}--{digest}.md"
+
+    def _import_markdown_payload(
+        self, data: Union[str, Path, Dict[str, Any]]
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        if isinstance(data, Path):
+            documents = self._read_markdown_path(data)
+        elif isinstance(data, str):
+            if not data:
+                return []
+
+            documents = None
+            if "\n" not in data and "\r" not in data:
+                candidate = Path(data)
+                try:
+                    if candidate.exists():
+                        documents = self._read_markdown_path(candidate)
+                except OSError:
+                    pass
+
+            if documents is None:
+                documents = [("markdown document", data)]
+        else:
+            raise ValueError(
+                "Invalid Markdown data format. Expected Markdown text or a path."
+            )
+
+        memories = []
+        memory_sources = {}
+        for source, document in documents:
+            memory = self._markdown_to_memory_dict(document, source=source)
+            memory_id = memory["memory_id"]
+            if memory_id in memory_sources:
+                raise ValueError(
+                    f"Duplicate Markdown memory ID {memory_id!r} in {source}; "
+                    f"already defined in {memory_sources[memory_id]}."
+                )
+            memory_sources[memory_id] = source
+            memories.append((source, memory))
+
+        return memories
+
+    def _read_markdown_path(self, path: Path) -> List[Tuple[str, str]]:
+        if not path.exists():
+            raise FileNotFoundError(f"Markdown import path does not exist: {path}")
+
+        if path.is_dir():
+            file_paths = sorted(
+                (
+                    file_path
+                    for file_path in path.iterdir()
+                    if file_path.is_file()
+                    and file_path.suffix.lower() in self._MARKDOWN_EXTENSIONS
+                ),
+                key=lambda file_path: (file_path.name.casefold(), file_path.name),
+            )
+        elif path.is_file():
+            file_paths = [path]
+        else:
+            raise ValueError(f"Markdown import path is not a file or directory: {path}")
+
+        return [
+            (str(file_path), file_path.read_text(encoding="utf-8"))
+            for file_path in file_paths
+        ]
+
+    def _markdown_to_memory_dict(
+        self, document: str, source: str = "markdown document"
+    ) -> Dict[str, Any]:
+        if not document.startswith("---"):
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                "document must start with '---'."
+            )
+
+        lines = document.splitlines(keepends=True)
+        if not lines or lines[0].rstrip("\r\n") != "---":
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                "opening delimiter is malformed."
+            )
+
+        closing_index = next(
+            (
+                index
+                for index, line in enumerate(lines[1:], start=1)
+                if line.rstrip("\r\n") == "---"
+            ),
+            None,
+        )
+        if closing_index is None:
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: missing closing '---'."
+            )
+
+        yaml_text = "".join(lines[1:closing_index])
+        try:
+            loaded_frontmatter = yaml.load(yaml_text, Loader=_UniqueKeySafeLoader)
+            frontmatter = {} if loaded_frontmatter is None else loaded_frontmatter
+        except yaml.YAMLError as exc:
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: {exc}"
+            ) from exc
+
+        if not isinstance(frontmatter, dict):
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: expected a YAML mapping."
+            )
+
+        if any(not isinstance(key, str) for key in frontmatter):
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                "field names must be strings."
+            )
+
+        missing_fields = [
+            field
+            for field in ("id", "created_at", "updated_at")
+            if field not in frontmatter
+        ]
+        if "type" not in frontmatter and "kind" not in frontmatter:
+            missing_fields.append("type or kind")
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in missing_fields)
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                f"missing required field(s) {fields}."
+            )
+
+        memory_id = frontmatter["id"]
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: 'id' must be a string."
+            )
+
+        memory_type = frontmatter.get("type", frontmatter.get("kind"))
+        if not isinstance(memory_type, str) or not memory_type.strip():
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                "'type' or 'kind' must be a string."
+            )
+        if (
+            "type" in frontmatter
+            and "kind" in frontmatter
+            and frontmatter["type"] != frontmatter["kind"]
+        ):
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                "'type' and 'kind' must match when both are provided."
+            )
+
+        created_at = self._parse_markdown_datetime(
+            frontmatter["created_at"], "created_at", source
+        )
+        updated_at = self._parse_markdown_datetime(
+            frontmatter["updated_at"], "updated_at", source
+        )
+
+        nested_metadata = frontmatter.get("metadata", {})
+        if nested_metadata is None:
+            nested_metadata = {}
+        if not isinstance(nested_metadata, dict):
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                "'metadata' must be a mapping."
+            )
+        if any(not isinstance(key, str) for key in nested_metadata):
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                "metadata field names must be strings."
+            )
+        conflicting_metadata = {"type", "updated_at"}.intersection(nested_metadata)
+        if conflicting_metadata:
+            fields = ", ".join(sorted(conflicting_metadata))
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: nested metadata "
+                f"duplicates reserved field(s): {fields}."
+            )
+
+        entities = frontmatter.get("entities", [])
+        relationships = frontmatter.get("relationships", [])
+        self._validate_markdown_mapping_list(entities, "entities", source)
+        self._validate_markdown_mapping_list(relationships, "relationships", source)
+
+        metadata = dict(nested_metadata)
+        for key, value in frontmatter.items():
+            if key not in self._MARKDOWN_RESERVED_FIELDS:
+                if key in metadata:
+                    raise ValueError(
+                        f"Invalid Markdown frontmatter in {source}: metadata field "
+                        f"{key!r} is defined both at the top level and in 'metadata'."
+                    )
+                metadata[key] = value
+        metadata["type"] = memory_type
+        metadata["updated_at"] = updated_at.isoformat()
+
+        body = "".join(lines[closing_index + 1 :])
+        if body.startswith("\r\n"):
+            body = body[2:]
+        elif body.startswith("\n"):
+            body = body[1:]
+
+        return {
+            "memory_id": memory_id,
+            "content": body,
+            "timestamp": created_at,
+            "metadata": metadata,
+            "entities": entities,
+            "relationships": relationships,
+        }
+
+    def _import_markdown_records(
+        self, memories: List[Tuple[str, Dict[str, Any]]]
+    ) -> int:
+        if not memories:
+            return 0
+
+        state = self._snapshot_memory_state()
+        imported = 0
+        changed_ids = []
+        current_source = "markdown document"
+        current_memory_id = "unknown"
+        try:
+            for current_source, memory in memories:
+                current_memory_id = memory["memory_id"]
+                if self._markdown_record_matches(current_memory_id, memory):
+                    imported += 1
+                    continue
+
+                if self.exists(current_memory_id):
+                    success = self._replace_memory_item(
+                        current_memory_id,
+                        memory["content"],
+                        metadata=memory["metadata"],
+                        entities=memory["entities"],
+                        relationships=memory["relationships"],
+                        timestamp=memory["timestamp"],
+                        skip_vector=True,
+                        skip_graph=True,
+                    )
+                else:
+                    stored_id = self.store(
+                        memory["content"],
+                        metadata=memory["metadata"],
+                        entities=memory["entities"],
+                        relationships=memory["relationships"],
+                        memory_id=current_memory_id,
+                        timestamp=memory["timestamp"],
+                        skip_vector=True,
+                        skip_graph=True,
+                    )
+                    success = stored_id == current_memory_id and self.exists(
+                        current_memory_id
+                    )
+
+                if not success:
+                    raise RuntimeError("memory store did not confirm the requested ID")
+                changed_ids.append(current_memory_id)
+                imported += 1
+        except Exception as exc:
+            self._restore_memory_state(state)
+            raise RuntimeError(
+                f"Failed to import Markdown memory {current_memory_id!r} "
+                f"from {current_source}: {exc}"
+            ) from exc
+
+        self._sync_committed_vector_changes(state, changed_ids)
+        return imported
+
+    def _markdown_record_matches(self, memory_id: str, memory: Dict[str, Any]) -> bool:
+        existing = self.memory_items.get(memory_id)
+        if existing is None:
+            return False
+
+        return (
+            existing.content == memory["content"]
+            and self._timestamp_comparison_key(existing.timestamp)
+            == self._timestamp_comparison_key(memory["timestamp"])
+            and existing.metadata == memory["metadata"]
+            and existing.entities == memory["entities"]
+            and existing.relationships == memory["relationships"]
+        )
+
+    def _parse_markdown_datetime(
+        self, value: Any, field_name: str, source: str
+    ) -> datetime:
+        if isinstance(value, datetime):
+            parsed = value
+        elif isinstance(value, date):
+            parsed = datetime.combine(value, datetime.min.time())
+        elif isinstance(value, str) and value.strip():
+            candidate = value.strip()
+            if candidate.endswith("Z"):
+                candidate = candidate[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(candidate)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid Markdown frontmatter in {source}: "
+                    f"'{field_name}' must be an ISO-8601 datetime."
+                ) from exc
+        else:
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                f"'{field_name}' must be an ISO-8601 datetime."
+            )
+
+        return parsed
+
+    def _validate_markdown_mapping_list(
+        self, value: Any, field_name: str, source: str
+    ) -> None:
+        if not isinstance(value, list):
+            raise ValueError(
+                f"Invalid Markdown frontmatter in {source}: "
+                f"'{field_name}' must be a list."
+            )
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"Invalid Markdown frontmatter in {source}: "
+                    f"'{field_name}[{index}]' must be a mapping."
+                )
 
     # Statistics
     def stats(self, **filters) -> Dict[str, Any]:
