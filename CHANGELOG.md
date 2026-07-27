@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Markdown round-trip export/import for `AgentMemory`** (#765, #786) by @SaurabhScripts and @Sameer6305
+  - `AgentMemory.export(format="markdown")` and `import_data(format="markdown")` add a human-editable, diff-friendly alternative to the existing JSON/dict serialization: one Markdown file per memory item, with `id`, `created_at`, `updated_at`, and `type`/`kind` in required YAML frontmatter and the memory content as the Markdown body
+  - Exporting without a `destination` returns a single memory as a Markdown string; exporting a set requires a destination directory and writes one stable, content-hashed filename per memory ID, so re-exporting an unchanged set is byte-for-byte idempotent
+  - Importing upserts by ID: unknown IDs create new memories, known IDs replace them atomically (local state and vector store are only mutated after the whole batch validates cleanly), and unchanged re-imports are a deterministic no-op
+  - Malformed frontmatter, duplicate IDs within an import batch, and duplicate YAML keys are all rejected before any memory is mutated, with actionable error messages
+  - Export refuses to overwrite symbolic links and replaces files atomically; import safely compares timezone-aware and timezone-naive timestamps so retention, recency sorting, and date filters stay correct across both
+  - Entities and relationships round-trip as memory-local provenance only — Markdown import intentionally does not write into `ContextGraph`, matching the MVP scope agreed on in #765
+  - Documented the file contract and workflow in `docs/reference/context.md`; 43 new tests in `tests/context/test_agent_memory_markdown.py` cover round-trip losslessness, idempotency, validation errors, rollback on failure, and vector-store sync ordering
+
 ### Fixed
 
 - **`react-hooks/set-state-in-effect` cascading renders across 12 Explorer workspace files** (#769, #796) by @Sameer6305 and @KaifAhmad1
