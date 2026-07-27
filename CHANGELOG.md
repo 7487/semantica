@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed `ProvenanceManager.__init__` raising `TypeError` on the CLI's `config=` kwarg, and implemented the four methods the CLI already called but that didn't exist on the class: `lineage()`, `audit_log()`, `export_prov()` (W3C PROV-O turtle/ntriples/jsonld via `rdflib`), and `check()` — unblocking `semantica provenance lineage|audit|export|check` end-to-end
   - Follow-up review fixes: `track_entity` no longer aliases a caller-supplied `used_entities` list (it copied the reference and later mutated it in place via `.append()`, which could corrupt a list the caller still held); removed dead fallback branches in `orchestrator.py`/`manager.py` left over from not realizing `Config.get()` already resolves dotted paths; added a `--dry-run` option to `provenance audit` to match `provenance export` (previously only the global `--dry-run` flag worked, not a local one); and `provenance check --strict` no longer prints a green "✓" success line immediately before failing — a failing check now renders as a warning before the `ClickException` is raised
 
+- **Markdown round-trip export/import for `AgentMemory`** (#765, #786) by @SaurabhScripts and @Sameer6305
+  - `AgentMemory.export(format="markdown")` and `import_data(format="markdown")` add a human-editable, diff-friendly alternative to the existing JSON/dict serialization: one Markdown file per memory item, with `id`, `created_at`, `updated_at`, and `type`/`kind` in required YAML frontmatter and the memory content as the Markdown body
+  - Exporting without a `destination` returns a single memory as a Markdown string; exporting a set requires a destination directory and writes one stable, content-hashed filename per memory ID, so re-exporting an unchanged set is byte-for-byte idempotent
+  - Importing upserts by ID: unknown IDs create new memories, known IDs replace them atomically (local state and vector store are only mutated after the whole batch validates cleanly), and unchanged re-imports are a deterministic no-op
+  - Malformed frontmatter, duplicate IDs within an import batch, and duplicate YAML keys are all rejected before any memory is mutated, with actionable error messages
+  - Export refuses to overwrite symbolic links and replaces files atomically; import safely compares timezone-aware and timezone-naive timestamps so retention, recency sorting, and date filters stay correct across both
+  - Entities and relationships round-trip as memory-local provenance only — Markdown import intentionally does not write into `ContextGraph`, matching the MVP scope agreed on in #765
+  - Documented the file contract and workflow in `docs/reference/context.md`; 43 new tests in `tests/context/test_agent_memory_markdown.py` cover round-trip losslessness, idempotency, validation errors, rollback on failure, and vector-store sync ordering
+
 ### Fixed
 
 - **`react-hooks/set-state-in-effect` cascading renders across 12 Explorer workspace files** (#769, #796) by @Sameer6305 and @KaifAhmad1
