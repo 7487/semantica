@@ -262,7 +262,7 @@ Full interactive docs at `http://localhost:8000/docs`. All endpoints accept and 
 
     | Endpoint | Method | Description |
     | :-------- | :------ | :----------- |
-    | `/api/sparql` | `POST` | Execute a SPARQL SELECT or ASK query |
+    | `/api/sparql` | `POST` | Execute a read-only SPARQL query (`SELECT`, `ASK`, `CONSTRUCT`, or `DESCRIBE`) |
 
   </Accordion>
   <Accordion title="Decisions, Provenance, Annotations & Export">

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Comprehensive unit and security test suite for the `/api/sparql` Explorer route** (#773) by @Sameer6305
+  - Added `tests/explorer/test_sparql_route.py` (30 tests) covering the SPARQL Explorer route (`semantica/explorer/routes/sparql.py`), which executes arbitrary SPARQL queries against an in-memory rdflib projection of the live graph and previously had zero test coverage
+  - Verified read-only allowlist enforcement against write and mutation queries (`INSERT DATA`, `DELETE DATA`, `DELETE WHERE`, `DROP ALL`, `CLEAR ALL`, `LOAD`, `CREATE GRAPH`, `MODIFY`, comments, and multi-statement injections like `SELECT ... ; DROP ALL`), confirming rejected queries short-circuit before any graph is built or queried
+  - Verified resource-limiting behavior, confirming row capping (`_SPARQL_MAX_ROWS`) truncates results and sets `truncated: true`, query timeout (`_SPARQL_TIMEOUT_S`) returns a clean error message without crashing, and concurrency semaphore (`_SPARQL_MAX_CONCURRENT`) prevents thread starvation under load
+  - Verified RDF projection fidelity for node properties and edge relationships, and error formatting for malformed SPARQL syntax with line and column extraction
+
 ### Fixed
 
 - **`react-hooks/set-state-in-effect` cascading renders across 12 Explorer workspace files** (#769, #796) by @Sameer6305 and @KaifAhmad1
