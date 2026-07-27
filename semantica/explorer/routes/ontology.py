@@ -36,6 +36,12 @@ _MAX_FETCH_BYTES = 20 * 1024 * 1024  # 20 MB
 _MAX_ANALYSIS_NODES = 5_000   # cap for health/suggest/shacl node scans to avoid OOM
 _MAX_ENTITIES_PER_SIDE = 500  # per-ontology cap for the O(n²) pairwise suggestion loop
 
+
+class GraphTruncationError(Exception):
+    """Raised when a graph exceeds _MAX_ANALYSIS_NODES so analysis would be truncated."""
+    pass
+
+
 _CLASS_TYPES = frozenset({
     "owl:Class", "rdfs:Class",
     "http://www.w3.org/2002/07/owl#Class",
@@ -105,6 +111,43 @@ _INGEST_FORMAT_SUFFIXES: Dict[str, str] = {
     "trig": ".trig",
     "nquads": ".nq",
 }
+
+
+# ---------------------------------------------------------------------------
+# SHACL Validation Resource Guardrails
+# ---------------------------------------------------------------------------
+_MAX_SHACL_TURTLE_BYTES: int = int(
+    os.environ.get("SEMANTICA_MAX_SHACL_TURTLE_BYTES", "262144")
+)  # 256 KB
+_MAX_SHACL_TRIPLES: int = int(
+    os.environ.get("SEMANTICA_MAX_SHACL_TRIPLES", "1000")
+)  # 1,000 triples
+_MAX_SHACL_TIMEOUT_SECONDS: float = float(
+    os.environ.get("SEMANTICA_MAX_SHACL_TIMEOUT", "15.0")
+)
+_MAX_SHACL_CONCURRENCY: int = int(
+    os.environ.get("SEMANTICA_MAX_SHACL_CONCURRENCY", "4")
+)
+_shacl_validation_semaphore: Optional[
+    Tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]
+] = None
+
+
+def _get_shacl_semaphore() -> asyncio.Semaphore:
+    global _shacl_validation_semaphore
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    if (
+        _shacl_validation_semaphore is None
+        or _shacl_validation_semaphore[0] != current_loop
+    ):
+        _shacl_validation_semaphore = (
+            current_loop,
+            asyncio.Semaphore(_MAX_SHACL_CONCURRENCY),
+        )
+    return _shacl_validation_semaphore[1]
 
 
 # ---------------------------------------------------------------------------
@@ -579,7 +622,17 @@ def _as_uri_list(value: Any) -> List[str]:
     if value is None or value == "":
         return []
     if isinstance(value, list):
-        return [str(item) for item in value if item]
+        result = []
+        for item in value:
+            if item is None or item == "":
+                continue
+            if isinstance(item, dict):
+                uri = item.get("uri") or item.get("id") or item.get("@id")
+                if uri:
+                    result.append(str(uri))
+            else:
+                result.append(str(item))
+        return result
     if isinstance(value, dict):
         uri = value.get("uri") or value.get("id") or value.get("@id")
         return [str(uri)] if uri else []
@@ -670,6 +723,14 @@ def _extract_namespace(uri: str) -> Optional[str]:
     return None
 
 
+def _ontology_namespace(uri: str) -> str:
+    if "#" in uri:
+        return uri.rsplit("#", 1)[0] + "#"
+    if uri.endswith("/"):
+        return uri
+    return uri.rstrip("#/") + "#"
+
+
 def _alignment_id(source_uri: str, relation: str, target_uri: str) -> str:
     key = f"{source_uri}|{relation}|{target_uri}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, key))
@@ -697,8 +758,8 @@ def _node_belongs_to_ontology(node: Dict[str, Any], ontology_uri: str) -> bool:
         return True
     if _node_source_ontology(node) == ontology_uri:
         return True
-    namespace = _extract_namespace(ontology_uri)
-    return bool(namespace and nid.startswith(namespace))
+    stem = ontology_uri.rstrip("#/")
+    return nid.startswith((stem + "#", stem + "/"))
 
 
 def _is_ontology_entity(node: Dict[str, Any]) -> bool:
@@ -785,6 +846,17 @@ def _ontology_entities(nodes: List[Dict[str, Any]], ontology_uri: Optional[str] 
     return result
 
 
+def _data_graph_entities(nodes: List[Dict[str, Any]], ontology_uri: Optional[str] = None) -> List[Dict[str, Any]]:
+    result = []
+    for node in nodes:
+        if _classify_node_type(node.get("type", "")) not in {"class", "property", "individual", "concept", "scheme"}:
+            continue
+        if ontology_uri and not _node_belongs_to_ontology(node, ontology_uri):
+            continue
+        result.append(node)
+    return result
+
+
 def _ontology_dict_from_nodes(uri: str, name: str, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[str, Any]:
     classes = []
     properties = []
@@ -820,14 +892,14 @@ def _ontology_dict_from_nodes(uri: str, name: str, nodes: List[Dict[str, Any]], 
 
     return {
         "name": name,
-        "namespace": _extract_namespace(uri) or uri.rstrip("#/") + "#",
+        "namespace": _ontology_namespace(uri),
         "classes": classes,
         "properties": properties,
     }
 
 
 def _basic_shacl_turtle(uri: str, name: str, nodes: List[Dict[str, Any]]) -> str:
-    namespace = _extract_namespace(uri) or uri.rstrip("#/") + "#"
+    namespace = _ontology_namespace(uri)
     lines = [
         "@prefix sh: <http://www.w3.org/ns/shacl#> .",
         "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .",
@@ -1401,8 +1473,7 @@ async def create_ontology(
             
         except Exception as exc:
             logger.exception("Failed to generate ontology from sample data; aborting ontology creation.")
-            logger.warning(f"OntologyEngine.from_data error: {exc}")
-            raise HTTPException(status_code=500, detail="Ontology generation failed")
+            raise HTTPException(status_code=500, detail=f"Ontology generation failed: {exc}") from exc
 
     elif body.mode == "text" and body.schema_text:
         try:
@@ -1472,8 +1543,7 @@ async def create_ontology(
             
         except Exception as exc:
             logger.exception("Failed to generate ontology from schema text; aborting ontology creation.")
-            logger.warning(f"OntologyEngine.from_text error: {exc}")
-            raise HTTPException(status_code=500, detail="Ontology generation failed")
+            raise HTTPException(status_code=500, detail=f"Ontology generation failed: {exc}") from exc
 
     nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
     edges_added = await asyncio.to_thread(session.add_edges, edges)
@@ -2095,13 +2165,72 @@ async def ontology_health(
 
     documentation_score = ((with_comment / total) * 80.0) + (20.0 if entry.version or entry.source_url else 0.0)
 
-    shacl_dimension = HealthDimension(
-        key="shacl",
-        label="SHACL Conformance",
-        score=0.0,
-        status="unavailable",
-        detail="Live SHACL validation is available in SHACL Studio when optional validation dependencies are installed.",
-    )
+    try:
+        health_nodes, health_edges = await _fetch_analysis_graph(session, uri, "shacl-health")
+        shacl_turtle, _ = await _generated_shacl_for_uri(
+            request, session, uri, nodes=health_nodes, edges=health_edges
+        )
+        data_graph_turtle = await _data_graph_turtle_for_uri(
+            request, session, uri, nodes=health_nodes, edges=health_edges
+        )
+        from ...ontology import OntologyEngine
+        engine = OntologyEngine()
+        report = await asyncio.to_thread(
+            engine.validate_graph,
+            data_graph_turtle,
+            shacl=shacl_turtle,
+            data_graph_format="turtle",
+            shacl_format="turtle",
+        )
+        warning_count = len(report.warnings)
+        if not report.conforms:
+            shacl_score = max(0.0, 100.0 - (report.violation_count * 20.0))
+        elif warning_count:
+            shacl_score = max(0.0, 100.0 - (warning_count * 5.0))
+        else:
+            shacl_score = 100.0
+        shacl_status = "ok" if report.conforms and not warning_count else "warning"
+        detail_parts = []
+        if not report.conforms:
+            detail_parts.append(f"{report.violation_count} SHACL violation(s)")
+        if warning_count:
+            detail_parts.append(f"{warning_count} SHACL warning(s)")
+        shacl_detail = (
+            "Graph conforms to all generated SHACL constraints."
+            if not detail_parts
+            else f"Graph has {', '.join(detail_parts)}."
+        )
+        shacl_dimension = HealthDimension(
+            key="shacl",
+            label="SHACL Conformance",
+            score=round(shacl_score, 1),
+            status=shacl_status,
+            detail=shacl_detail,
+        )
+    except GraphTruncationError as exc:
+        shacl_dimension = HealthDimension(
+            key="shacl",
+            label="SHACL Conformance",
+            score=0.0,
+            status="critical",
+            detail=str(exc),
+        )
+    except ImportError:
+        shacl_dimension = HealthDimension(
+            key="shacl",
+            label="SHACL Conformance",
+            score=0.0,
+            status="unavailable",
+            detail="Live SHACL validation is available in SHACL Studio when optional validation dependencies are installed.",
+        )
+    except Exception as exc:
+        shacl_dimension = HealthDimension(
+            key="shacl",
+            label="SHACL Conformance",
+            score=0.0,
+            status="critical",
+            detail=f"Live SHACL validation failed: {exc}",
+        )
 
     dimensions = [
         HealthDimension(
@@ -2147,19 +2276,46 @@ async def ontology_health(
     )
 
 
+async def _fetch_analysis_graph(
+    session: GraphSession,
+    uri: str,
+    log_tag: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Fetch nodes/edges for SHACL analysis, raising GraphTruncationError if oversized.
+
+    Shared by `_generated_shacl_for_uri` and `_data_graph_turtle_for_uri` so callers that
+    need both (e.g. `/health`) can fetch once and pass the results to both via `nodes=`/`edges=`.
+    """
+    nodes, total_nodes = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
+    edges, total_edges = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
+    if total_nodes > _MAX_ANALYSIS_NODES or total_edges > _MAX_ANALYSIS_NODES:
+        logger.warning(
+            "%s: graph for %s is too large to analyse (nodes=%d, edges=%d, limit=%d); skipping.",
+            log_tag, uri, total_nodes, total_edges, _MAX_ANALYSIS_NODES,
+        )
+        raise GraphTruncationError(
+            f"Graph size (nodes={total_nodes}, edges={total_edges}) exceeds maximum analysis limit ({_MAX_ANALYSIS_NODES}). "
+            "SHACL validation is skipped because the graph is too large to validate fully under current limits."
+        )
+    return nodes, edges
+
+
 async def _generated_shacl_for_uri(
     request: Request,
     session: GraphSession,
     uri: str,
     quality_tier: str = "strict",
+    *,
+    nodes: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[str, List[ShaclShapeSummary]]:
     registry = {entry.uri: entry for entry in await _registry_entries(request, session)}
     entry = registry.get(uri)
     if entry is None:
         raise HTTPException(status_code=404, detail="Ontology not found in registry.")
 
-    nodes, _ = await asyncio.to_thread(session.get_nodes, skip=0, limit=_MAX_ANALYSIS_NODES)
-    edges, _ = await asyncio.to_thread(session.get_edges, skip=0, limit=_MAX_ANALYSIS_NODES)
+    if nodes is None or edges is None:
+        nodes, edges = await _fetch_analysis_graph(session, uri, "shacl-generate")
     entities = _ontology_entities(nodes, uri)
     ontology_dict = _ontology_dict_from_nodes(uri, entry.name, entities, edges)
 
@@ -2180,13 +2336,193 @@ async def _generated_shacl_for_uri(
     return shacl_turtle, _summarize_shapes(shacl_turtle)
 
 
+async def _data_graph_turtle_for_uri(
+    request: Request,
+    session: GraphSession,
+    uri: str,
+    *,
+    nodes: Optional[List[Dict[str, Any]]] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    try:
+        import rdflib
+    except ImportError as exc:
+        raise ImportError("rdflib is not installed.") from exc
+
+    registry = {entry.uri: entry for entry in await _registry_entries(request, session)}
+    if uri not in registry:
+        raise HTTPException(status_code=404, detail="Ontology not found in registry.")
+
+    if nodes is None or edges is None:
+        nodes, edges = await _fetch_analysis_graph(session, uri, "shacl-data-graph")
+    entities = _data_graph_entities(nodes, uri)
+
+    g = rdflib.Graph()
+    base_namespace = _ontology_namespace(uri)
+
+    OWL = rdflib.Namespace("http://www.w3.org/2002/07/owl#")
+    RDF = rdflib.RDF
+    RDFS = rdflib.RDFS
+    SKOS = rdflib.Namespace("http://www.w3.org/2004/02/skos/core#")
+    DCT = rdflib.Namespace("http://purl.org/dc/terms/")
+    DC = rdflib.Namespace("http://purl.org/dc/elements/1.1/")
+    SH = rdflib.Namespace("http://www.w3.org/ns/shacl#")
+    XSD = rdflib.XSD
+    ONTO = rdflib.Namespace(base_namespace)
+
+    g.bind("owl", OWL)
+    g.bind("rdf", RDF)
+    g.bind("rdfs", RDFS)
+    g.bind("skos", SKOS)
+    g.bind("dct", DCT)
+    g.bind("dc", DC)
+    g.bind("sh", SH)
+    g.bind("xsd", XSD)
+    g.bind("onto", ONTO)
+
+    def _resolve_uri(val: str, base_ns: str) -> rdflib.URIRef:
+        val_str = str(val).strip()
+        if val_str == "a":
+            return rdflib.RDF.type
+        if val_str.startswith(("http://", "https://", "urn:", "ftp://")):
+            return rdflib.URIRef(val_str)
+        prefix_map = {
+            "owl": "http://www.w3.org/2002/07/owl#",
+            "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+            "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+            "skos": "http://www.w3.org/2004/02/skos/core#",
+            "dct": "http://purl.org/dc/terms/",
+            "dc": "http://purl.org/dc/elements/1.1/",
+            "sh": "http://www.w3.org/ns/shacl#",
+            "xsd": "http://www.w3.org/2001/XMLSchema#",
+            "onto": base_ns,
+        }
+        if ":" in val_str and not val_str.startswith("/"):
+            prefix, _, rest = val_str.partition(":")
+            if prefix in prefix_map:
+                return rdflib.URIRef(prefix_map[prefix] + rest)
+            return rdflib.URIRef(val_str)
+        if val_str.startswith("#"):
+            val_str = val_str.lstrip("#")
+        if base_ns.endswith(("/", "#")):
+            return rdflib.URIRef(base_ns + val_str.lstrip("/"))
+        return rdflib.URIRef(base_ns + "#" + val_str.lstrip("/"))
+
+    _shorthand_types = {
+        "class": "owl:Class",
+        "object_property": "owl:ObjectProperty",
+        "datatype_property": "owl:DatatypeProperty",
+        "annotation_property": "owl:AnnotationProperty",
+        "property": "rdf:Property",
+        "individual": "owl:NamedIndividual",
+        "concept": "skos:Concept",
+        "scheme": "skos:ConceptScheme",
+        "ontology": "owl:Ontology",
+    }
+    _uri_predicates = {
+        "rdf:type",
+        "a",
+        "rdfs:subClassOf",
+        "rdfs:domain",
+        "rdfs:range",
+        "owl:equivalentClass",
+        "owl:equivalentProperty",
+        "owl:sameAs",
+        "skos:exactMatch",
+        "skos:closeMatch",
+        "skos:broadMatch",
+        "skos:narrowMatch",
+        "skos:relatedMatch",
+        "sh:targetClass",
+        "sh:targetNode",
+    }
+    _literal_predicates = {
+        "rdfs:label",
+        "rdfs:comment",
+        "skos:definition",
+        "skos:prefLabel",
+        "skos:altLabel",
+        "dct:description",
+        "dct:title",
+        "dc:title",
+        "dc:description",
+        "version",
+    }
+    _skip_keys = {
+        "id",
+        "type",
+        "content",
+        "valid_from",
+        "valid_until",
+        "scheme_uri",
+        "ontology_uri",
+        "ontology",
+    }
+
+    entity_ids = set()
+    for node in entities:
+        nid_str = str(node.get("id", "")).strip()
+        if not nid_str:
+            continue
+        entity_ids.add(nid_str)
+        subj = _resolve_uri(nid_str, base_namespace)
+
+        node_type = node.get("type", "")
+        if node_type:
+            for t in _as_uri_list(node_type):
+                t_mapped = _shorthand_types.get(str(t).lower(), str(t))
+                g.add((subj, rdflib.RDF.type, _resolve_uri(t_mapped, base_namespace)))
+
+        content = str(node.get("content", "")).strip()
+        props = node.get("properties", {}) or {}
+        if content and "rdfs:label" not in props and "pref_label" not in props and "label" not in props:
+            g.add((subj, RDFS.label, rdflib.Literal(content)))
+
+        for key, val in props.items():
+            if key in _skip_keys or val is None or val == "":
+                continue
+            pred = _resolve_uri(str(key), base_namespace)
+            for item in _as_uri_list(val) if isinstance(val, (list, dict)) else [val]:
+                if item is None or item == "":
+                    continue
+                if isinstance(item, dict):
+                    item = item.get("uri") or item.get("id") or item.get("@id")
+                    if not item:
+                        continue
+                if str(key) in _uri_predicates or (
+                    str(key) not in _literal_predicates
+                    and str(item).strip().startswith(("http://", "https://", "urn:"))
+                ):
+                    g.add((subj, pred, _resolve_uri(str(item), base_namespace)))
+                else:
+                    g.add((subj, pred, rdflib.Literal(str(item))))
+
+    for edge in edges:
+        source = str(edge.get("source", edge.get("source_id", ""))).strip()
+        target = str(edge.get("target", edge.get("target_id", ""))).strip()
+        pred_str = str(edge.get("type", "related_to")).strip()
+        if not source or not target:
+            continue
+        if source in entity_ids or target in entity_ids:
+            g.add((
+                _resolve_uri(source, base_namespace),
+                _resolve_uri(pred_str, base_namespace),
+                _resolve_uri(target, base_namespace),
+            ))
+
+    return await asyncio.to_thread(g.serialize, format="turtle")
+
+
 @router.post("/shacl/generate", response_model=ShaclGenerateResponse)
 async def generate_shacl(
     request: Request,
     body: ShaclGenerateRequest,
     session: GraphSession = Depends(get_session),
 ):
-    shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, body.uri, body.quality_tier)
+    try:
+        shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, body.uri, body.quality_tier)
+    except GraphTruncationError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     return ShaclGenerateResponse(
         uri=body.uri,
         shacl_turtle=shacl_turtle,
@@ -2201,7 +2537,10 @@ async def list_shacl_shapes(
     uri: str = Query(...),
     session: GraphSession = Depends(get_session),
 ):
-    shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, uri)
+    try:
+        shacl_turtle, shapes = await _generated_shacl_for_uri(request, session, uri)
+    except GraphTruncationError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     return ShaclShapesResponse(
         uri=uri,
         shapes=shapes,
@@ -2211,15 +2550,43 @@ async def list_shacl_shapes(
 
 
 @router.post("/shacl/validate", response_model=ShaclValidationResponse)
-async def validate_shacl(body: ShaclValidateRequest):
+async def validate_shacl(
+    request: Request,
+    body: ShaclValidateRequest,
+    session: GraphSession = Depends(get_session),
+):
     if not body.shacl_turtle.strip():
         raise HTTPException(status_code=422, detail="SHACL Turtle cannot be empty.")
+
+    _shacl_bytes = body.shacl_turtle.encode("utf-8")
+    if len(_shacl_bytes) > _MAX_SHACL_TURTLE_BYTES:
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="error",
+            message=(
+                f"SHACL Turtle size ({len(_shacl_bytes)} bytes) "
+                f"exceeds maximum allowed size ({_MAX_SHACL_TURTLE_BYTES} bytes)."
+            ),
+            violations=[],
+        )
 
     # Syntax-check the submitted Turtle with rdflib before claiming anything about it.
     try:
         import rdflib  # type: ignore
         g = rdflib.Graph()
         await asyncio.to_thread(g.parse, data=body.shacl_turtle, format="turtle")
+        if len(g) > _MAX_SHACL_TRIPLES:
+            return ShaclValidationResponse(
+                uri=body.uri,
+                conforms=False,
+                status="error",
+                message=(
+                    f"SHACL graph triple count ({len(g)}) "
+                    f"exceeds maximum allowed limit ({_MAX_SHACL_TRIPLES})."
+                ),
+                violations=[],
+            )
     except ImportError:
         pass  # rdflib unavailable; skip syntax check
     except Exception as exc:
@@ -2228,17 +2595,113 @@ async def validate_shacl(body: ShaclValidateRequest):
             detail=f"Invalid Turtle syntax: {exc}",
         ) from exc
 
-    # Live data-graph validation requires pySHACL wired to OntologyEngine.validate_graph().
+    if not body.uri:
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="unavailable",
+            message=(
+                "Turtle parsed successfully. "
+                "No target ontology URI was provided — "
+                "specify 'uri' to execute live SHACL validation against an ontology data graph."
+            ),
+            violations=[],
+        )
+
+    try:
+        data_graph_turtle = await _data_graph_turtle_for_uri(request, session, body.uri)
+        from ...ontology import OntologyEngine
+        engine = OntologyEngine()
+        semaphore = _get_shacl_semaphore()
+
+        async def _run_validation():
+            async with semaphore:
+                return await asyncio.to_thread(
+                    engine.validate_graph,
+                    data_graph_turtle,
+                    shacl=body.shacl_turtle,
+                    data_graph_format="turtle",
+                    shacl_format="turtle",
+                )
+
+        report = await asyncio.wait_for(
+            _run_validation(),
+            timeout=_MAX_SHACL_TIMEOUT_SECONDS,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="error",
+            message=(
+                f"SHACL validation timed out after {_MAX_SHACL_TIMEOUT_SECONDS} seconds."
+            ),
+            violations=[],
+        )
+    except GraphTruncationError as exc:
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="unavailable",
+            message=str(exc),
+            violations=[],
+        )
+    except ImportError as exc:
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="unavailable",
+            message=(
+                "Turtle parsed successfully. "
+                f"Live SHACL validation is unavailable: {exc}"
+            ),
+            violations=[],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return ShaclValidationResponse(
+            uri=body.uri,
+            conforms=False,
+            status="error",
+            message=f"SHACL validation error: {exc}",
+            violations=[],
+        )
+
+    violations = [
+        ShaclViolation(
+            node=str(v.focus_node) if v.focus_node is not None else None,
+            path=str(v.result_path) if v.result_path is not None else None,
+            severity=str(v.severity or "Violation"),
+            message=str(
+                v.message
+                or v.explanation
+                or f"SHACL constraint violation ({v.constraint}) on {v.focus_node}"
+            ),
+            focus_node=str(v.focus_node) if v.focus_node is not None else None,
+            source_shape=str(v.shape) if v.shape is not None else None,
+        )
+        for v in [*report.violations, *report.warnings, *report.infos]
+    ]
+    _result_counts = []
+    if report.violations:
+        _result_counts.append(f"{len(report.violations)} violation(s)")
+    if report.warnings:
+        _result_counts.append(f"{len(report.warnings)} warning(s)")
+    if report.infos:
+        _result_counts.append(f"{len(report.infos)} info result(s)")
+    summary_msg = (
+        f"SHACL validation found {', '.join(_result_counts)}."
+        if _result_counts
+        else "Graph conforms to SHACL shapes."
+    )
     return ShaclValidationResponse(
         uri=body.uri,
-        conforms=False,
-        status="unavailable",
-        message=(
-            "Turtle parsed successfully. "
-            "Live graph validation is not yet wired to a data graph — "
-            "install semantica[shacl] and connect OntologyEngine.validate_graph() to enable full validation."
-        ),
-        violations=[],
+        conforms=report.conforms,
+        status="success",
+        message=summary_msg,
+        violations=violations,
+        report_text=report.raw_report,
     )
 
 
