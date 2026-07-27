@@ -178,17 +178,33 @@ function DetailPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const [prevUri, setPrevUri] = useState(uri);
+  if (uri !== prevUri) {
+    setPrevUri(uri);
     setLoading(true);
     setError("");
+    setDetail(null);
+  }
+
+  useEffect(() => {
+    let ignore = false;
     fetch(`/api/ontology/entity/${encodeURIComponent(uri)}`)
-      .then((r) => {
+      .then(async (r) => {
         if (!r.ok) throw new Error("Not found");
-        return r.json();
+        const data = await r.json();
+        if (r.status === 207) setError(data.message || "Warning: Partial success loading entity.");
+        return data;
       })
-      .then(setDetail)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!ignore) setDetail(data);
+      })
+      .catch((e) => {
+        if (!ignore) setError(e.message);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => { ignore = true; };
   }, [uri]);
 
   return (

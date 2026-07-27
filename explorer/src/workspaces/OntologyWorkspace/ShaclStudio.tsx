@@ -33,38 +33,51 @@ export function ShaclStudio({ onJumpToNode }: ShaclStudioProps) {
         setRegistry(entries);
         setSelectedUri((current) => current || entries[0]?.uri || "");
       })
-      .catch(() => { /* backend unavailable — leave registry empty */ });
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load ontology registry.");
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const loadShapes = useCallback(async (uri: string) => {
-    if (!uri) return;
-    setLoading(true);
-    setError("");
-    try {
-      const data = await loadShaclShapes(uri);
-      setShapes(data.shapes);
-      const turtle = data.shacl_turtle;
-      setFullShacl(turtle);
-      setShacl((current) => current || turtle);
-      setSelectedShapeId(null);
-      setValidation(null);
-    } catch {
-      // Shapes not yet generated or backend unavailable — show empty shape list
-      setShapes([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
+  const [prevUri, setPrevUri] = useState(selectedUri);
+  if (selectedUri !== prevUri) {
+    setPrevUri(selectedUri);
     setShacl("");
     setFullShacl("");
     setSelectedShapeId(null);
-    void loadShapes(selectedUri);
-  }, [selectedUri, loadShapes]);
+    setValidation(null);
+    setLoading(true);
+    setError("");
+  }
+
+  useEffect(() => {
+    let ignore = false;
+    async function fetchShapes() {
+      if (!selectedUri) return;
+      try {
+        const data = await loadShaclShapes(selectedUri);
+        if (!ignore) {
+          setShapes(data.shapes);
+          const turtle = data.shacl_turtle;
+          setFullShacl(turtle);
+          setShacl((current) => current || turtle);
+          setSelectedShapeId(null);
+          setValidation(null);
+        }
+      } catch {
+        if (!ignore) setShapes([]);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    void fetchShapes();
+    return () => {
+      ignore = true;
+    };
+  }, [selectedUri]);
 
   const handleGenerate = useCallback(async () => {
     if (!selectedUri) return;

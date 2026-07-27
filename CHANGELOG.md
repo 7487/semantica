@@ -20,6 +20,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Entities and relationships round-trip as memory-local provenance only — Markdown import intentionally does not write into `ContextGraph`, matching the MVP scope agreed on in #765
   - Documented the file contract and workflow in `docs/reference/context.md`; 43 new tests in `tests/context/test_agent_memory_markdown.py` cover round-trip losslessness, idempotency, validation errors, rollback on failure, and vector-store sync ordering
 
+### Fixed
+
+- **`react-hooks/set-state-in-effect` cascading renders across 12 Explorer workspace files** (#769, #796) by @Sameer6305 and @KaifAhmad1
+  - Replaced synchronous `setState` calls inside `useEffect` bodies with React's recommended "adjust state during render" pattern (`if (x !== prevX) { setPrevX(x); ...setState... }`) across `OntologyWorkspace`, `ManageWorkspace`, `LineageWorkspace`, and `GraphWorkspace`, and inlined async data-fetching effects with `ignore` flags to prevent race conditions and stale writes after unmount
+  - Fixed a regression the inlining itself introduced: `AlignmentsTab.tsx`, `KGOverviewTab.tsx`, `OntologyManager.tsx`, and `VersionsTab.tsx` each duplicated their existing fetch callback (`reload` / `fetchOverview` / `fetchRegistry` / `loadVersions`+`loadProposals`) into a second, inline copy for the mount effect, and the copy silently dropped the `setError`/`flashMsg` calls the original had — re-introducing, on the very first page load, the exact error-swallowing behavior that #767/#790 had already fixed for these same files. The inline copies now mirror the original's error handling (including `207` partial-success messages) exactly
+  - Fixed `LineageDiagram.tsx` only clearing the previously-rendered nodes/edges when the new `activeId` was falsy instead of on every id change, so switching directly between two lineage views briefly kept showing the *previous* view's stale diagram instead of clearing before the new fetch resolved
+  - `GraphWorkspace.tsx` and `GraphLoadingOverlay.tsx` still have unrelated `react-hooks/set-state-in-effect` violations outside this PR's 12-file scope (confirmed via `npx eslint .`); left as follow-up work rather than expanding this PR further
+
+- **Checkov flagged the knowledge-explorer Helm chart for using the default Kubernetes namespace** ([code scanning alert #779](https://github.com/semantica-agi/semantica/security/code-scanning/779), [#778](https://github.com/semantica-agi/semantica/security/code-scanning/778), [#777](https://github.com/semantica-agi/semantica/security/code-scanning/777), `CKV_K8S_21`) by @KaifAhmad1
+  - `templates/service.yaml`, `templates/deployment.yaml`, and `templates/configmap.yaml` all already set `metadata.namespace` to `{{ .Release.Namespace }}`, which is only bound at `helm install`/`helm template` time; Checkov's helm framework renders the chart without a namespace override, so it always resolves to `default` and trips `CKV_K8S_21` even though the chart is namespace-agnostic by design
+  - Added a `checkov.io/skip1: CKV_K8S_21` metadata annotation to each of the three files to suppress the scanner artifact false-positive properly in Helm templates, and documented the reasoning in `.checkov.yaml`
+
+- **No React error boundaries around lazy-loaded Explorer workspaces — a single render error crashed the whole app** (#768, #794) by @Sameer6305
+  - Added an `ErrorBoundary` class component (`explorer/src/ErrorBoundary.tsx`) and wrapped each lazy-loaded workspace's `<Suspense>` block in `App.tsx` with it, keyed on the active sub-view so navigating away from and back to a crashed tab remounts it cleanly
+  - Failed retries are capped at 3 before the fallback UI switches from "Try Again" to a "Reload Application" dead-end, preventing infinite retry loops on deterministic crashes; raw error/stack details are logged via `console.error` only and never rendered into the fallback UI
+  - Fixed the retry counter so it resets after a retry actually succeeds and stays error-free for a few seconds, instead of never resetting (which could permanently exhaust the retry budget on unrelated, individually-recoverable transient errors) or resetting on the very next commit (which could fire prematurely while `Suspense` was still showing its fallback)
+
+- **Explorer frontend workspaces silently swallowed network/server errors** (#767, #790) by @Sameer6305
+  - `ShaclStudio.tsx`, `VersionsTab.tsx`, `SKOSVocabularyManager.tsx`, `EntityResolutionTab.tsx`, `LineageDiagram.tsx`, `DecisionWorkspace.tsx`, `KGOverviewTab.tsx`, `OntologyManager.tsx`, `OntologySearch.tsx`, `ReasoningWorkspace.tsx`, and `SparqlWorkspace.tsx` now render a visible error banner instead of only `console.error()`-ing failed fetches
+  - Added explicit `response.status === 207` (Multi-Status) handling across these workspaces so partial backend failures surface a warning instead of reading as a full success (`response.ok` is `true` for all 2xx codes, including 207)
+  - Added defensive JSON parsing so an unexpected non-JSON (e.g. HTML 500) response body no longer crashes the app with `SyntaxError: Unexpected token < in JSON`
+  - Fixed `KGOverviewTab.tsx` dropping the `/api/graph/nodes` partial-success warning whenever `/api/graph/stats` also returned 207 — both warnings are now shown (appended) instead of one being silently discarded
+  - Fixed `HealthTab.tsx`'s registry load still using a bare `.catch(() => {})` that swallowed errors identically to the pattern fixed elsewhere in this same folder; failures now populate the existing error banner
+  - Fixed `AlignmentsTab.tsx`'s `reload()` using `Promise.allSettled` but never handling the `"rejected"` branches for the registry/alignments fetches, so both failures previously vanished with no error surfaced and no logging
+
+- **`tests/explorer/test_explorer_api.py` failed with `TypeError: Client.__init__() got an unexpected keyword argument 'app'` on current httpx** (#788, #789) by @Sameer6305
+  - `httpx>=0.28.0` removed the `app=` kwarg that Starlette's `TestClient` relies on to wrap a FastAPI app for testing; `httpx` wasn't pinned anywhere in `pyproject.toml`, so different environments could independently resolve an incompatible transitive version and hit the same break
+  - Added an explicit `httpx<0.28.0` constraint to the main `[project.dependencies]` array (not just a dev extra), so it applies globally across production, dev, and CI installs
+  - Without the pin, the full test suite fails to even complete collection (fails immediately on `tests/explorer/test_vocabulary.py` with the same `TestClient` error); with it, `tests/explorer/test_explorer_api.py` goes from 7 failed/12 passed/58 errors to 77 passed, 0 errors
+
+- **Explorer backend routes returned HTTP 200 with error/empty bodies on failure, defeating frontend error handling** (#770, #787) by @Sameer6305 and @KaifAhmad1
+  - `GET /api/temporal/patterns` now raises `HTTPException(500)` on a genuine computation failure instead of silently returning an empty-but-valid `TemporalPatternResponse`; the `ImportError` fallback (optional `kg` extra not installed) is unchanged and still degrades gracefully to an empty list
+  - `POST /api/ontology/create` now raises `HTTPException(500)` when ontology generation fails in either the `sample_data` or `schema_text` mode, instead of silently falling back to a partial/minimal ontology with a misleading `nodes_added` count
+  - `GET /api/analytics` sets `response.status_code = 207` (Multi-Status) when some, but not all, of the requested metrics fail, and raises `HTTPException(500)` when every requested metric fails — a plain 2xx (including 207) reads as success to callers that only check `response.ok`, so an all-failed request now surfaces as a hard error rather than a body full of `{"error": ...}`
+  - Added regression tests covering all three failure paths (`test_patterns_failure_returns_500`, `test_analytics_partial_failure_returns_207`, `test_analytics_total_failure_returns_500`, and two `TestOntologyCreateFailures` cases)
+
 ## [0.6.0] - 2026-07-21
 
 ### Added

@@ -23,29 +23,40 @@ export function HealthTab({ onFixInEditor }: HealthTabProps) {
         setRegistry(entries);
         setSelectedUri((current) => current || entries[0]?.uri || "");
       })
-      .catch(() => { /* backend unavailable — leave registry empty */ });
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load ontology registry.");
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const loadHealth = useCallback(async (uri: string) => {
-    if (!uri) return;
-    setLoading(true);
-    setError("");
-    try {
-      setHealth(await loadOntologyHealth(uri));
-    } catch {
-      // Backend unavailable — show "select an ontology" placeholder, not an error
-      setHealth(null);
-    } finally {
-      setLoading(false);
+  const [prevUri, setPrevUri] = useState(selectedUri);
+  if (selectedUri !== prevUri) {
+    setPrevUri(selectedUri);
+    if (selectedUri) {
+      setLoading(true);
+      setError("");
     }
-  }, []);
+  }
 
   useEffect(() => {
-    void loadHealth(selectedUri);
-  }, [selectedUri, loadHealth]);
+    let ignore = false;
+    async function fetchHealth() {
+      if (!selectedUri) return;
+      try {
+        const data = await loadOntologyHealth(selectedUri);
+        if (!ignore) setHealth(data);
+      } catch {
+        if (!ignore) setHealth(null);
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    }
+    void fetchHealth();
+    return () => { ignore = true; };
+  }, [selectedUri]);
 
   const exportReport = useCallback(() => {
     if (!health) return;
