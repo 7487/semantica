@@ -2523,9 +2523,11 @@ def provenance_lineage(cli_ctx: CLIContext, entity_id: str, depth: int, local_js
               default="table", show_default=True)
 @click.option("--output", default=None, type=click.Path())
 @click.option("--json", "local_json", is_flag=True, default=False)
+@click.option("--dry-run", "local_dry", is_flag=True, default=False)
 @click.pass_obj
 def provenance_audit(cli_ctx: CLIContext, since: Optional[str], fmt: str,
-                     output: Optional[str], local_json: bool) -> None:
+                     output: Optional[str], local_json: bool,
+                     local_dry: bool) -> None:
     """Export the audit log.
 
     \b
@@ -2535,6 +2537,9 @@ def provenance_audit(cli_ctx: CLIContext, since: Optional[str], fmt: str,
     cli_ctx = _require_ctx(cli_ctx)
 
     def _action() -> None:
+        if _is_dry(cli_ctx, local_dry):
+            _dry(cli_ctx, "export audit log", since=since, format=fmt, output=output)
+            return
         try:
             from .provenance import ProvenanceManager
             pm = ProvenanceManager(config=cli_ctx.config.to_dict())
@@ -2601,10 +2606,17 @@ def provenance_check(cli_ctx: CLIContext, strict: bool, local_json: bool) -> Non
             result = pm.check(strict=strict)
         except ImportError as exc:
             raise click.ClickException(f"Provenance module not available: {exc}") from exc
+        is_valid = not isinstance(result, dict) or result.get("valid", True)
         if _is_json(cli_ctx, local_json):
             _jecho(result if isinstance(result, dict) else {"valid": bool(result)})
-        else:
+        elif is_valid:
             _ok(cli_ctx, f"Provenance check: {result}")
+        else:
+            _warn(cli_ctx, f"Provenance check: {result}")
+        if strict and not is_valid:
+            raise click.ClickException(
+                f"Provenance integrity check failed: {result.get('errors')} error(s)"
+            )
 
     _run_with_error_handling(_action)
 
