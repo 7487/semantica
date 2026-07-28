@@ -24,7 +24,7 @@ Security vulnerabilities should be reported privately to prevent potential explo
 
 ### 2. Report Security Issue
 
-Create a [GitHub Security Advisory](https://github.com/semantica-agi/semantica/security/advisories/new) or contact us through [GitHub Issues](https://github.com/semantica-agi/semantica/issues) with "[SECURITY]" prefix.
+Create a [GitHub Security Advisory](https://github.com/semantica-agi/semantica/security/advisories/new) or contact us via the security email listed in `SUPPORT.md`.
 
 Include the following information:
 
