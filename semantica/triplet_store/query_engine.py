@@ -226,6 +226,8 @@ class QueryEngine:
             )
             return result
 
+        except (ValidationError, ProcessingError):
+            raise
         except Exception as e:
             execution_time = (
                 time.time() - start_time if "start_time" in locals() else 0.0
