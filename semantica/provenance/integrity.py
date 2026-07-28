@@ -51,12 +51,12 @@ def compute_checksum(entry: Any) -> str:
     # Concatenate critical fields for checksum
     if isinstance(entry, dict):
         data = (
-            f"{entry.get('entity_id', '')}"
-            f"{entry.get('entity_type', '')}"
-            f"{entry.get('activity_id', '')}"
-            f"{entry.get('source_document', '')}"
-            f"{entry.get('timestamp', '')}"
-            f"{entry.get('confidence', 1.0)}"
+            f"{entry.get('entity_id') or ''}"
+            f"{entry.get('entity_type') or ''}"
+            f"{entry.get('activity_id') or ''}"
+            f"{entry.get('source_document') or ''}"
+            f"{entry.get('timestamp') or ''}"
+            f"{entry.get('confidence') if entry.get('confidence') is not None else 1.0}"
         )
     else:
         data = (

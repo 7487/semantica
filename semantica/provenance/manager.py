@@ -29,11 +29,12 @@ from collections.abc import Mapping
 from datetime import datetime
 from contextlib import contextmanager
 import copy
+import json
 import threading
 
 from .schemas import ProvenanceEntry, SourceReference
 from .storage import ProvenanceStorage, InMemoryStorage, SQLiteStorage
-from .integrity import compute_checksum
+from .integrity import compute_checksum, verify_checksum
 
 
 @contextmanager
@@ -553,7 +554,6 @@ class ProvenanceManager:
                 meta = entry.metadata
                 if isinstance(meta, str):
                     try:
-                        import json
                         meta = json.loads(meta)
                     except (json.JSONDecodeError, TypeError):
                         pass
@@ -561,7 +561,6 @@ class ProvenanceManager:
                 if isinstance(meta, dict):
                     aggregated_metadata.update(meta)
         
-        from .integrity import verify_checksum
         integrity_verified = all(verify_checksum(entry) for entry in lineage_entries)
         chain_dicts = [entry.to_dict() for entry in lineage_entries]
         return {
