@@ -62,6 +62,11 @@ def _transform_audit_lineage(lineage: Dict[str, Any], node_id: str) -> Dict[str,
             "label": label,
             "prov_type": prov_type,
             "parent_id": parent_id,
+            "source_document": entry.get("source_document") or None,
+            "source_location": entry.get("source_location") or None,
+            "source_quote": entry.get("source_quote") or None,
+            "confidence": entry.get("confidence"),
+            "checksum": entry.get("checksum") or None,
         })
 
     for entry in chain:
@@ -114,6 +119,11 @@ def _transform_audit_lineage(lineage: Dict[str, Any], node_id: str) -> Dict[str,
                     "label": endpoint,
                     "prov_type": prov_type,
                     "parent_id": parent_id,
+                    "source_document": None,
+                    "source_location": None,
+                    "source_quote": None,
+                    "confidence": None,
+                    "checksum": None,
                 })
 
     return {"nodes": nodes, "edges": edges, "source": "audit"}
@@ -230,7 +240,14 @@ def _render_markdown(report: Dict[str, Any]) -> str:
 
     lines.extend(["", "## Lineage Nodes"])
     for node in report.get("lineage", {}).get("nodes", []):
-        lines.append(f"- `{node['id']}` ({node['prov_type']}): {node['label']}")
+        line = f"- `{node['id']}` ({node['prov_type']}): {node['label']}"
+        if node.get("source_document"):
+            line += f" [source: {node['source_document']}]"
+        if node.get("confidence") is not None:
+            line += f" (confidence: {node['confidence']})"
+        if node.get("checksum"):
+            line += f" (checksum: {node['checksum'][:8]}...)"
+        lines.append(line)
 
     edges = report.get("lineage", {}).get("edges", [])
     grouped_edges: Dict[str, List] = {"upstream": [], "downstream": [], "lateral": []}

@@ -311,6 +311,11 @@ class ProvenanceNode(BaseModel):
     label: str
     prov_type: str
     parent_id: Optional[str] = None
+    source_document: Optional[str] = None
+    source_location: Optional[str] = None
+    source_quote: Optional[str] = None
+    confidence: Optional[float] = None
+    checksum: Optional[str] = None
 
 
 class ProvenanceEdge(BaseModel):

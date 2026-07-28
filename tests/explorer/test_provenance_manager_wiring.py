@@ -177,3 +177,26 @@ def test_provenance_manager_wiring_checksum_failure_falls_back(client, session):
     assert data.get("source") == "graph_traversal"
     assert len(data["nodes"]) == 1
     assert data["nodes"][0]["id"] == "tampered_node"
+
+
+def test_provenance_audit_evidence_fields_preserved(client, session):
+    """Test that audit evidence fields (source_document, confidence, checksum) are preserved in JSON and markdown."""
+    pm = session.provenance_manager
+    pm.track_entity(entity_id="ev_node", source="DOI:10.1234/test", entity_type="entity", metadata={"label": "Evidence Node"})
+
+    response = client.get("/api/provenance", params={"node_id": "ev_node"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source"] == "audit"
+    assert len(data["nodes"]) == 1
+    node = data["nodes"][0]
+    assert node["source_document"] == "DOI:10.1234/test"
+    assert node["confidence"] == 1.0
+    assert node["checksum"] is not None
+
+    rep_json = client.get("/api/provenance/report", params={"node_id": "ev_node", "format": "json"}).json()
+    assert rep_json["lineage"]["nodes"][0]["source_document"] == "DOI:10.1234/test"
+
+    rep_md = client.get("/api/provenance/report", params={"node_id": "ev_node", "format": "markdown"}).text
+    assert "[source: DOI:10.1234/test]" in rep_md
+    assert "(confidence: 1.0)" in rep_md
