@@ -49,6 +49,7 @@ Semantica sits underneath your LLM, vector store, and agent framework as a deter
 **Who it's for:**
 
 - **AI/ML platform teams** shipping agents that make consequential decisions and need structured, queryable context built from fragmented raw data, not just a vector index
+- **Data platform teams on Databricks or Snowflake** who need to turn tables already sitting in Unity Catalog or a Snowflake warehouse into a governed, lineage-tracked knowledge graph, without exporting that data to a third-party SaaS first
 - **Compliance, risk, and audit teams** who need a straight answer to "why did the AI do that?" in a format a regulator will actually accept
 - **Regulated enterprises** (finance, healthcare, legal, government, defense) that can't ship a black box, and can't send their data to someone else's SaaS to get one
 - **Platform and infra engineers** who want the KG, reasoning, and provenance stack self-hosted and swappable, not locked to one vendor's backend
@@ -66,6 +67,7 @@ Semantica sits underneath your LLM, vector store, and agent framework as a deter
 - **Full Auditability:** W3C PROV-O provenance on every fact, with audit trails exportable to JSON, CSV, or RDF
 - **Deterministic Reasoning:** Forward chaining, Rete network, Datalog, and SPARQL with fully explainable paths, not black boxes
 - **Knowledge Pipeline:** Multi-source ingestion, entity-aware chunking, NER/relation/event extraction, and knowledge graph construction, with semantic deduplication and provenance-preserving merges throughout
+- **Enterprise Data Platforms:** Native connectors for Databricks (Unity Catalog + Delta Lake, PAT/OAuth M2M auth, catalog/schema/table/lineage introspection) and Snowflake (warehouse/database/schema, key-pair and OAuth auth), so tables already living in your lakehouse or warehouse become graph nodes with provenance, not another export/import hop
 - **Graph Analytics:** Centrality, community detection, link prediction, and shortest-path queries over the graph you just built
 - **Polyglot Graph Storage:** Native RDF (Blazegraph, Apache Jena, Eclipse RDF4J via SPARQL) and Labeled Property Graphs (Neo4j, FalkorDB, Apache AGE, AWS Neptune via Cypher), plus vector stores, all swappable without touching your code
 - **Visualization:** Explore any graph, ontology, or timeline in an interactive browser workbench
@@ -309,7 +311,7 @@ Every module below is independently importable, with working code samples verifi
 
 | Module | What it does |
 | --- | --- |
-| [`semantica.ingest`](#semanticaingest-multi-source-ingestion) | Files, web, databases, APIs, streams, email, Git, Parquet, Snowflake, MCP |
+| [`semantica.ingest`](#semanticaingest-multi-source-ingestion) | Files, web, databases, APIs, streams, email, Git, Parquet, Databricks, Snowflake, MCP |
 | [`semantica.semantic_extract`](#semanticasemantic_extract-ner-relations-events-triplets) | NER, relation extraction, event detection, triplet generation |
 | [`semantica.kg`](#semanticakg-knowledge-graph-construction--analysis) | Graph construction, centrality, communities, link prediction |
 | [`semantica.reasoning`](#semanticareasoning-forward-chaining-rete-datalog-sparql) | Forward chaining, Rete, Datalog, SPARQL, fully explainable |
@@ -360,9 +362,38 @@ rows = DBIngestor().ingest_database(
 )
 ```
 
-**Supported sources:** Local files (PDF, DOCX, PPTX, HTML, TXT, CSV, JSON, YAML, Excel, XML) · Web pages · RSS/Atom feeds · REST APIs · Databases (PostgreSQL, MySQL, SQLite, Oracle, SQL Server) · Parquet datasets · Snowflake · Git repositories · Email (IMAP/POP3) · Message streams (Kafka, RabbitMQ, Kinesis, Pulsar) · MCP resources · Apache Arrow/Feather/IPC (`ArrowIngestor`)
+```python
+# Enterprise data platforms - pull tables straight out of your lakehouse
+# or warehouse, with lineage, instead of exporting to CSV first
+from semantica.ingest import DatabricksIngestor, SnowflakeIngestor
 
-Elasticsearch and Google Drive ingestion also ship (`ElasticIngestor`, `GDriveIngestor`) but aren't re-exported from the top-level `semantica.ingest` namespace yet — import them directly: `from semantica.ingest.elastic_ingestor import ElasticIngestor`.
+# pip install "semantica[db-databricks]"
+databricks = DatabricksIngestor(
+    host="https://adb-xxx.azuredatabricks.net",
+    token="dapi-xxxxxxxx",              # or client_id/client_secret for OAuth M2M
+    http_path="/sql/1.0/warehouses/xxxxxxxx",
+    catalog="main",
+)
+customers    = databricks.ingest_table("customers", limit=10_000)
+sales        = databricks.ingest_query("SELECT * FROM sales WHERE region = 'EMEA'")
+table_lineage = databricks.get_table_lineage("customers", catalog="main", schema="default")  # Unity Catalog lineage
+
+# pip install semantica[db-snowflake]
+snowflake = SnowflakeIngestor(
+    account="myaccount",
+    user="myuser",
+    password="mypassword",              # or private_key=... for key-pair; use authenticator="oauth", token=... for OAuth
+    warehouse="COMPUTE_WH",
+    database="MYDB",
+)
+orders = snowflake.ingest_table("ORDERS", limit=10_000)
+```
+
+> **Security Note:** Never hardcode credentials (`token`, `password`, `private_key`) in production code; pass them via environment variables (e.g., `DATABRICKS_TOKEN`, `SNOWFLAKE_PASSWORD`) or a secrets manager.
+
+**Supported sources:** Local files (PDF, DOCX, PPTX, HTML, TXT, CSV, JSON, YAML, Excel, XML) · Web pages · RSS/Atom feeds · REST APIs · Databases (PostgreSQL, MySQL, SQLite, Oracle, SQL Server) · Parquet datasets · Databricks (Unity Catalog + Delta Lake) · Snowflake · Git repositories · Email (IMAP/POP3) · Message streams (Kafka, RabbitMQ, Kinesis, Pulsar) · MCP resources · Apache Arrow/Feather/IPC (`ArrowIngestor`)
+
+DuckDB, Elasticsearch, Google Drive, HuggingFace, MongoDB, and Pandas ingestion also ship (`DuckDBIngestor`, `ElasticIngestor`, `GDriveIngestor`, `HuggingFaceIngestor`, `MongoIngestor`, `PandasIngestor`) but aren't re-exported from the top-level `semantica.ingest` namespace yet — import them directly: `from semantica.ingest.duckdb_ingestor import DuckDBIngestor`.
 
 </details>
 
@@ -1111,6 +1142,7 @@ if report.valid:
 | **Vector Store** | FAISS · Pinecone · Weaviate · Qdrant · Milvus · PgVector · hybrid + filtered search |
 | **Graph Databases (LPG)** | Neo4j · FalkorDB · Apache AGE · AWS Neptune |
 | **Triple Stores (RDF)** | Blazegraph · Apache Jena · Eclipse RDF4J · unified `TripletStore` interface · SPARQL query & bulk load |
+| **Enterprise Data Platforms** | Databricks (`DatabricksIngestor`: Unity Catalog + Delta Lake, PAT/OAuth M2M, table/query ingestion, catalog/schema/table/lineage introspection) · Snowflake (`SnowflakeIngestor`: warehouse/database/schema, password/key-pair/OAuth auth) |
 | **LLM Providers** | **All already supported today:** OpenAI (GPT-4o, o1, o3) · Anthropic (Claude) · Google Gemini · Mistral · Meta Llama · Groq · Cohere · Azure OpenAI · AWS Bedrock · Ollama · DeepSeek · Perplexity · Together AI · Fireworks AI · Replicate · HuggingFace · via `semantica.llms` and LiteLLM |
 
 ---

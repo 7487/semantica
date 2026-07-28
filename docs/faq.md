@@ -129,7 +129,7 @@ If you're on an older version, install extras individually: `pip install "semant
 | :-------- | :------- |
 | **Files** | PDF, DOCX, HTML, JSON, CSV, Excel, PPTX, Parquet (v0.5.0), XML (v0.5.0), archives |
 | **Web** | `WebIngestor` crawl, RSS feeds, sitemaps |
-| **Databases** | PostgreSQL, MySQL, Snowflake via `DBIngestor` / `SnowflakeIngestor` |
+| **Databases** | PostgreSQL, MySQL, Snowflake, Databricks via `DBIngestor` / `SnowflakeIngestor` / `DatabricksIngestor` |
 | **NoSQL** | MongoDB via `MongoIngestor`, DuckDB via `DuckDBIngestor` |
 | **Streams** | Kafka, real-time ingestion via `StreamIngestor` |
 | **Protocols** | MCP (Model Context Protocol) via `MCPIngestor` |

@@ -23,7 +23,7 @@ Loads data from any source into the pipeline as a unified `SourceDocument`.
 | Parquet | `ingest.ParquetIngestor` | PyArrow, Hive-style partitions (v0.5.0) |
 | XML | `ingest.XMLIngestor` | XXE-safe lxml, XSD/DTD validation (v0.5.0) |
 | Web pages | `ingest.WebIngestor` | Configurable depth, link filtering |
-| SQL / Snowflake | `ingest.DBIngestor` / `ingest.SnowflakeIngestor` | Custom SQL, schema introspection |
+| SQL / Snowflake / Databricks | `ingest.DBIngestor` / `ingest.SnowflakeIngestor` / `ingest.DatabricksIngestor` | Custom SQL, schema introspection, Unity Catalog lineage |
 | Kafka / streams | `ingest.StreamIngestor` | Real-time feed ingestion |
 | Email | `ingest.EmailIngestor` | IMAP/SMTP with attachment extraction |
 | Repositories | `ingest.RepoIngestor` | Git repos, code structure |

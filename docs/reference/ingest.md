@@ -6,7 +6,7 @@ icon: "database"
 
 **`semantica.ingest`** is the **universal entry point** for loading data into Semantica:
 
-- 15+ ingestion adapters: files, web, SQL, Snowflake, Kafka, MCP, Git repos, email
+- 15+ ingestion adapters: files, web, SQL, Databricks, Snowflake, Kafka, MCP, Git repos, email
 - PyArrow Parquet with column selection and partitioned dataset support
 - XXE-safe lxml XML with optional XSD schema validation
 - `ingest()` unified dispatcher: auto-detects source type from path or URL
@@ -29,6 +29,7 @@ icon: "database"
 | `SnowflakeIngestor` | Snowflake data warehouse queries and table exports |
 | `DatabricksIngestor` | Databricks Unity Catalog metadata, Delta table queries, and lineage |
 | `ParquetIngestor` | Apache Parquet files and partitioned datasets with column selection |
+| `ArrowIngestor` | Apache Arrow IPC and Feather file processing |
 | `XMLIngestor` | XXE-safe XML parsing with optional XSD schema validation |
 | `EmailIngestor` | IMAP/POP3 email ingestion with attachment extraction |
 | `OntologyIngestor` | OWL/RDF/Turtle ontology file ingestion |
