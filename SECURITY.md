@@ -156,7 +156,7 @@ We appreciate responsible disclosure. Security researchers who help us improve t
 
 For security-related questions or concerns:
 
-- **GitHub Issues**: [Create an issue](https://github.com/semantica-agi/semantica/issues) with "[SECURITY]" prefix
+- **Private Reporting**: Please do not report vulnerabilities in public issues.
 - **GitHub Security Advisories**: [Report vulnerability](https://github.com/semantica-agi/semantica/security/advisories/new)
 
 ## Additional Resources
