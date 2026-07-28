@@ -54,6 +54,7 @@ def test_provenance_manager_wiring_audit_path(client, session):
     edge_pairs = {(e["source"], e["target"]) for e in data["edges"]}
     assert ("grandparent", "parent") in edge_pairs
     assert ("parent", "child") in edge_pairs
+    assert all(e["direction"] == "upstream" for e in data["edges"])
 
     # Confirm /api/provenance/report also uses audit path
     rep_response = client.get("/api/provenance/report", params={"node_id": "child"})
@@ -61,6 +62,16 @@ def test_provenance_manager_wiring_audit_path(client, session):
     report_data = rep_response.json()
     assert report_data.get("source") == "audit"
     assert report_data["lineage"].get("source") == "audit"
+
+    # Confirm markdown export classifies multi-hop ancestor edges under Upstream, not Lateral
+    md_response = client.get(
+        "/api/provenance/report", params={"node_id": "child", "format": "markdown"}
+    )
+    assert md_response.status_code == 200
+    md_text = md_response.text
+    assert "## Upstream" in md_text
+    assert "grandparent" in md_text and "parent" in md_text
+    assert "## Lateral" not in md_text
 
 
 def test_provenance_manager_wiring_fallback_no_records(client, session):
@@ -122,3 +133,29 @@ def test_provenance_storage_isolation_between_sessions(tmp_path):
     pm1.track_entity(entity_id="node_in_1", source="doc_A", entity_type="entity")
     assert pm1.storage.retrieve("node_in_1") is not None
     assert pm2.storage.retrieve("node_in_1") is None
+
+
+def test_create_app_rejects_conflicting_provenance_storage_path(tmp_path):
+    """Test that create_app raises ValueError when given a session with a conflicting preconfigured path."""
+    path1 = str(tmp_path / "orig.db")
+    path2 = str(tmp_path / "conflict.db")
+    sess = GraphSession(ContextGraph(advanced_analytics=False), provenance_storage_path=path1)
+    with pytest.raises(ValueError, match="Conflicting provenance_storage_path"):
+        create_app(session=sess, provenance_storage_path=path2)
+
+
+def test_create_app_rejects_path_when_manager_already_initialized(tmp_path):
+    """Test that create_app raises ValueError when given a session whose manager was already constructed."""
+    sess = GraphSession(ContextGraph(advanced_analytics=False))
+    _ = sess.provenance_manager  # construct and cache
+    with pytest.raises(ValueError, match="provenance_manager is already initialized"):
+        create_app(session=sess, provenance_storage_path=str(tmp_path / "late.db"))
+
+
+def test_create_app_allows_matching_provenance_storage_path(tmp_path):
+    """Test that create_app succeeds when the supplied path matches the session's existing path."""
+    path1 = str(tmp_path / "same.db")
+    sess = GraphSession(ContextGraph(advanced_analytics=False), provenance_storage_path=path1)
+    app = create_app(session=sess, provenance_storage_path=path1)
+    with TestClient(app):
+        assert app.state.session._provenance_storage_path == path1

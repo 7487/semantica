@@ -194,6 +194,28 @@ class GraphSession:
                 )
             return self._provenance_manager
 
+    def set_provenance_storage_path(self, storage_path: Optional[str]) -> None:
+        """Set or reconfigure the provenance storage path for this session.
+
+        Raises a ValueError if a conflicting storage path is already configured or
+        if the provenance manager has already been constructed with a different path.
+        """
+        with self._lock:
+            if self._provenance_storage_path == storage_path:
+                return
+            if self._provenance_manager is not None:
+                raise ValueError(
+                    f"Cannot change provenance_storage_path to '{storage_path}': "
+                    f"provenance_manager is already initialized with "
+                    f"'{self._provenance_storage_path}'."
+                )
+            if self._provenance_storage_path is not None and storage_path is not None:
+                raise ValueError(
+                    f"Conflicting provenance_storage_path: session is already configured "
+                    f"with '{self._provenance_storage_path}', cannot overwrite with '{storage_path}'."
+                )
+            self._provenance_storage_path = storage_path
+
     def normalize_node(self, node: Dict[str, Any]) -> Dict[str, Any]:
         meta: Dict[str, Any] = {}
         meta.update(node.get("metadata", {}) or {})

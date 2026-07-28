@@ -3,7 +3,6 @@ Semantica Explorer FastAPI application factory.
 """
 
 import asyncio
-import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,8 +17,6 @@ from .. import __version__
 from ..context.context_graph import ContextGraph
 from .session import GraphSession
 from .ws import ConnectionManager
-
-logger = logging.getLogger(__name__)
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -96,19 +93,7 @@ def create_app(
     else:
         active_session = session
         if prov_path is not None:
-            if active_session._provenance_storage_path is None:
-                if getattr(active_session, "_provenance_manager", None) is not None:
-                    logger.warning(
-                        "provenance_storage_path=%s was supplied to create_app(), but "
-                        "the given session's provenance_manager was already constructed "
-                        "(likely accessed before create_app() ran) and will keep using "
-                        "its original storage. Pass provenance_storage_path when "
-                        "constructing the GraphSession instead, or access "
-                        "session.provenance_manager only after create_app().",
-                        prov_path,
-                    )
-                else:
-                    active_session._provenance_storage_path = prov_path
+            active_session.set_provenance_storage_path(prov_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

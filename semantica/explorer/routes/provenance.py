@@ -89,13 +89,11 @@ def _transform_audit_lineage(lineage: Dict[str, Any], node_id: str) -> Dict[str,
             # ancestor chains via parent_entity_id and used_entities. It does not perform
             # reverse lookups for downstream descendants. Consequently, 'direction = "downstream"'
             # is unreachable in practice for this audit path until reverse lookup is supported
-            # by ProvenanceManager.
-            if eid == node_id:
-                direction = "upstream"
-            elif src == node_id:
+            # by ProvenanceManager. All ancestor derivation edges are upstream lineage.
+            if src == node_id:
                 direction = "downstream"
             else:
-                direction = "lateral"
+                direction = "upstream"
 
             edges.append({
                 "id": f"{src}-{eid}",
