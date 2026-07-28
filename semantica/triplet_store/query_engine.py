@@ -226,6 +226,8 @@ class QueryEngine:
             )
             return result
 
+        except (ValidationError, ProcessingError):
+            raise
         except Exception as e:
             execution_time = (
                 time.time() - start_time if "start_time" in locals() else 0.0
@@ -421,7 +423,7 @@ class QueryEngine:
         }}
         """
 
-        expanded_uris = set([entity_uri])
+        expanded_uris = {entity_uri}
         try:
             if hasattr(store_backend, "execute_sparql"):
                 result_data = store_backend.execute_sparql(query)
