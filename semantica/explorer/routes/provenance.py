@@ -4,6 +4,7 @@ Provenance routes for lineage visualization and exportable reports.
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List, Optional
 
 import networkx as nx
@@ -13,7 +14,9 @@ from fastapi.responses import PlainTextResponse, Response
 from ..dependencies import get_session
 from ..schemas import ProvenanceEdge, ProvenanceNode, ProvenanceResponse
 from ..session import GraphSession
+from ...provenance.integrity import verify_checksum
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/provenance", tags=["Power User Tools"])
 
 _AGENT_TYPES = {"person", "organization", "system", "agent"}
@@ -29,9 +32,134 @@ def _classify_prov(node_type: str) -> tuple[str, str]:
     return "Entity", "group_entity"
 
 
+def _transform_audit_lineage(lineage: Dict[str, Any], node_id: str) -> Dict[str, Any]:
+    # Mapping decision (W3C PROV-O to frontend swim-lanes):
+    # Every ProvenanceEntry maps to a node classified by _classify_prov(entry["entity_type"]),
+    # placing documents/chunks/entities in 'group_entity' (prov_type='Entity'), persons/systems
+    # in 'group_agent', and actions/processes in 'group_activity'.
+    # For derivation relationships (parent_entity_id and used_entities), we connect
+    # parent -> child directly with edge label set to activity_id (or 'wasDerivedFrom'),
+    # keeping the lineage graph scannable without cluttering it with intermediate activity
+    # nodes when activity_id is an operational label.
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+    seen_nodes = set()
+    seen_edges = set()
+
+    chain = lineage.get("lineage_chain") or lineage.get("entries") or []
+    for entry in chain:
+        if not isinstance(entry, dict):
+            continue
+        eid = str(entry.get("entity_id") or "")
+        if not eid or eid in seen_nodes:
+            continue
+        seen_nodes.add(eid)
+        metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+        label = str(metadata.get("title") or metadata.get("label") or eid)
+        prov_type, parent_id = _classify_prov(str(entry.get("entity_type", "entity")))
+        nodes.append({
+            "id": eid,
+            "label": label,
+            "prov_type": prov_type,
+            "parent_id": parent_id,
+            "source_document": entry.get("source_document") or None,
+            "source_location": entry.get("source_location") or None,
+            "source_quote": entry.get("source_quote") or None,
+            "confidence": entry.get("confidence"),
+            "checksum": entry.get("checksum") or None,
+        })
+
+    for entry in chain:
+        if not isinstance(entry, dict):
+            continue
+        eid = str(entry.get("entity_id") or "")
+        if not eid:
+            continue
+        parents = []
+        if entry.get("parent_entity_id"):
+            parents.append(str(entry.get("parent_entity_id")))
+        used = entry.get("used_entities")
+        if isinstance(used, list):
+            for u in used:
+                if u and str(u) not in parents:
+                    parents.append(str(u))
+
+        activity = str(entry.get("activity_id") or "wasDerivedFrom")
+        for src in parents:
+            edge_key = (src, eid)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+
+            # NOTE: ProvenanceManager.get_lineage() currently only traces upstream
+            # ancestor chains via parent_entity_id and used_entities. It does not perform
+            # reverse lookups for downstream descendants. Consequently, 'direction = "downstream"'
+            # is unreachable in practice for this audit path until reverse lookup is supported
+            # by ProvenanceManager. All ancestor derivation edges are upstream lineage.
+            if src == node_id:
+                direction = "downstream"
+            else:
+                direction = "upstream"
+
+            edges.append({
+                "id": f"{src}-{eid}",
+                "source": src,
+                "target": eid,
+                "label": activity,
+                "direction": direction,
+            })
+
+    for edge in edges:
+        for endpoint in (edge["source"], edge["target"]):
+            if endpoint not in seen_nodes:
+                seen_nodes.add(endpoint)
+                prov_type, parent_id = _classify_prov("entity")
+                nodes.append({
+                    "id": endpoint,
+                    "label": endpoint,
+                    "prov_type": prov_type,
+                    "parent_id": parent_id,
+                    "source_document": None,
+                    "source_location": None,
+                    "source_quote": None,
+                    "confidence": None,
+                    "checksum": None,
+                })
+
+    return {"nodes": nodes, "edges": edges, "source": "audit"}
+
+
 def _build_provenance(session: GraphSession, node_id: Optional[str] = None) -> dict:
-    if not node_id or node_id not in session.graph.nodes:
-        return {"nodes": [], "edges": []}
+    """Build provenance lineage for a node, attempting the audit-grade store first.
+
+    NOTE: The audit path (source='audit') shows verified upstream lineage only.
+    For descendant/downstream relationships, the naive graph-traversal fallback
+    remains the only source until ProvenanceManager gains a reverse lookup.
+    """
+    if not node_id:
+        return {"nodes": [], "edges": [], "source": "graph_traversal"}
+
+    try:
+        manager = getattr(session, "provenance_manager", None)
+        if manager is not None:
+            lineage = manager.get_lineage(node_id)
+            if lineage and lineage.get("entity_count", 0) > 0:
+                integrity_ok = lineage.get("integrity_verified")
+                if integrity_ok is None:
+                    entries = lineage.get("lineage_chain") or lineage.get("entries") or []
+                    integrity_ok = all(verify_checksum(entry) for entry in entries)
+                if integrity_ok:
+                    return _transform_audit_lineage(lineage, node_id)
+                logger.warning(
+                    f"Provenance integrity verification failed for {node_id}, falling back to graph traversal"
+                )
+    except Exception as exc:
+        logger.warning(
+            f"ProvenanceManager get_lineage failed for {node_id}, falling back to graph traversal: {exc}"
+        )
+
+    if node_id not in session.graph.nodes:
+        return {"nodes": [], "edges": [], "source": "graph_traversal"}
 
     graph = nx.DiGraph()
     graph.add_node(node_id)
@@ -81,7 +209,7 @@ def _build_provenance(session: GraphSession, node_id: Optional[str] = None) -> d
             }
         )
 
-    return {"nodes": provenance_nodes, "edges": provenance_edges}
+    return {"nodes": provenance_nodes, "edges": provenance_edges, "source": "graph_traversal"}
 
 
 def _build_report(session: GraphSession, node_id: str) -> Dict[str, Any]:
@@ -93,6 +221,7 @@ def _build_report(session: GraphSession, node_id: str) -> Dict[str, Any]:
         "type": node.get("type", "entity") if node else "entity",
         "properties": node.get("metadata", node.get("properties", {})) if node else {},
         "lineage": provenance,
+        "source": provenance.get("source", "graph_traversal"),
     }
 
 
@@ -114,7 +243,14 @@ def _render_markdown(report: Dict[str, Any]) -> str:
 
     lines.extend(["", "## Lineage Nodes"])
     for node in report.get("lineage", {}).get("nodes", []):
-        lines.append(f"- `{node['id']}` ({node['prov_type']}): {node['label']}")
+        line = f"- `{node['id']}` ({node['prov_type']}): {node['label']}"
+        if node.get("source_document"):
+            line += f" [source: {node['source_document']}]"
+        if node.get("confidence") is not None:
+            line += f" (confidence: {node['confidence']})"
+        if node.get("checksum"):
+            line += f" (checksum: {node['checksum'][:8]}...)"
+        lines.append(line)
 
     edges = report.get("lineage", {}).get("edges", [])
     grouped_edges: Dict[str, List] = {"upstream": [], "downstream": [], "lateral": []}
@@ -152,6 +288,7 @@ async def get_provenance_lineage(
     return ProvenanceResponse(
         nodes=[ProvenanceNode(**node) for node in data["nodes"]],
         edges=[ProvenanceEdge(**edge) for edge in data["edges"]],
+        source=data.get("source", "graph_traversal"),
     )
 
 

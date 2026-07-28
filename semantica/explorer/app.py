@@ -45,6 +45,10 @@ def _read_explorer_settings() -> dict:
         # ContextGraph and does not open a network connection to FalkorDB.
         "falkordb_host": os.environ.get("FALKORDB_HOST", "localhost"),
         "falkordb_port": _read_int_env("FALKORDB_PORT", 6379),
+        "provenance_storage_path": os.environ.get(
+            "SEMANTICA_PROVENANCE_DB",
+            os.environ.get("EXPLORER_PROVENANCE_DB"),
+        ),
     }
 
 
@@ -75,9 +79,21 @@ def _install_mutation_bridge(app: FastAPI, session: GraphSession) -> None:
     session.graph.mutation_callback = on_mutation
 
 
-def create_app(session: Optional[GraphSession] = None) -> FastAPI:
-    active_session = session or GraphSession(ContextGraph(advanced_analytics=False))
+def create_app(
+    session: Optional[GraphSession] = None,
+    provenance_storage_path: Optional[str] = None,
+) -> FastAPI:
     settings = _read_explorer_settings()
+    prov_path = provenance_storage_path or settings.get("provenance_storage_path")
+    if session is None:
+        active_session = GraphSession(
+            ContextGraph(advanced_analytics=False),
+            provenance_storage_path=prov_path,
+        )
+    else:
+        active_session = session
+        if prov_path is not None:
+            active_session.set_provenance_storage_path(prov_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

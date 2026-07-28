@@ -1,4 +1,4 @@
-﻿"""
+"""
 Semantica Explorer session helpers.
 """
 
@@ -37,8 +37,13 @@ logger = logging.getLogger(__name__)
 class GraphSession:
     """Thread-safe session wrapper around a loaded ``ContextGraph``."""
 
-    def __init__(self, graph: ContextGraph) -> None:
+    def __init__(
+        self,
+        graph: ContextGraph,
+        provenance_storage_path: Optional[str] = None,
+    ) -> None:
         self.graph = graph
+        self._provenance_storage_path = provenance_storage_path
         self._lock = threading.RLock()
         self._search_index = GraphSearchIndex()
 
@@ -52,6 +57,7 @@ class GraphSession:
         self._similarity: Any = None
         self._link_predictor: Any = None
         self._validator: Any = None
+        self._provenance_manager: Any = None
 
         self._graph_revision: int = 0
         self._cached_embeddings: Optional[Dict[str, List[float]]] = None
@@ -177,6 +183,38 @@ class GraphSession:
             if self._validator is None and _KG_AVAILABLE:
                 self._validator = GraphValidator()
             return self._validator
+
+    @property
+    def provenance_manager(self) -> Any:
+        with self._lock:
+            if self._provenance_manager is None:
+                from ..provenance import ProvenanceManager
+                self._provenance_manager = ProvenanceManager(
+                    storage_path=self._provenance_storage_path
+                )
+            return self._provenance_manager
+
+    def set_provenance_storage_path(self, storage_path: Optional[str]) -> None:
+        """Set or reconfigure the provenance storage path for this session.
+
+        Raises a ValueError if a conflicting storage path is already configured or
+        if the provenance manager has already been constructed with a different path.
+        """
+        with self._lock:
+            if self._provenance_storage_path == storage_path:
+                return
+            if self._provenance_manager is not None:
+                raise ValueError(
+                    f"Cannot change provenance_storage_path to '{storage_path}': "
+                    f"provenance_manager is already initialized with "
+                    f"'{self._provenance_storage_path}'."
+                )
+            if self._provenance_storage_path is not None and storage_path is not None:
+                raise ValueError(
+                    f"Conflicting provenance_storage_path: session is already configured "
+                    f"with '{self._provenance_storage_path}', cannot overwrite with '{storage_path}'."
+                )
+            self._provenance_storage_path = storage_path
 
     def normalize_node(self, node: Dict[str, Any]) -> Dict[str, Any]:
         meta: Dict[str, Any] = {}
