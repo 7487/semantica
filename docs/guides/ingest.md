@@ -301,7 +301,7 @@ for bundle in stix_xml_files:
 
 ## Source 6 — Enterprise Data Platforms (Databricks & Snowflake)
 
-`DatabricksIngestor` and `SnowflakeIngestor` return the same shape as `DBIngestor` — a typed object (`DatabricksData` / `SnowflakeData`) whose `.data` field is `List[Dict]`, one dict per row. The same "transform to text, then store" pattern from Source 3 applies: pull only the tables and columns you need with a targeted query, then build a sentence per record before handing it to `AgentContext.store()`.
+`DatabricksIngestor` and `SnowflakeIngestor` return wrapper objects (`DatabricksData` / `SnowflakeData`) whose `.data` field is `List[Dict]` — the same list-of-dicts row shape that `DBIngestor.execute_query()` returns directly, without a wrapper. The same "transform to text, then store" pattern from Source 3 applies: pull only the tables and columns you need with a targeted query, then build a sentence per record before handing it to `AgentContext.store()`.
 
 ```python
 from semantica.ingest import DatabricksIngestor

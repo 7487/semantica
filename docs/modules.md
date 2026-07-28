@@ -31,7 +31,7 @@ Semantica is organized into **27 modules** across six logical layers. Each modul
 Loads data from files, web, databases, and streams into a unified `SourceDocument` format.
 
 ```python
-from semantica.ingest import FileIngestor, WebIngestor, ParquetIngestor, XMLIngestor
+from semantica.ingest import FileIngestor, WebIngestor, ParquetIngestor, XMLIngestor, DatabricksIngestor
 
 # Files: PDF, DOCX, CSV, Excel, PPTX, JSON, HTML, archives
 ingestor = FileIngestor()

@@ -376,7 +376,7 @@ databricks = DatabricksIngestor(
 )
 customers    = databricks.ingest_table("customers", limit=10_000)
 sales        = databricks.ingest_query("SELECT * FROM sales WHERE region = 'EMEA'")
-table_lineage = databricks.get_table_lineage("main", "sales", "customers")  # Unity Catalog lineage
+table_lineage = databricks.get_table_lineage("customers", catalog="main", schema="default")  # Unity Catalog lineage
 
 # pip install semantica[db-snowflake]
 snowflake = SnowflakeIngestor(
