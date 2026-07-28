@@ -37,7 +37,7 @@ Include the following information:
 
 ### 3. Response Timeline
 
-- **Initial Response**: Within 48 hours
+- **Initial Response**: Within 24 hours for critical issues; within 48 hours for non-critical issues
 - **Status Update**: Within 7 days
 - **Resolution**: Depends on severity and complexity
 
