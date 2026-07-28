@@ -324,6 +324,7 @@ class ProvenanceEdge(BaseModel):
 class ProvenanceResponse(BaseModel):
     nodes: List[ProvenanceNode]
     edges: List[ProvenanceEdge]
+    source: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

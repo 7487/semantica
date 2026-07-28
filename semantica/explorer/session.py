@@ -1,4 +1,4 @@
-﻿"""
+"""
 Semantica Explorer session helpers.
 """
 
@@ -37,8 +37,13 @@ logger = logging.getLogger(__name__)
 class GraphSession:
     """Thread-safe session wrapper around a loaded ``ContextGraph``."""
 
-    def __init__(self, graph: ContextGraph) -> None:
+    def __init__(
+        self,
+        graph: ContextGraph,
+        provenance_storage_path: Optional[str] = None,
+    ) -> None:
         self.graph = graph
+        self._provenance_storage_path = provenance_storage_path
         self._lock = threading.RLock()
         self._search_index = GraphSearchIndex()
 
@@ -52,6 +57,7 @@ class GraphSession:
         self._similarity: Any = None
         self._link_predictor: Any = None
         self._validator: Any = None
+        self._provenance_manager: Any = None
 
         self._graph_revision: int = 0
         self._cached_embeddings: Optional[Dict[str, List[float]]] = None
@@ -177,6 +183,16 @@ class GraphSession:
             if self._validator is None and _KG_AVAILABLE:
                 self._validator = GraphValidator()
             return self._validator
+
+    @property
+    def provenance_manager(self) -> Any:
+        with self._lock:
+            if self._provenance_manager is None:
+                from ..provenance import ProvenanceManager
+                self._provenance_manager = ProvenanceManager(
+                    storage_path=self._provenance_storage_path
+                )
+            return self._provenance_manager
 
     def normalize_node(self, node: Dict[str, Any]) -> Dict[str, Any]:
         meta: Dict[str, Any] = {}

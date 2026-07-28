@@ -3,6 +3,7 @@ Semantica Explorer FastAPI application factory.
 """
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,6 +18,8 @@ from .. import __version__
 from ..context.context_graph import ContextGraph
 from .session import GraphSession
 from .ws import ConnectionManager
+
+logger = logging.getLogger(__name__)
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -45,6 +48,10 @@ def _read_explorer_settings() -> dict:
         # ContextGraph and does not open a network connection to FalkorDB.
         "falkordb_host": os.environ.get("FALKORDB_HOST", "localhost"),
         "falkordb_port": _read_int_env("FALKORDB_PORT", 6379),
+        "provenance_storage_path": os.environ.get(
+            "SEMANTICA_PROVENANCE_DB",
+            os.environ.get("EXPLORER_PROVENANCE_DB"),
+        ),
     }
 
 
@@ -75,9 +82,33 @@ def _install_mutation_bridge(app: FastAPI, session: GraphSession) -> None:
     session.graph.mutation_callback = on_mutation
 
 
-def create_app(session: Optional[GraphSession] = None) -> FastAPI:
-    active_session = session or GraphSession(ContextGraph(advanced_analytics=False))
+def create_app(
+    session: Optional[GraphSession] = None,
+    provenance_storage_path: Optional[str] = None,
+) -> FastAPI:
     settings = _read_explorer_settings()
+    prov_path = provenance_storage_path or settings.get("provenance_storage_path")
+    if session is None:
+        active_session = GraphSession(
+            ContextGraph(advanced_analytics=False),
+            provenance_storage_path=prov_path,
+        )
+    else:
+        active_session = session
+        if prov_path is not None:
+            if active_session._provenance_storage_path is None:
+                if getattr(active_session, "_provenance_manager", None) is not None:
+                    logger.warning(
+                        "provenance_storage_path=%s was supplied to create_app(), but "
+                        "the given session's provenance_manager was already constructed "
+                        "(likely accessed before create_app() ran) and will keep using "
+                        "its original storage. Pass provenance_storage_path when "
+                        "constructing the GraphSession instead, or access "
+                        "session.provenance_manager only after create_app().",
+                        prov_path,
+                    )
+                else:
+                    active_session._provenance_storage_path = prov_path
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
