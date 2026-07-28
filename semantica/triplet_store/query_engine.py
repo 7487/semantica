@@ -421,7 +421,7 @@ class QueryEngine:
         }}
         """
 
-        expanded_uris = set([entity_uri])
+        expanded_uris = {entity_uri}
         try:
             if hasattr(store_backend, "execute_sparql"):
                 result_data = store_backend.execute_sparql(query)
