@@ -159,3 +159,21 @@ def test_create_app_allows_matching_provenance_storage_path(tmp_path):
     app = create_app(session=sess, provenance_storage_path=path1)
     with TestClient(app):
         assert app.state.session._provenance_storage_path == path1
+
+
+def test_provenance_manager_wiring_checksum_failure_falls_back(client, session):
+    """Test that if any lineage entry fails checksum verification, Explorer falls back to graph traversal."""
+    pm = session.provenance_manager
+    entry = pm.track_entity(entity_id="tampered_node", source="doc_1", entity_type="entity")
+    # Simulate tampering by altering confidence in storage without updating checksum
+    entry.confidence = 0.1
+    pm.storage.store(entry)
+
+    session.add_node("tampered_node", content="Tampered Node", node_type="entity")
+
+    response = client.get("/api/provenance", params={"node_id": "tampered_node"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("source") == "graph_traversal"
+    assert len(data["nodes"]) == 1
+    assert data["nodes"][0]["id"] == "tampered_node"

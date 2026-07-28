@@ -561,6 +561,8 @@ class ProvenanceManager:
                 if isinstance(meta, dict):
                     aggregated_metadata.update(meta)
         
+        from .integrity import verify_checksum
+        integrity_verified = all(verify_checksum(entry) for entry in lineage_entries)
         chain_dicts = [entry.to_dict() for entry in lineage_entries]
         return {
             "entity_id": entity_id,
@@ -579,7 +581,8 @@ class ProvenanceManager:
                 default=None
             ),
             "entity_count": len(lineage_entries),
-            "metadata": aggregated_metadata  # Add metadata key
+            "metadata": aggregated_metadata,
+            "integrity_verified": integrity_verified,
         }
     
     def trace_lineage(self, entity_id: str) -> List[ProvenanceEntry]:

@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse, Response
 from ..dependencies import get_session
 from ..schemas import ProvenanceEdge, ProvenanceNode, ProvenanceResponse
 from ..session import GraphSession
+from ...provenance.integrity import verify_checksum
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/provenance", tags=["Power User Tools"])
@@ -133,7 +134,12 @@ def _build_provenance(session: GraphSession, node_id: Optional[str] = None) -> d
         if manager is not None:
             lineage = manager.get_lineage(node_id)
             if lineage and lineage.get("entity_count", 0) > 0:
-                return _transform_audit_lineage(lineage, node_id)
+                entries = lineage.get("lineage_chain") or lineage.get("entries") or []
+                if all(verify_checksum(entry) for entry in entries):
+                    return _transform_audit_lineage(lineage, node_id)
+                logger.warning(
+                    f"Provenance integrity verification failed for {node_id}, falling back to graph traversal"
+                )
     except Exception as exc:
         logger.warning(
             f"ProvenanceManager get_lineage failed for {node_id}, falling back to graph traversal: {exc}"

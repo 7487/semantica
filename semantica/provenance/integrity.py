@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 from .schemas import ProvenanceEntry
 
 
-def compute_checksum(entry: ProvenanceEntry) -> str:
+def compute_checksum(entry: Any) -> str:
     """
     Compute SHA-256 checksum for a provenance entry.
     
@@ -32,7 +32,7 @@ def compute_checksum(entry: ProvenanceEntry) -> str:
     to detect any tampering or corruption of provenance data.
     
     Args:
-        entry: ProvenanceEntry to compute checksum for
+        entry: ProvenanceEntry or dict to compute checksum for
         
     Returns:
         SHA-256 checksum as hexadecimal string
@@ -49,19 +49,29 @@ def compute_checksum(entry: ProvenanceEntry) -> str:
         'a3b2c1d4e5f6...'
     """
     # Concatenate critical fields for checksum
-    data = (
-        f"{entry.entity_id}"
-        f"{entry.entity_type}"
-        f"{entry.activity_id}"
-        f"{entry.source_document}"
-        f"{entry.timestamp}"
-        f"{entry.confidence}"
-    )
+    if isinstance(entry, dict):
+        data = (
+            f"{entry.get('entity_id', '')}"
+            f"{entry.get('entity_type', '')}"
+            f"{entry.get('activity_id', '')}"
+            f"{entry.get('source_document', '')}"
+            f"{entry.get('timestamp', '')}"
+            f"{entry.get('confidence', 1.0)}"
+        )
+    else:
+        data = (
+            f"{entry.entity_id}"
+            f"{entry.entity_type}"
+            f"{entry.activity_id}"
+            f"{entry.source_document}"
+            f"{entry.timestamp}"
+            f"{entry.confidence}"
+        )
     
     return hashlib.sha256(data.encode('utf-8')).hexdigest()
 
 
-def verify_checksum(entry: ProvenanceEntry, expected_checksum: Optional[str] = None) -> bool:
+def verify_checksum(entry: Any, expected_checksum: Optional[str] = None) -> bool:
     """
     Verify checksum for a provenance entry.
     
@@ -69,7 +79,7 @@ def verify_checksum(entry: ProvenanceEntry, expected_checksum: Optional[str] = N
     to detect tampering or corruption.
     
     Args:
-        entry: ProvenanceEntry to verify
+        entry: ProvenanceEntry or dict to verify
         expected_checksum: Expected checksum (uses entry.checksum if None)
         
     Returns:
@@ -83,7 +93,10 @@ def verify_checksum(entry: ProvenanceEntry, expected_checksum: Optional[str] = N
         True
     """
     if expected_checksum is None:
-        expected_checksum = entry.checksum
+        if isinstance(entry, dict):
+            expected_checksum = entry.get("checksum")
+        else:
+            expected_checksum = getattr(entry, "checksum", None)
     
     if expected_checksum is None:
         return False
