@@ -18,7 +18,7 @@ Find your goal below. The **Module** column is your import path; **Key class** i
 | Crawl a website | `ingest` | `WebIngestor` |
 | Load Parquet files or partitioned datasets | `ingest` | `ParquetIngestor` |
 | Ingest XML with schema validation | `ingest` | `XMLIngestor` |
-| Ingest from SQL, Snowflake, Kafka, or email | `ingest` | `DBIngestor`, `SnowflakeIngestor`, `StreamIngestor` |
+| Ingest from SQL, Snowflake, Databricks, Kafka, or email | `ingest` | `DBIngestor`, `SnowflakeIngestor`, `DatabricksIngestor`, `StreamIngestor` |
 | Extract clean text and tables from a document | `parse` | `DocumentParser` |
 | Parse complex PDFs with OCR or multi-column layout | `parse` | `DoclingParser` |
 | Chunk text for embedding or RAG | `split` | `TextSplitter` |

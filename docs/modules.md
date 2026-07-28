@@ -39,18 +39,26 @@ documents = ingestor.ingest_directory("data/")
 
 # Web crawl
 web_ingestor = WebIngestor()
-pages = web_ingestor.ingest_urls(["https://example.com"])
+page = web_ingestor.ingest_url("https://example.com")
 
 # Parquet: single file, partitioned directory, Hive-style (v0.5.0)
 parquet = ParquetIngestor()
 sources = parquet.ingest("data/events.parquet")
 
 # XML with XSD/DTD validation, namespace handling (v0.5.0)
-xml = XMLIngestor(validate_xsd="schema.xsd")
-sources = xml.ingest("data/records/")
+xml = XMLIngestor()
+sources = xml.ingest("data/records/", schema_path="schema.xsd")
+
+# Enterprise lakehouse/warehouse — Unity Catalog + Delta Lake, or a Snowflake warehouse
+databricks = DatabricksIngestor(host="...", token="...", http_path="...")
+customers   = databricks.ingest_table("customers")
 ```
 
-**Available ingestors:** `FileIngestor`, `WebIngestor`, `ParquetIngestor`, `XMLIngestor`, `RESTIngestor`, `PublicAPIIngestor`, `DBIngestor`, `DuckDBIngestor`, `ElasticIngestor`, `EmailIngestor`, `FeedIngestor`, `GDriveIngestor`, `HuggingFaceIngestor`, `MCPIngestor`, `MongoIngestor`, `OntologyIngestor`, `PandasIngestor`, `RepoIngestor`, `SnowflakeIngestor`, `StreamIngestor`
+**Available ingestors:** `FileIngestor`, `WebIngestor`, `ParquetIngestor`, `XMLIngestor`, `RESTIngestor`, `PublicAPIIngestor`, `DBIngestor`, `DatabricksIngestor`, `SnowflakeIngestor`, `EmailIngestor`, `FeedIngestor`, `MCPIngestor`, `OntologyIngestor`, `RepoIngestor`, `StreamIngestor`, `ArrowIngestor`, `CloudStorageIngestor`
+
+<Note>
+  `DuckDBIngestor`, `ElasticIngestor`, `GDriveIngestor`, `HuggingFaceIngestor`, `MongoIngestor`, and `PandasIngestor` also ship but aren't re-exported from the top-level `semantica.ingest` namespace yet — import them directly, e.g. `from semantica.ingest.duckdb_ingestor import DuckDBIngestor`.
+</Note>
 
 ### Parse
 

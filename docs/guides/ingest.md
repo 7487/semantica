@@ -50,6 +50,7 @@ Use the ingest module when your data lives outside Semantica and you need to bri
 - **Web content** — public documentation sites, regulatory publication pages, news feeds, or any URL you can crawl.
 - **REST APIs** — internal platforms (SIEM, EDR, ITSM, CRM), threat intelligence feeds, or any paginated HTTP endpoint.
 - **Databases** — existing SQL databases where relevant records can be fetched with a targeted query.
+- **Enterprise data platforms** — tables already living in a Databricks lakehouse (Unity Catalog + Delta Lake) or a Snowflake warehouse, without exporting to CSV first.
 - **Live streams** — Kafka or other message brokers where you need to process events as they arrive.
 - **Git repositories** — source code, documentation, or configuration files tracked in version control.
 
@@ -297,6 +298,87 @@ stix_xml_files = ingest_xml("./stix_xml_bundles/", method="directory")
 for bundle in stix_xml_files:
     print(f"{bundle.source_path}: {len(bundle.elements)} elements parsed")
 ```
+
+## Source 6 — Enterprise Data Platforms (Databricks & Snowflake)
+
+`DatabricksIngestor` and `SnowflakeIngestor` return the same shape as `DBIngestor` — a typed object (`DatabricksData` / `SnowflakeData`) whose `.data` field is `List[Dict]`, one dict per row. The same "transform to text, then store" pattern from Source 3 applies: pull only the tables and columns you need with a targeted query, then build a sentence per record before handing it to `AgentContext.store()`.
+
+```python
+from semantica.ingest import DatabricksIngestor
+
+# Unity Catalog + Delta Lake — PAT or OAuth M2M auth
+databricks = DatabricksIngestor(
+    host="https://adb-xxx.azuredatabricks.net",
+    token="dapi-xxxxxxxx",
+    http_path="/sql/1.0/warehouses/xxxxxxxx",
+    catalog="main",
+)
+
+# .data is List[Dict] — one dict per row, same shape as DBIngestor.execute_query()
+customers = databricks.ingest_query(
+    "SELECT customer_id, name, industry, arr FROM main.default.customers "
+    "WHERE churn_risk_score > 0.7"
+)
+customer_texts = [
+    f"Customer {r['customer_id']} ({r['name']}, {r['industry']}): "
+    f"ARR ${r['arr']:,}, flagged high churn risk"
+    for r in customers.data
+]
+
+# Unity Catalog lineage — build Table --DEPENDS_ON--> Table edges directly from
+# Unity Catalog's own lineage tracking, instead of re-deriving them from query logs
+lineage = databricks.get_table_lineage("customers", catalog="main", schema="default")
+lineage_texts = [
+    f"Table main.default.customers depends on {upstream}"
+    for upstream in lineage["upstream"]
+]
+```
+
+```python
+from semantica.ingest import SnowflakeIngestor
+
+snowflake = SnowflakeIngestor(
+    account="myaccount",
+    user="myuser",
+    password="mypassword",         # or private_key / token for key-pair / OAuth auth
+    warehouse="COMPUTE_WH",
+    database="ANALYTICS",
+    schema="PUBLIC",
+)
+
+# Snowflake uppercases unquoted identifiers, so unquoted columns come back
+# as ORDER_ID, PRODUCT, etc. unless the source table quotes them lowercase
+orders = snowflake.ingest_query(
+    "SELECT order_id, product, region, amount FROM orders "
+    "WHERE order_date >= DATEADD(day, -30, CURRENT_DATE())"
+)
+order_texts = [
+    f"Order {r['ORDER_ID']}: {r['PRODUCT']} in {r['REGION']}, ${r['AMOUNT']}"
+    for r in orders.data
+]
+```
+
+Feed the resulting text lists into `AgentContext.store()` exactly like any other structured source:
+
+```python
+from semantica.context import AgentContext, ContextGraph
+from semantica.vector_store import VectorStore
+
+graph   = ContextGraph(advanced_analytics=True)
+context = AgentContext(
+    vector_store    = VectorStore(backend="faiss"),
+    knowledge_graph = graph,
+)
+
+context.store(
+    customer_texts + lineage_texts + order_texts,
+    extract_entities=True,
+    extract_relationships=True,
+)
+print(f"Enterprise data graph: {graph.stats()['node_count']} nodes")
+```
+
+For authentication details (PAT vs. OAuth M2M for Databricks; password vs. key-pair vs. OAuth for Snowflake), schema/catalog introspection, and troubleshooting, see the dedicated [Databricks Integration](../integrations/databricks) and [Snowflake Integration](../integrations/snowflake) guides.
 
 ## Combining All Five Sources
 
@@ -831,3 +913,5 @@ print(f"Compliance graph: {graph.stats()['node_count']} nodes, "
 - [Context Graphs](context-graphs) — storing and querying the entities you ingest as a typed property graph
 - [Semantic Extraction](semantic-extraction) — NER, relation extraction, and triplet extraction from ingested text
 - [Provenance](provenance) — tracking the origin document, confidence score, and ingestion timestamp for every extracted entity
+- [Databricks Integration](../integrations/databricks) — Unity Catalog setup, PAT/OAuth M2M authentication, and lineage introspection
+- [Snowflake Integration](../integrations/snowflake) — warehouse setup and password/key-pair/OAuth authentication
