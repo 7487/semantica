@@ -24,7 +24,7 @@ Security vulnerabilities should be reported privately to prevent potential explo
 
 ### 2. Report Security Issue
 
-Create a [GitHub Security Advisory](https://github.com/semantica-agi/semantica/security/advisories/new) or contact us through [GitHub Issues](https://github.com/semantica-agi/semantica/issues) with "[SECURITY]" prefix.
+Create a [GitHub Security Advisory](https://github.com/semantica-agi/semantica/security/advisories/new) or contact us via the security email listed in `SUPPORT.md`.
 
 Include the following information:
 
@@ -37,7 +37,7 @@ Include the following information:
 
 ### 3. Response Timeline
 
-- **Initial Response**: Within 48 hours
+- **Initial Response**: Within 24 hours for critical issues; within 48 hours for non-critical issues
 - **Status Update**: Within 7 days
 - **Resolution**: Depends on severity and complexity
 
@@ -156,7 +156,7 @@ We appreciate responsible disclosure. Security researchers who help us improve t
 
 For security-related questions or concerns:
 
-- **GitHub Issues**: [Create an issue](https://github.com/semantica-agi/semantica/issues) with "[SECURITY]" prefix
+- **Private Reporting**: Please do not report vulnerabilities in public issues.
 - **GitHub Security Advisories**: [Report vulnerability](https://github.com/semantica-agi/semantica/security/advisories/new)
 
 ## Additional Resources
