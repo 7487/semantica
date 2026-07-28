@@ -29,6 +29,7 @@ icon: "database"
 | `SnowflakeIngestor` | Snowflake data warehouse queries and table exports |
 | `DatabricksIngestor` | Databricks Unity Catalog metadata, Delta table queries, and lineage |
 | `ParquetIngestor` | Apache Parquet files and partitioned datasets with column selection |
+| `ArrowIngestor` | Apache Arrow IPC and Feather file processing |
 | `XMLIngestor` | XXE-safe XML parsing with optional XSD schema validation |
 | `EmailIngestor` | IMAP/POP3 email ingestion with attachment extraction |
 | `OntologyIngestor` | OWL/RDF/Turtle ontology file ingestion |

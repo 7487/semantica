@@ -382,16 +382,18 @@ table_lineage = databricks.get_table_lineage("customers", catalog="main", schema
 snowflake = SnowflakeIngestor(
     account="myaccount",
     user="myuser",
-    password="mypassword",              # or private_key / token for key-pair / OAuth auth
+    password="mypassword",              # or private_key=... for key-pair; use authenticator="oauth", token=... for OAuth
     warehouse="COMPUTE_WH",
     database="MYDB",
 )
 orders = snowflake.ingest_table("ORDERS", limit=10_000)
 ```
 
+> **Security Note:** Never hardcode credentials (`token`, `password`, `private_key`) in production code; pass them via environment variables (e.g., `DATABRICKS_TOKEN`, `SNOWFLAKE_PASSWORD`) or a secrets manager.
+
 **Supported sources:** Local files (PDF, DOCX, PPTX, HTML, TXT, CSV, JSON, YAML, Excel, XML) · Web pages · RSS/Atom feeds · REST APIs · Databases (PostgreSQL, MySQL, SQLite, Oracle, SQL Server) · Parquet datasets · Databricks (Unity Catalog + Delta Lake) · Snowflake · Git repositories · Email (IMAP/POP3) · Message streams (Kafka, RabbitMQ, Kinesis, Pulsar) · MCP resources · Apache Arrow/Feather/IPC (`ArrowIngestor`)
 
-Elasticsearch and Google Drive ingestion also ship (`ElasticIngestor`, `GDriveIngestor`) but aren't re-exported from the top-level `semantica.ingest` namespace yet — import them directly: `from semantica.ingest.elastic_ingestor import ElasticIngestor`.
+DuckDB, Elasticsearch, Google Drive, HuggingFace, MongoDB, and Pandas ingestion also ship (`DuckDBIngestor`, `ElasticIngestor`, `GDriveIngestor`, `HuggingFaceIngestor`, `MongoIngestor`, `PandasIngestor`) but aren't re-exported from the top-level `semantica.ingest` namespace yet — import them directly: `from semantica.ingest.duckdb_ingestor import DuckDBIngestor`.
 
 </details>
 

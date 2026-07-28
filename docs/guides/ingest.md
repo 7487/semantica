@@ -340,7 +340,7 @@ from semantica.ingest import SnowflakeIngestor
 snowflake = SnowflakeIngestor(
     account="myaccount",
     user="myuser",
-    password="mypassword",         # or private_key / token for key-pair / OAuth auth
+    password="mypassword",         # or private_key=... for key-pair; use authenticator="oauth", token=... for OAuth
     warehouse="COMPUTE_WH",
     database="ANALYTICS",
     schema="PUBLIC",
@@ -379,6 +379,8 @@ print(f"Enterprise data graph: {graph.stats()['node_count']} nodes")
 ```
 
 For authentication details (PAT vs. OAuth M2M for Databricks; password vs. key-pair vs. OAuth for Snowflake), schema/catalog introspection, and troubleshooting, see the dedicated [Databricks Integration](../integrations/databricks) and [Snowflake Integration](../integrations/snowflake) guides.
+
+> **Security Note:** Never hardcode credentials (`token`, `password`, `private_key`) in production code; pass them via environment variables (e.g., `DATABRICKS_TOKEN`, `SNOWFLAKE_PASSWORD`) or a secrets manager.
 
 ## Combining All Five Sources
 
