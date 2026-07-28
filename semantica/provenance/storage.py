@@ -79,9 +79,14 @@ class ProvenanceStorage(ABC):
         """
         Trace complete lineage for an entity.
         
+        Note:
+            Custom storage backends implementing only trace_lineage(self, entity_id)
+            remain backward compatible; ProvenanceManager automatically preserves
+            one-argument invocations when max_depth is omitted or unsupported.
+        
         Args:
             entity_id: Entity identifier
-            max_depth: Optional maximum BFS depth
+            max_depth: Optional maximum BFS depth (default: None)
             
         Returns:
             List of ProvenanceEntry objects in lineage chain
@@ -308,24 +313,37 @@ class SQLiteStorage(ProvenanceStorage):
             except Exception:
                 pass
 
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+        except sqlite3.OperationalError as e:
+            self.logger.warning(f"busy_timeout PRAGMA not supported ({e})")
+
+        try:
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.OperationalError as e:
+            self.logger.warning(f"synchronous PRAGMA not supported ({e})")
 
     @contextmanager
     def transaction(self):
         """
         Context manager providing an active SQLite connection within a transaction.
         
+        Starts an IMMEDIATE write transaction (BEGIN IMMEDIATE) so read-modify-write
+        sequences are serialized across concurrent connections.
         Commits on normal exit, rolls back on exception, and always closes the connection.
         Configures PRAGMAs (WAL, busy_timeout=5000, synchronous=NORMAL).
         """
         conn = sqlite3.connect(self.db_path)
-        self._configure_connection(conn)
         try:
+            self._configure_connection(conn)
+            conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
         except Exception:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             raise
         finally:
             conn.close()
@@ -333,51 +351,53 @@ class SQLiteStorage(ProvenanceStorage):
     def _init_db(self) -> None:
         """Create tables with W3C PROV-O compliant schema."""
         conn = sqlite3.connect(self.db_path)
-        self._configure_connection(conn)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS provenance (
-                entity_id TEXT PRIMARY KEY,
-                entity_type TEXT NOT NULL,
-                activity_id TEXT NOT NULL,
-                agent_id TEXT DEFAULT 'semantica',
-                source_document TEXT,
-                source_location TEXT,
-                source_quote TEXT,
-                timestamp TEXT NOT NULL,
-                first_seen TEXT,
-                last_updated TEXT,
-                confidence REAL DEFAULT 1.0,
-                checksum TEXT,
-                parent_entity_id TEXT,
-                used_entities TEXT,
-                start_index INTEGER,
-                end_index INTEGER,
-                credibility REAL,
-                metadata TEXT,
-                version TEXT DEFAULT '1.0'
-            )
-        """)
-        
-        # Create indexes for efficient querying
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_entity_type 
-            ON provenance(entity_type)
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_source_document 
-            ON provenance(source_document)
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_parent_entity 
-            ON provenance(parent_entity_id)
-        """)
-        
-        conn.commit()
-        conn.close()
+        try:
+            self._configure_connection(conn)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS provenance (
+                    entity_id TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    activity_id TEXT NOT NULL,
+                    agent_id TEXT DEFAULT 'semantica',
+                    source_document TEXT,
+                    source_location TEXT,
+                    source_quote TEXT,
+                    timestamp TEXT NOT NULL,
+                    first_seen TEXT,
+                    last_updated TEXT,
+                    confidence REAL DEFAULT 1.0,
+                    checksum TEXT,
+                    parent_entity_id TEXT,
+                    used_entities TEXT,
+                    start_index INTEGER,
+                    end_index INTEGER,
+                    credibility REAL,
+                    metadata TEXT,
+                    version TEXT DEFAULT '1.0'
+                )
+            """)
+            
+            # Create indexes for efficient querying
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_entity_type 
+                ON provenance(entity_type)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_source_document 
+                ON provenance(source_document)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_parent_entity 
+                ON provenance(parent_entity_id)
+            """)
+            
+            conn.commit()
+        finally:
+            conn.close()
     
     def store(self, entry: ProvenanceEntry) -> None:
         """
@@ -455,10 +475,9 @@ class SQLiteStorage(ProvenanceStorage):
             List of ProvenanceEntry objects
         """
         conn = sqlite3.connect(self.db_path)
-        self._configure_connection(conn)
-        cursor = conn.cursor()
-        
         try:
+            self._configure_connection(conn)
+            cursor = conn.cursor()
             if entity_type:
                 cursor.execute("""
                     SELECT * FROM provenance WHERE entity_type = ?
@@ -540,10 +559,9 @@ class SQLiteStorage(ProvenanceStorage):
             Number of entries cleared
         """
         conn = sqlite3.connect(self.db_path)
-        self._configure_connection(conn)
-        cursor = conn.cursor()
-        
         try:
+            self._configure_connection(conn)
+            cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM provenance")
             count = cursor.fetchone()[0]
             

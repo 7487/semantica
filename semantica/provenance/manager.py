@@ -29,6 +29,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from contextlib import contextmanager
 import copy
+import inspect
 import json
 import threading
 
@@ -182,8 +183,9 @@ class ProvenanceManager:
         
         # Atomic tracking transaction (#807):
         # We scope one connection to the full duration of track_entity so all
-        # retrieve and store operations share a single transaction. If any
-        # step raises, the whole operation rolls back.
+        # retrieve and store operations share a single transaction. With BEGIN IMMEDIATE,
+        # concurrent calls serialize during retrieval so no intervening versions are lost.
+        # If any step raises, the whole operation rolls back.
         entry = None
         try:
             with self._get_or_create_transaction(_conn) as conn:
@@ -208,13 +210,15 @@ class ProvenanceManager:
                 archived_history_id = None
                 if existing:
                     history_entry = copy.deepcopy(existing)
-                    history_id = f"{entity_id}:v:{existing.last_updated}"
-                    
-                    if self.storage._retrieve_with_conn(conn, history_id):
-                        history_id = f"{history_id}:{datetime.utcnow().microsecond}"
-                    
+                    base_history_id = f"{entity_id}:v:{existing.last_updated}"
+                    history_id = base_history_id
+                    counter = 1
+                    while self.storage._retrieve_with_conn(conn, history_id):
+                        history_id = f"{base_history_id}:{counter}"
+                        counter += 1
+
                     history_entry.entity_id = history_id
-                    
+
                     self.storage._store_with_conn(conn, history_entry)
                     archived_history_id = history_id
                     if not explicit_parent_supplied:
@@ -464,6 +468,7 @@ class ProvenanceManager:
         
         for i in range(0, len(entities), batch_size):
             batch = entities[i : i + batch_size]
+            batch_count = 0
             try:
                 with self.storage.transaction() as conn:
                     for entity in batch:
@@ -475,9 +480,12 @@ class ProvenanceManager:
                         
                         try:
                             self.track_entity(entity_id, source, entity_metadata, _conn=conn)
-                            tracked_count += 1
+                            batch_count += 1
                         except Exception:
                             pass  # Continue with other entities in this batch
+                # Add batch_count to tracked_count only after the transaction context
+                # exits successfully and commits (#807).
+                tracked_count += batch_count
             except Exception:
                 pass  # Partial failure: if block-level storage transaction fails, continue to next block
         
@@ -507,6 +515,7 @@ class ProvenanceManager:
         
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i : i + batch_size]
+            batch_count = 0
             try:
                 with self.storage.transaction() as conn:
                     for chunk in batch:
@@ -525,9 +534,12 @@ class ProvenanceManager:
                                 _conn=conn,
                                 **{**metadata, **chunk.get("metadata", {})}
                             )
-                            tracked_count += 1
+                            batch_count += 1
                         except Exception:
                             pass
+                # Add batch_count to tracked_count only after the transaction context
+                # exits successfully and commits (#807).
+                tracked_count += batch_count
             except Exception:
                 pass
         
@@ -612,7 +624,18 @@ class ProvenanceManager:
         Returns:
             List of ProvenanceEntry objects
         """
-        return self.storage.trace_lineage(entity_id, max_depth=max_depth)
+        if max_depth is None:
+            return self.storage.trace_lineage(entity_id)
+        try:
+            sig = inspect.signature(self.storage.trace_lineage)
+            supports_max_depth = "max_depth" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+        except (ValueError, TypeError):
+            supports_max_depth = True
+        if supports_max_depth:
+            return self.storage.trace_lineage(entity_id, max_depth=max_depth)
+        return self.storage.trace_lineage(entity_id)
     
     def get_all_sources(self, entity_id: str) -> List[Dict[str, Any]]:
         """
