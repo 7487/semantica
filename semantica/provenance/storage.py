@@ -347,7 +347,27 @@ class SQLiteStorage(ProvenanceStorage):
             raise
         finally:
             conn.close()
-    
+
+    @contextmanager
+    def _read_connection(self):
+        """
+        Context manager providing a configured SQLite connection for read-only
+        operations, without taking SQLite's writer lock.
+
+        `transaction()` uses BEGIN IMMEDIATE, which acquires the single RESERVED
+        (writer) lock so read-modify-write sequences serialize correctly. That
+        lock is unnecessary for plain reads (retrieve, trace_lineage) and, if
+        used there, would serialize every read behind every other read/write —
+        defeating WAL's readers-don't-block-writers concurrency. Reads use a
+        connection with no explicit BEGIN instead.
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            self._configure_connection(conn)
+            yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
         """Create tables with W3C PROV-O compliant schema."""
         conn = sqlite3.connect(self.db_path)
@@ -448,7 +468,7 @@ class SQLiteStorage(ProvenanceStorage):
         Returns:
             ProvenanceEntry if found, None otherwise
         """
-        with self.transaction() as conn:
+        with self._read_connection() as conn:
             return self._retrieve_with_conn(conn, entity_id)
 
     def _retrieve_with_conn(self, conn: sqlite3.Connection, entity_id: str) -> Optional[ProvenanceEntry]:
@@ -510,7 +530,7 @@ class SQLiteStorage(ProvenanceStorage):
         frontier = [entity_id]
         depth = 0
         
-        with self.transaction() as conn:
+        with self._read_connection() as conn:
             cursor = conn.cursor()
             while frontier and (max_depth is None or depth < max_depth):
                 # Remove duplicates while preserving order, and filter out already visited IDs

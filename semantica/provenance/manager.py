@@ -246,6 +246,11 @@ class ProvenanceManager:
                 
                 self.storage._store_with_conn(conn, entry)
         except Exception:
+            # When called from a batch's shared transaction (_conn is not None),
+            # propagate so the caller's per-item try/except can skip counting
+            # this item instead of reporting an unpersisted entry as tracked (#807).
+            if _conn is not None:
+                raise
             if entry is None:
                 entry = ProvenanceEntry(
                     entity_id=entity_id,
@@ -262,7 +267,7 @@ class ProvenanceManager:
                     used_entities=list(kwargs.get("used_entities", [])),
                 )
                 entry.checksum = compute_checksum(entry)
-        
+
         return entry
     
     def track_relationship(
@@ -370,8 +375,12 @@ class ProvenanceManager:
             else:
                 self.storage.store(entry)
         except Exception:
-            pass
-        
+            # Propagate when called from a batch's shared transaction so the
+            # caller's per-item try/except can skip counting this item instead
+            # of reporting an unpersisted entry as tracked (#807).
+            if _conn is not None:
+                raise
+
         return entry
     
     # === Source Tracking (from conflicts.SourceTracker) ===

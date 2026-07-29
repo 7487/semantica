@@ -324,7 +324,7 @@ manager = ProvenanceManager(storage_path="provenance.db")
 
 `SQLiteStorage` creates the database and indexes automatically on first use.
 
-- **Atomicity & Concurrency**: Configures Write-Ahead Logging (`PRAGMA journal_mode=WAL`), `PRAGMA busy_timeout=5000`, and `PRAGMA synchronous=NORMAL`. Each public method call opens a single connection and executes inside an immediate write transaction (`BEGIN IMMEDIATE`), ensuring read-modify-write sequences are serialized across concurrent connections without leaving open file handles across calls.
+- **Atomicity & Concurrency**: Configures Write-Ahead Logging (`PRAGMA journal_mode=WAL`), `PRAGMA busy_timeout=5000`, and `PRAGMA synchronous=NORMAL`. Read-modify-write methods (`track_entity()`, `store()`) open a single connection and execute inside an immediate write transaction (`BEGIN IMMEDIATE`), ensuring these sequences are serialized across concurrent connections without leaving open file handles across calls. Plain reads (`retrieve()`, `trace_lineage()`) use a separate connection with no explicit write lock, so concurrent reads don't serialize behind writers or each other.
 - **Backward Compatibility**: Custom storage subclasses overriding `trace_lineage(self, entity_id)` remain backward compatible; `ProvenanceManager` inspects the override signature and automatically calls it with one argument if `max_depth` is unsupported.
 
 ## Tamper-Evident Checksums

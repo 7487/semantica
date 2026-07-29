@@ -203,3 +203,87 @@ def test_sqlite_storage_cleanup_guard_on_configure_error(tmp_path):
     assert os.path.exists(db_path)
     os.unlink(db_path)
     assert not os.path.exists(db_path)
+
+
+def test_batch_does_not_count_individually_failed_items(tmp_path):
+    """Test that a single item's storage failure inside an otherwise-successful
+    shared batch transaction is not counted in tracked_count, even though the
+    rest of the block commits (#807 follow-up)."""
+    db_path = str(tmp_path / "test_batch_partial_failure.db")
+    mgr = ProvenanceManager(storage_path=db_path)
+
+    entities = [{"id": f"ent_{i}", "metadata": {"index": i}} for i in range(5)]
+    # A set() is not JSON-serializable, so json.dumps(entry.metadata) raises
+    # inside _store_with_conn for this one item, without aborting the shared
+    # transaction the other items are committed under.
+    entities[2]["metadata"] = {"bad": {1, 2, 3}}
+
+    count = mgr.track_entities_batch(entities, source="doc_1")
+    stored = mgr.storage.retrieve_all()
+
+    assert count == len(stored) == 4
+    assert "ent_2" not in [e.entity_id for e in stored]
+
+
+def test_chunks_batch_does_not_count_individually_failed_items(tmp_path):
+    """Same as above for track_chunks_batch/track_chunk (#807 follow-up)."""
+    db_path = str(tmp_path / "test_chunks_batch_partial_failure.db")
+    mgr = ProvenanceManager(storage_path=db_path)
+
+    chunks = [
+        {"id": f"chk_{i}", "start_index": 0, "end_index": 10}
+        for i in range(5)
+    ]
+    chunks[2]["metadata"] = {"bad": {1, 2, 3}}
+
+    count = mgr.track_chunks_batch(chunks, source_document="doc_1")
+    stored = mgr.storage.retrieve_all()
+
+    assert count == len(stored) == 4
+    assert "chk_2" not in [e.entity_id for e in stored]
+
+
+def test_track_entity_standalone_call_still_degrades_gracefully(tmp_path):
+    """Test that a direct (non-batch) track_entity() call still returns an
+    entry on storage failure instead of raising, preserving the public API's
+    existing graceful-degradation contract."""
+    db_path = str(tmp_path / "test_standalone_degrade.db")
+    mgr = ProvenanceManager(storage_path=db_path)
+
+    entry = mgr.track_entity("entity_1", source="doc_1", metadata={"bad": {1, 2, 3}})
+
+    assert entry.entity_id == "entity_1"
+    assert mgr.storage.retrieve("entity_1") is None
+
+
+def test_retrieve_and_trace_lineage_do_not_block_on_writer_lock(tmp_path):
+    """Test that retrieve() and trace_lineage() no longer take BEGIN IMMEDIATE,
+    so they don't serialize behind a connection holding the writer lock
+    (#807 follow-up: this used to hang until busy_timeout elapsed)."""
+    import sqlite3
+    import threading
+
+    db_path = str(tmp_path / "test_read_concurrency.db")
+    storage = SQLiteStorage(db_path)
+    storage.store(ProvenanceEntry(entity_id="entity_1", entity_type="entity", activity_id="test"))
+
+    writer = sqlite3.connect(db_path)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("BEGIN IMMEDIATE")
+    try:
+        result = {}
+
+        def do_read():
+            result["entry"] = storage.retrieve("entity_1")
+            result["lineage"] = storage.trace_lineage("entity_1")
+
+        t = threading.Thread(target=do_read)
+        t.start()
+        t.join(timeout=2)
+
+        assert not t.is_alive(), "retrieve()/trace_lineage() blocked behind the writer lock"
+        assert result["entry"].entity_id == "entity_1"
+        assert len(result["lineage"]) == 1
+    finally:
+        writer.rollback()
+        writer.close()
