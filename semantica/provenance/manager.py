@@ -136,6 +136,30 @@ class ProvenanceManager:
             self.storage = SQLiteStorage(storage_path)
         else:
             self.storage = InMemoryStorage()
+
+    def _save_entry(
+        self,
+        entry: ProvenanceEntry,
+        _conn: Optional[Any] = None,
+        _raise_on_error: bool = False,
+    ) -> ProvenanceEntry:
+        """Compute checksum, store entry persistently, and gracefully ignore storage errors."""
+        entry.checksum = compute_checksum(entry)
+
+        try:
+            if _conn is not None:
+                self.storage._store_with_conn(_conn, entry)
+            else:
+                self.storage.store(entry)
+        except Exception:
+            # Propagate when called from a batch's shared transaction so the
+            # caller's per-item try/except can skip counting this item instead
+            # of reporting an unpersisted entry as tracked (#807).
+            if _raise_on_error:
+                raise
+            pass  # Graceful failure - don't break main functionality
+
+        return entry
     
     @contextmanager
     def _get_or_create_transaction(self, _conn=None):
@@ -242,9 +266,7 @@ class ProvenanceManager:
                 if archived_history_id and explicit_parent_supplied:
                     entry.used_entities.append(archived_history_id)
                 
-                entry.checksum = compute_checksum(entry)
-                
-                self.storage._store_with_conn(conn, entry)
+                self._save_entry(entry, _conn=conn, _raise_on_error=(_conn is not None))
         except Exception:
             # When called from a batch's shared transaction (_conn is not None),
             # propagate so the caller's per-item try/except can skip counting
@@ -308,14 +330,7 @@ class ProvenanceManager:
             last_updated=datetime.utcnow().isoformat()
         )
         
-        entry.checksum = compute_checksum(entry)
-        
-        try:
-            self.storage.store(entry)
-        except Exception:
-            pass
-        
-        return entry
+        return self._save_entry(entry)
     
     # === Chunk Tracking (from split.ProvenanceTracker) ===
     
@@ -367,21 +382,7 @@ class ProvenanceManager:
             timestamp=datetime.utcnow().isoformat()
         )
         
-        entry.checksum = compute_checksum(entry)
-        
-        try:
-            if _conn is not None:
-                self.storage._store_with_conn(_conn, entry)
-            else:
-                self.storage.store(entry)
-        except Exception:
-            # Propagate when called from a batch's shared transaction so the
-            # caller's per-item try/except can skip counting this item instead
-            # of reporting an unpersisted entry as tracked (#807).
-            if _conn is not None:
-                raise
-
-        return entry
+        return self._save_entry(entry, _conn=_conn, _raise_on_error=(_conn is not None))
     
     # === Source Tracking (from conflicts.SourceTracker) ===
     
@@ -437,14 +438,7 @@ class ProvenanceManager:
             timestamp=datetime.utcnow().isoformat()
         )
         
-        entry.checksum = compute_checksum(entry)
-        
-        try:
-            self.storage.store(entry)
-        except Exception:
-            pass
-        
-        return entry
+        return self._save_entry(entry)
     
     # === Batch Operations ===
     
