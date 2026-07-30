@@ -278,8 +278,12 @@ class ProvenanceManager:
             if _conn is not None:
                 raise
             self.logger.error(
-                f"Failed to track entity '{entity_id}' (transaction rolled back): {e}. "
-                f"Returning pre-failure state ({'existing entry' if existing else 'None (no prior entry existed)'})."
+                "Failed to track entity '%s' (transaction rolled back): %s. "
+                "Returning pre-failure state (%s).",
+                entity_id,
+                e,
+                "existing entry" if existing else "None (no prior entry existed)",
+                exc_info=True,
             )
             if existing is not None:
                 return copy.deepcopy(existing)
@@ -477,7 +481,8 @@ class ProvenanceManager:
                         entity_metadata = {**metadata, **entity.get("metadata", {})}
                         
                         try:
-                            self.track_entity(entity_id, source, entity_metadata, _conn=conn)
+                            with self.storage.savepoint(conn):
+                                self.track_entity(entity_id, source, entity_metadata, _conn=conn)
                             batch_count += 1
                         except Exception:
                             pass  # Continue with other entities in this batch
@@ -522,16 +527,17 @@ class ProvenanceManager:
                             continue
                         
                         try:
-                            self.track_chunk(
-                                chunk_id=chunk_id,
-                                source_document=source_document,
-                                source_path=source_path,
-                                start_index=chunk.get("start_index", 0),
-                                end_index=chunk.get("end_index", 0),
-                                parent_chunk_id=chunk.get("parent_chunk_id"),
-                                _conn=conn,
-                                **{**metadata, **chunk.get("metadata", {})}
-                            )
+                            with self.storage.savepoint(conn):
+                                self.track_chunk(
+                                    chunk_id=chunk_id,
+                                    source_document=source_document,
+                                    source_path=source_path,
+                                    start_index=chunk.get("start_index", 0),
+                                    end_index=chunk.get("end_index", 0),
+                                    parent_chunk_id=chunk.get("parent_chunk_id"),
+                                    _conn=conn,
+                                    **{**metadata, **chunk.get("metadata", {})}
+                                )
                             batch_count += 1
                         except Exception:
                             pass

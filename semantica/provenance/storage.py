@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 import sqlite3
 import json
+import uuid
 import threading
 from collections import deque
 from contextlib import contextmanager
@@ -108,6 +109,11 @@ class ProvenanceStorage(ABC):
     def transaction(self):
         """Default transaction context manager for storage backends."""
         yield None
+
+    @contextmanager
+    def savepoint(self, conn: Any = None):
+        """Default savepoint context manager for nested transactions / per-item isolation."""
+        yield conn
 
     def _store_with_conn(self, conn: Any, entry: ProvenanceEntry) -> None:
         """Internal store method using an active connection/transaction."""
@@ -258,6 +264,12 @@ class InMemoryStorage(ProvenanceStorage):
                 stack.pop()
             raise
 
+    @contextmanager
+    def savepoint(self, conn: Any = None):
+        """In-memory savepoint context manager with staging buffer rollback."""
+        with self.transaction() as tx:
+            yield tx
+
     def _store_with_conn(self, conn: Any, entry: ProvenanceEntry) -> None:
         """Internal store method using an active connection/transaction."""
         stack = self._get_pending_stack()
@@ -375,6 +387,32 @@ class SQLiteStorage(ProvenanceStorage):
             raise
         finally:
             conn.close()
+
+    @contextmanager
+    def savepoint(self, conn: Any = None):
+        """
+        Context manager providing a SAVEPOINT for per-item rollback isolation
+        within an existing transaction.
+        
+        If no connection is provided, falls back to a full transaction.
+        """
+        if conn is None:
+            with self.transaction() as tx:
+                yield tx
+            return
+
+        sp_name = f"sp_{uuid.uuid4().hex}"
+        conn.execute(f"SAVEPOINT {sp_name}")
+        try:
+            yield conn
+            conn.execute(f"RELEASE {sp_name}")
+        except Exception:
+            try:
+                conn.execute(f"ROLLBACK TO {sp_name}")
+                conn.execute(f"RELEASE {sp_name}")
+            except Exception:
+                pass
+            raise
 
     @contextmanager
     def _read_connection(self):

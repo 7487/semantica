@@ -805,4 +805,72 @@ class TestProvenanceManager:
         assert in_storage.metadata == {"key": "val"}
         assert "tampered" not in in_storage.metadata
 
+    @pytest.mark.parametrize("backend_type", ["memory", "sqlite"])
+    def test_track_entities_batch_per_item_savepoint_rollback(self, backend_type, tmp_path):
+        """Test that in batch mode, an exception during primary write rolls back any staged history archive for that item."""
+        if backend_type == "memory":
+            class FlakyInMemory(InMemoryStorage):
+                def __init__(self):
+                    super().__init__()
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakyInMemory()
+        else:
+            db_path = str(tmp_path / "test_batch_sp.db")
+            class FlakySQLite(SQLiteStorage):
+                def __init__(self, path):
+                    super().__init__(path)
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakySQLite(db_path)
+
+        mgr = ProvenanceManager(storage=storage)
+        v1 = mgr.track_entity("e1", source="doc1")
+        assert v1.source_document == "doc1"
+
+        # Fail on call 3 (the primary update for e1, after its history entry was stored on call 2)
+        storage.fail_on_call = 3
+        count = mgr.track_entities_batch(
+            [{"id": "e1"}, {"id": "e2"}],
+            source="doc_batch"
+        )
+
+        assert count == 1  # Only e2 should succeed
+        all_entries = {e.entity_id: e for e in storage.retrieve_all()}
+
+        # Assert e2 is present
+        assert "e2" in all_entries
+        assert all_entries["e2"].source_document == "doc_batch"
+
+        # Assert e1 is untouched and NO history archive was left behind
+        assert all_entries["e1"].source_document == "doc1"
+        assert not any(":v:" in eid for eid in all_entries.keys()), f"Found leaked history entry: {list(all_entries.keys())}"
+
+    def test_track_entity_logs_exception_with_exc_info(self):
+        """Test that track_entity logs errors with exc_info=True when a storage write fails."""
+        class FlakyInMemory(InMemoryStorage):
+            def _store_with_conn(self, conn, entry):
+                raise RuntimeError("Simulated write failure")
+        storage = FlakyInMemory()
+        mgr = ProvenanceManager(storage=storage)
+
+        with patch.object(mgr.logger, "error") as mock_error:
+            res = mgr.track_entity("e1", source="doc1")
+            assert res is None
+            assert mock_error.called
+            _, kwargs = mock_error.call_args
+            assert kwargs.get("exc_info") is True
+
+
+
 
