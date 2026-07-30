@@ -136,6 +136,58 @@ class TestMCPDecisionsCausalChain(unittest.TestCase):
             {"chain": ["dec_down_1", "dec_down_2"], "count": 2, "direction": "downstream"},
         )
 
+    @patch("mcp.tools.decisions.get_graph")
+    @patch("semantica.context.causal_analyzer.CausalChainAnalyzer")
+    def test_fallback_depth_kwarg_signature(self, mock_analyzer_cls, mock_get_graph):
+        """Verify fallback works for backends accepting 'depth' kwarg (like OpenClaw)."""
+        mock_analyzer_cls.side_effect = ImportError("mocked import error")
+
+        class OpenClawGraphMock:
+            def __init__(self):
+                self.calls = []
+
+            def get_causal_chain(self, node_id, depth=3):
+                self.calls.append((node_id, depth))
+                return ["openclaw_a", "openclaw_b"]
+
+        graph_mock = OpenClawGraphMock()
+        mock_get_graph.return_value = graph_mock
+
+        response = handle_get_causal_chain(
+            {"decision_id": "dec_606", "direction": "upstream", "max_depth": 4}
+        )
+        self.assertEqual(graph_mock.calls, [("dec_606", 4)])
+        self.assertNotIn("error", response)
+        self.assertEqual(
+            response,
+            {"chain": ["openclaw_a", "openclaw_b"], "count": 2, "direction": "upstream"},
+        )
+
+    @patch("mcp.tools.decisions.get_graph")
+    @patch("semantica.context.causal_analyzer.CausalChainAnalyzer")
+    def test_fallback_positional_only_signature(self, mock_analyzer_cls, mock_get_graph):
+        """Verify fallback works for backends accepting only positional decision_id."""
+        mock_analyzer_cls.side_effect = AttributeError("mocked attr error")
+
+        class PositionalOnlyGraphMock:
+            def __init__(self):
+                self.calls = []
+
+            def get_causal_chain(self, node_id):
+                self.calls.append(node_id)
+                return ["pos_node"]
+
+        graph_mock = PositionalOnlyGraphMock()
+        mock_get_graph.return_value = graph_mock
+
+        response = handle_get_causal_chain({"decision_id": "dec_707"})
+        self.assertEqual(graph_mock.calls, ["dec_707"])
+        self.assertNotIn("error", response)
+        self.assertEqual(
+            response,
+            {"chain": ["pos_node"], "count": 1, "direction": "downstream"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

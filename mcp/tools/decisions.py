@@ -106,11 +106,20 @@ def handle_get_causal_chain(args: dict) -> dict:
             )
         except (ImportError, AttributeError):
             if hasattr(graph, "get_causal_chain"):
-                chain = graph.get_causal_chain(
-                    decision_id,
-                    direction=direction,
-                    max_depth=max_depth,
-                )
+                try:
+                    chain = graph.get_causal_chain(
+                        decision_id,
+                        direction=direction,
+                        max_depth=max_depth,
+                    )
+                except TypeError:
+                    try:
+                        chain = graph.get_causal_chain(
+                            decision_id,
+                            depth=max_depth,
+                        )
+                    except TypeError:
+                        chain = graph.get_causal_chain(decision_id)
             else:
                 return {
                     "error": "Causal chain analysis is not supported on this graph backend",
