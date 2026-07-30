@@ -188,6 +188,50 @@ class TestMCPDecisionsCausalChain(unittest.TestCase):
             {"chain": ["pos_node"], "count": 1, "direction": "downstream"},
         )
 
+    @patch("mcp.tools.decisions.get_graph")
+    @patch("semantica.context.causal_analyzer.CausalChainAnalyzer")
+    def test_input_hardening_and_dos_prevention(
+        self, mock_analyzer_cls, mock_get_graph
+    ):
+        """Verify non-dict args, non-string IDs, and max_depth bounds clamping."""
+        self.assertEqual(
+            handle_get_causal_chain(None),
+            {"error": "args must be a dictionary", "chain": []},
+        )
+        mock_analyzer_instance = MagicMock()
+        mock_analyzer_instance.get_causal_chain.return_value = ["n1"]
+        mock_analyzer_cls.return_value = mock_analyzer_instance
+        mock_get_graph.return_value = MagicMock()
+
+        # Test integer decision_id and huge max_depth clamping (1000 -> 100)
+        resp = handle_get_causal_chain(
+            {"decision_id": 12345, "max_depth": 1000}
+        )
+        self.assertEqual(resp["chain"], ["n1"])
+        mock_analyzer_instance.get_causal_chain.assert_called_once_with(
+            "12345", direction="downstream", max_depth=100
+        )
+
+    @patch("mcp.tools.decisions.get_graph")
+    @patch("semantica.context.causal_analyzer.CausalChainAnalyzer")
+    def test_internal_typeerror_not_masked(self, mock_analyzer_cls, mock_get_graph):
+        """Verify internal TypeError inside get_causal_chain is not masked as signature error."""
+        mock_analyzer_cls.side_effect = ImportError("mocked import error")
+
+        class BadInternalGraphMock:
+            def get_causal_chain(self, node_id, direction="downstream", max_depth=5):
+                raise TypeError("unsupported operand type(s) for +: 'int' and 'str'")
+
+        mock_get_graph.return_value = BadInternalGraphMock()
+        response = handle_get_causal_chain({"decision_id": "dec_err"})
+        self.assertEqual(
+            response,
+            {
+                "error": "unsupported operand type(s) for +: 'int' and 'str'",
+                "chain": [],
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
