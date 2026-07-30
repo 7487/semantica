@@ -36,6 +36,7 @@ import threading
 from .schemas import ProvenanceEntry, SourceReference
 from .storage import ProvenanceStorage, InMemoryStorage, SQLiteStorage
 from .integrity import compute_checksum, verify_checksum
+from ..utils.logging import get_logger
 
 
 @contextmanager
@@ -112,6 +113,7 @@ class ProvenanceManager:
             storage_path: Path to SQLite database (optional, uses in-memory if None)
             config: Configuration dictionary or mapping (optional)
         """
+        self.logger = get_logger("provenance_manager")
         if storage:
             self.storage = storage
             return
@@ -179,7 +181,7 @@ class ProvenanceManager:
         metadata: Optional[Dict[str, Any]] = None,
         _conn: Optional[Any] = None,
         **kwargs
-    ) -> ProvenanceEntry:
+    ) -> Optional[ProvenanceEntry]:
         """
         Track entity provenance (kg.ProvenanceTracker compatible).
         
@@ -190,7 +192,8 @@ class ProvenanceManager:
             **kwargs: Additional fields (confidence, source_location, etc.)
             
         Returns:
-            ProvenanceEntry object
+            Optional[ProvenanceEntry]: ProvenanceEntry on success, deepcopy of existing
+            entry if update fails, or None if brand-new entity storage fails
             
         Example:
             >>> prov_mgr.track_entity(
@@ -210,6 +213,7 @@ class ProvenanceManager:
         # retrieve and store operations share a single transaction. With BEGIN IMMEDIATE,
         # concurrent calls serialize during retrieval so no intervening versions are lost.
         # If any step raises, the whole operation rolls back.
+        existing = None
         entry = None
         try:
             with self._get_or_create_transaction(_conn) as conn:
@@ -266,29 +270,20 @@ class ProvenanceManager:
                 if archived_history_id and explicit_parent_supplied:
                     entry.used_entities.append(archived_history_id)
                 
-                self._save_entry(entry, _conn=conn, _raise_on_error=(_conn is not None))
-        except Exception:
+                self._save_entry(entry, _conn=conn, _raise_on_error=True)
+        except Exception as e:
             # When called from a batch's shared transaction (_conn is not None),
             # propagate so the caller's per-item try/except can skip counting
             # this item instead of reporting an unpersisted entry as tracked (#807).
             if _conn is not None:
                 raise
-            if entry is None:
-                entry = ProvenanceEntry(
-                    entity_id=entity_id,
-                    entity_type=kwargs.get("entity_type", "entity"),
-                    activity_id=kwargs.get("activity_id", "entity_tracking"),
-                    source_document=source,
-                    source_location=kwargs.get("source_location"),
-                    source_quote=kwargs.get("source_quote"),
-                    confidence=kwargs.get("confidence", 1.0),
-                    metadata=metadata or {},
-                    first_seen=datetime.utcnow().isoformat(),
-                    last_updated=datetime.utcnow().isoformat(),
-                    parent_entity_id=kwargs.get("parent_entity_id"),
-                    used_entities=list(kwargs.get("used_entities", [])),
-                )
-                entry.checksum = compute_checksum(entry)
+            self.logger.error(
+                f"Failed to track entity '{entity_id}' (transaction rolled back): {e}. "
+                f"Returning pre-failure state ({'existing entry' if existing else 'None (no prior entry existed)'})."
+            )
+            if existing is not None:
+                return copy.deepcopy(existing)
+            return None
 
         return entry
     
