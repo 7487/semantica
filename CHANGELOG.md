@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`AgnoDecisionKit`/`AgnoKGToolkit` silently swallowed Agno tool registration failures** (#780, #818) by @Sameer6305 and @KaifAhmad1
+  - Removed the `try/except: pass` wrapped around `self.register(fn)` in both toolkits' `__init__`; when Agno is installed, a registration failure now propagates immediately instead of leaving the toolkit half-registered with no signal to the caller
+  - Graceful degradation when Agno isn't installed (`AGNO_AVAILABLE=False`) is unchanged — `_tools` is still populated so callers can introspect available tools without the package
+  - Fixed a related duplicate-entry bug: `self._tools` was appended to unconditionally *before* `register()` ran, which could double-count a tool when Agno's own `Toolkit.register()` also tracks it in `self._tools`
+  - This is a behavior change for callers that construct these toolkits expecting instantiation to always succeed — audited: no in-repo call site relies on the old silent-failure behavior
+  - Expanded `tests/integrations/agno/test_decision_kit.py` and `test_kg_toolkit.py` with coverage for registration invocation counts, failure propagation, graceful degradation, and no-duplicate-`_tools` assertions
+
 - **`ProvenanceManager` duplicated the same checksum/persist/exception-swallow block across 4 tracking methods** (#784, #815) by @Sameer6305 and @KaifAhmad1
   - Consolidated the repeated `entry.checksum = compute_checksum(entry)` / `try: self.storage.store(entry) except Exception: pass` block used by `track_entity`, `track_relationship`, `track_chunk`, and `track_property_source` into a single `ProvenanceManager._save_entry()` helper, preserving the existing graceful-failure behavior and the batch `_conn`/re-raise semantics from #807
   - Added 4 regression tests (`tests/provenance/test_manager.py`) covering storage-failure swallowing for each of the four tracking methods, none of which had coverage for this path before
