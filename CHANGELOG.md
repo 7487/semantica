@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Agno `_AgentScopedStore.upsert_memory` silently swallowed decision recording failures** (#779)
-  - `upsert_memory()` now logs `logger.warning("[%s] record_decision failed: %s", self._role, exc)` when `record_decision()` fails, matching the error-logging convention used for `store()` in the same method
+  - `upsert_memory()` now logs `logger.warning("[%s] record_decision failed: %s", self._role, exc, exc_info=True)` when `record_decision()` fails, matching the error-logging convention used for `store()` in the same method with traceback context preserved
   - Preserves graceful fallback behavior: `record_decision()` remains optional and `upsert_memory()` continues without propagating the exception
   - Added regression coverage in `tests/integrations/agno/test_shared_context.py` for both `store()` and `record_decision()` warning paths
 
