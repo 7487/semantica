@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`ProvenanceManager.track_entity` persisted partial history and returned fabricated entries on storage failure** (#782) by @Sameer6305 and @KaifAhmad1
+- **`ProvenanceManager.track_entity` persisted partial history and returned fabricated entries on storage failure** (#782, #816) by @Sameer6305 and @KaifAhmad1
   - `track_entity()`'s two-step write (history archive + primary update) is now atomic — if either write fails, the whole operation rolls back via the existing #807 `transaction()` mechanism, instead of silently persisting a partial state
   - `track_entity()`'s return type is now `Optional[ProvenanceEntry]`: on failure it returns a safe deep copy of the pre-failure existing entry (if one existed) or `None` (if this was a brand-new, never-successfully-tracked entity) — never a fabricated object claiming values that were never actually persisted
   - This is a behavior change for callers that inspect the return value without checking for `None` first — audited: 0 of 47 production call sites in the repo currently dereference the return value, so this is safe today, but any NEW caller must handle `None`
