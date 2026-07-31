@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ProvenanceManager.track_entity` persisted partial history and returned fabricated entries on storage failure** (#782, #816) by @Sameer6305 and @KaifAhmad1
+  - `track_entity()`'s two-step write (history archive + primary update) is now atomic — if either write fails, the whole operation rolls back via the existing #807 `transaction()` mechanism, instead of silently persisting a partial state
+  - `track_entity()`'s return type is now `Optional[ProvenanceEntry]`: on failure it returns a safe deep copy of the pre-failure existing entry (if one existed) or `None` (if this was a brand-new, never-successfully-tracked entity) — never a fabricated object claiming values that were never actually persisted
+  - This is a behavior change for callers that inspect the return value without checking for `None` first — audited: 0 of 47 production call sites in the repo currently dereference the return value, so this is safe today, but any NEW caller must handle `None`
+  - `InMemoryStorage` gained real transactional rollback (staging-buffer based) to match this guarantee — previously `transaction()` was a no-op
+
 - **`ProvenanceManager` duplicated the same checksum/persist/exception-swallow block across 4 tracking methods** (#784, #815) by @Sameer6305 and @KaifAhmad1
   - Consolidated the repeated `entry.checksum = compute_checksum(entry)` / `try: self.storage.store(entry) except Exception: pass` block used by `track_entity`, `track_relationship`, `track_chunk`, and `track_property_source` into a single `ProvenanceManager._save_entry()` helper, preserving the existing graceful-failure behavior and the batch `_conn`/re-raise semantics from #807
   - Added 4 regression tests (`tests/provenance/test_manager.py`) covering storage-failure swallowing for each of the four tracking methods, none of which had coverage for this path before

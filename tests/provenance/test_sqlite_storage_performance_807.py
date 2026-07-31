@@ -244,15 +244,17 @@ def test_chunks_batch_does_not_count_individually_failed_items(tmp_path):
 
 
 def test_track_entity_standalone_call_still_degrades_gracefully(tmp_path):
-    """Test that a direct (non-batch) track_entity() call still returns an
-    entry on storage failure instead of raising, preserving the public API's
-    existing graceful-degradation contract."""
+    """Test that a direct (non-batch) track_entity() call returns None
+    on storage failure for a brand-new entity instead of raising (#782),
+    preserving the public API's existing graceful-degradation contract."""
     db_path = str(tmp_path / "test_standalone_degrade.db")
     mgr = ProvenanceManager(storage_path=db_path)
 
     entry = mgr.track_entity("entity_1", source="doc_1", metadata={"bad": {1, 2, 3}})
 
-    assert entry.entity_id == "entity_1"
+    # Returning None is correct because nothing was actually persisted,
+    # and the old assertion was encoding the bug this issue was filed to fix.
+    assert entry is None
     assert mgr.storage.retrieve("entity_1") is None
 
 
