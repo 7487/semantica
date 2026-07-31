@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from semantica.explorer.dependencies import get_session
 from semantica.explorer.routes.vocabulary import router
+from semantica.explorer.utils.skos import validate_skos_hierarchy
 
 app = FastAPI()
 app.include_router(router)
@@ -31,6 +32,15 @@ MINIMAL_RDF_XML = b"""<?xml version=\"1.0\"?>
     <skos:prefLabel xml:lang=\"en\">Scheme X</skos:prefLabel>
   </skos:ConceptScheme>
 </rdf:RDF>
+"""
+
+
+CYCLIC_TTL = b"""
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix ex:   <http://example.org/> .
+ex:S a skos:ConceptScheme ; skos:prefLabel \"Scheme\" .
+ex:A a skos:Concept ; skos:prefLabel \"Alpha\" ; skos:inScheme ex:S ; skos:broader ex:B .
+ex:B a skos:Concept ; skos:prefLabel \"Beta\" ; skos:inScheme ex:S ; skos:broader ex:A .
 """
 
 
@@ -158,3 +168,16 @@ def test_import_invalid_file_returns_422():
         files={"file": ("bad.ttl", b"this is not valid RDF!", "text/turtle")},
     )
     assert response.status_code == 422
+
+
+def test_import_rejects_cyclic_hierarchy_before_writing_nodes():
+    mock_session.validate_skos_hierarchy.side_effect = lambda edges: validate_skos_hierarchy(edges)
+
+    response = client.post(
+        "/api/vocabulary/import",
+        files={"file": ("cyclic.ttl", CYCLIC_TTL, "text/turtle")},
+    )
+
+    assert response.status_code == 422
+    assert "cycle" in response.json()["detail"].lower()
+    mock_session.add_nodes.assert_not_called()

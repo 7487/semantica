@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from ..context.context_graph import ContextGraph, _resolve_edge_identity
 from .search_index import GraphSearchIndex
+from .utils.skos import validate_skos_hierarchy
 
 _KG_AVAILABLE = False
 try:
@@ -736,6 +737,7 @@ class GraphSession:
 
     def add_edges(self, edges: List[Dict[str, Any]]) -> int:
         with self._lock:
+            self.validate_skos_hierarchy(edges)
             added = self.graph.add_edges(edges)
             has_mutation_callback = callable(getattr(self.graph, "mutation_callback", None))
             if added and not has_mutation_callback:
@@ -743,6 +745,11 @@ class GraphSession:
         if added and not has_mutation_callback:
             self.rebuild_search_index()
         return added
+
+    def validate_skos_hierarchy(self, edges: List[Dict[str, Any]]) -> None:
+        """Validate new SKOS hierarchy edges against the current graph."""
+        existing_edges = self.graph.find_edges()
+        validate_skos_hierarchy([*existing_edges, *edges])
 
     def add_node(
         self,

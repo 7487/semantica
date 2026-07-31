@@ -6,7 +6,7 @@ import asyncio
 from collections import defaultdict
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from ..dependencies import get_session
 from ..schemas import ConceptNode, ConceptSummary, VocabularyImportResponse, VocabularyScheme
@@ -221,6 +221,11 @@ async def import_vocabulary(
 
     try:
         nodes, edges = await asyncio.to_thread(parse_skos_file, content, parse_format)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        await asyncio.to_thread(session.validate_skos_hierarchy, edges)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
