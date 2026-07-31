@@ -91,11 +91,19 @@ def handle_find_precedents(args: dict) -> dict:
 
 def handle_get_causal_chain(args: dict) -> dict:
     """Trace the upstream or downstream causal chain from a decision."""
-    decision_id = args.get("decision_id", "").strip()
+    if not isinstance(args, dict):
+        return {"error": "args must be a dictionary", "chain": []}
+    decision_id = str(args.get("decision_id") or "").strip()
     if not decision_id:
         return {"error": "decision_id is required", "chain": []}
-    direction = args.get("direction", "downstream")
-    max_depth = int(args.get("max_depth", 5))
+    direction = str(args.get("direction") or "downstream").strip()
+    try:
+        max_depth = int(args.get("max_depth", 5))
+        if max_depth <= 0:
+            max_depth = 5
+        max_depth = min(max_depth, 100)
+    except (ValueError, TypeError):
+        max_depth = 5
     try:
         graph = get_graph()
         try:
@@ -105,7 +113,75 @@ def handle_get_causal_chain(args: dict) -> dict:
                 decision_id, direction=direction, max_depth=max_depth
             )
         except (ImportError, AttributeError):
-            chain = graph.get_causal_chain(decision_id) if hasattr(graph, "get_causal_chain") else []
+            if hasattr(graph, "get_causal_chain"):
+                import inspect
+                # Introspect the signature in its own try/except: only
+                # failure to introspect (ValueError/TypeError from
+                # inspect.signature itself, e.g. a C-extension callable)
+                # should fall through to the trial-and-error cascade below.
+                # A call made after a *successful* introspection must not be
+                # wrapped in that cascade's except block — otherwise a
+                # genuine bug inside get_causal_chain (raising an unrelated
+                # TypeError) gets misread as "wrong signature" and the
+                # backend is invoked a second time with identical arguments.
+                try:
+                    params = inspect.signature(graph.get_causal_chain).parameters
+                except (ValueError, TypeError):
+                    params = None
+
+                if params is not None:
+                    has_var_kwargs = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in params.values()
+                    )
+                    if has_var_kwargs or (
+                        "direction" in params and "max_depth" in params
+                    ):
+                        chain = graph.get_causal_chain(
+                            decision_id,
+                            direction=direction,
+                            max_depth=max_depth,
+                        )
+                    elif "depth" in params:
+                        chain = graph.get_causal_chain(
+                            decision_id,
+                            depth=max_depth,
+                        )
+                    else:
+                        chain = graph.get_causal_chain(decision_id)
+                else:
+                    try:
+                        chain = graph.get_causal_chain(
+                            decision_id,
+                            direction=direction,
+                            max_depth=max_depth,
+                        )
+                    except TypeError as exc:
+                        if "unexpected keyword argument" in str(
+                            exc
+                        ) or "positional" in str(exc):
+                            try:
+                                chain = graph.get_causal_chain(
+                                    decision_id,
+                                    depth=max_depth,
+                                )
+                            except TypeError as exc2:
+                                if "unexpected keyword argument" in str(
+                                    exc2
+                                ) or "positional" in str(exc2):
+                                    chain = graph.get_causal_chain(decision_id)
+                                else:
+                                    raise
+                        else:
+                            raise
+            else:
+                return {
+                    "error": (
+                        "Causal chain analysis is not supported on this graph"
+                        " backend"
+                    ),
+                    "chain": [],
+                }
         result = chain if isinstance(chain, list) else list(chain)
         return {"chain": result, "count": len(result), "direction": direction}
     except Exception as exc:

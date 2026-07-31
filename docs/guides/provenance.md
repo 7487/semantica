@@ -89,7 +89,7 @@ For any regulated deployment — security operations, clinical data, financial r
 
 ## Recording provenance when ingesting data
 
-The moment data enters your graph is the moment provenance must be recorded. `track_entity()` captures the source document, the timestamp, the operator or pipeline that ran the extraction, a verbatim quote from the source, and a confidence score. It returns a `ProvenanceEntry` with a SHA-256 checksum computed automatically.
+The moment data enters your graph is the moment provenance must be recorded. `track_entity()` captures the source document, the timestamp, the operator or pipeline that ran the extraction, a verbatim quote from the source, and a confidence score. It returns an `Optional[ProvenanceEntry]` (`ProvenanceEntry` on success, or `None` if storage fails on a brand-new entity) with a SHA-256 checksum computed automatically.
 
 ```python
 # Ingesting CVE-2024-3400 from NVD and a commercial feed

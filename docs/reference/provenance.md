@@ -221,7 +221,7 @@ cleared = manager.clear()
 
 | Method | Returns | Description |
 | :------ | :------- | :----------- |
-| `track_entity(entity_id, source, metadata, **kwargs)` | `ProvenanceEntry` | Record entity provenance; checksum set automatically |
+| `track_entity(entity_id, source, metadata, **kwargs)` | `Optional[ProvenanceEntry]` | Record entity provenance atomically; returns `ProvenanceEntry` on success, or `None`/existing entry on storage failure |
 | `track_relationship(relationship_id, source, metadata, **kwargs)` | `ProvenanceEntry` | Record relationship provenance |
 | `track_chunk(chunk_id, source_document, ...)` | `ProvenanceEntry` | Record chunk provenance with char offsets |
 | `track_property_source(entity_id, property_name, value, source)` | `ProvenanceEntry` | Record property-level source attribution |

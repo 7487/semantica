@@ -8,6 +8,7 @@ chunk tracking, source tracking, and lineage tracing.
 import pytest
 from unittest.mock import patch
 from semantica.provenance import ProvenanceManager, SourceReference
+from semantica.provenance.storage import InMemoryStorage, SQLiteStorage
 
 
 class TestProvenanceManager:
@@ -600,13 +601,14 @@ class TestProvenanceManager:
         assert "e_broken_child -> non_existent_parent" in check_broken["missing_references"]
 
     def test_track_entity_storage_error_swallowed(self):
-        """Test that track_entity swallows storage.store() exceptions and still returns a ProvenanceEntry."""
+        """Test that track_entity returns None when storage.store() fails on a brand-new entity,
+        since nothing was persisted (#782)."""
         prov_mgr = ProvenanceManager()
         with patch.object(prov_mgr.storage, "store", side_effect=RuntimeError("storage error")):
             entry = prov_mgr.track_entity("e_test", source="doc_1")
-            assert entry is not None
-            assert entry.entity_id == "e_test"
-            assert entry.checksum is not None
+            # Returning None is correct because nothing was actually persisted,
+            # and the old assertion was encoding the bug this issue was filed to fix.
+            assert entry is None
 
     def test_track_relationship_storage_error_swallowed(self):
         """Test that track_relationship swallows storage.store() exceptions and still returns a ProvenanceEntry."""
@@ -649,17 +651,226 @@ class TestProvenanceManager:
 
     def test_track_entity_pre_build_failure_fallback_skips_store(self):
         """Test that when track_entity fails before the entry is built (e.g. a
-        retrieve error inside the atomic transaction), the fallback entry only
-        gets a checksum and is not persisted via a second, out-of-transaction
-        storage.store() call (#784)."""
+        retrieve error inside the atomic transaction) on a brand-new entity,
+        it returns None (#782/#784)."""
         prov_mgr = ProvenanceManager()
         with patch.object(
             prov_mgr.storage, "_retrieve_with_conn", side_effect=RuntimeError("retrieve error")
         ), patch.object(prov_mgr.storage, "store") as mock_store:
             entry = prov_mgr.track_entity("e_test", source="doc_1")
-            assert entry is not None
-            assert entry.entity_id == "e_test"
-            assert entry.checksum is not None
+            # Returning None is correct because nothing was actually persisted,
+            # and the old assertion was encoding the bug this issue was filed to fix.
+            assert entry is None
             mock_store.assert_not_called()
+
+    @pytest.mark.parametrize("backend_type", ["memory", "sqlite"])
+    def test_track_entity_atomic_rollback_on_history_write_failure(self, backend_type, tmp_path):
+        """Test that history write failure rolls back transaction cleanly on both InMemory and SQLite storage."""
+        if backend_type == "memory":
+            class FlakyInMemory(InMemoryStorage):
+                def __init__(self):
+                    super().__init__()
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakyInMemory()
+        else:
+            db_path = str(tmp_path / "test_hist.db")
+            class FlakySQLite(SQLiteStorage):
+                def __init__(self, path):
+                    super().__init__(path)
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakySQLite(db_path)
+
+        mgr = ProvenanceManager(storage=storage)
+        v1 = mgr.track_entity("e1", source="doc1")
+        assert v1.source_document == "doc1"
+
+        storage.fail_on_call = 2
+        # Standalone call should not raise, should return pre-failure state (v1)
+        res = mgr.track_entity("e1", source="doc2")
+        in_storage = storage.retrieve("e1")
+        assert res.source_document == "doc1"
+        assert in_storage.source_document == "doc1"
+        assert [e.entity_id for e in storage.retrieve_all()] == ["e1"]
+
+        # Batch call (_conn supplied) should raise
+        storage.store_calls = 1
+        with pytest.raises(RuntimeError):
+            with mgr._get_or_create_transaction() as conn:
+                mgr.track_entity("e1", source="doc2", _conn=conn)
+
+    @pytest.mark.parametrize("backend_type", ["memory", "sqlite"])
+    def test_track_entity_atomic_rollback_on_primary_write_failure(self, backend_type, tmp_path):
+        """Test that primary write failure after history write rolls back the entire transaction."""
+        if backend_type == "memory":
+            class FlakyInMemory(InMemoryStorage):
+                def __init__(self):
+                    super().__init__()
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakyInMemory()
+        else:
+            db_path = str(tmp_path / "test_prim.db")
+            class FlakySQLite(SQLiteStorage):
+                def __init__(self, path):
+                    super().__init__(path)
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakySQLite(db_path)
+
+        mgr = ProvenanceManager(storage=storage)
+        v1 = mgr.track_entity("e1", source="doc1")
+        assert v1.source_document == "doc1"
+
+        storage.fail_on_call = 3
+        # Standalone call should not raise, should return pre-failure state (v1)
+        res = mgr.track_entity("e1", source="doc2")
+        in_storage = storage.retrieve("e1")
+        assert res.source_document == "doc1"
+        assert in_storage.source_document == "doc1"
+        assert [e.entity_id for e in storage.retrieve_all()] == ["e1"]
+
+        # Batch call (_conn supplied) should raise
+        storage.store_calls = 1
+        with pytest.raises(RuntimeError):
+            with mgr._get_or_create_transaction() as conn:
+                mgr.track_entity("e1", source="doc2", _conn=conn)
+
+    @pytest.mark.parametrize("backend_type", ["memory", "sqlite"])
+    def test_track_entity_rollback_returns_safe_copy(self, backend_type, tmp_path):
+        """Test that after a rollback returning the existing entry, mutating the returned object does not affect storage."""
+        if backend_type == "memory":
+            class FlakyInMemory(InMemoryStorage):
+                def __init__(self):
+                    super().__init__()
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakyInMemory()
+        else:
+            db_path = str(tmp_path / "test_safe_copy.db")
+            class FlakySQLite(SQLiteStorage):
+                def __init__(self, path):
+                    super().__init__(path)
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakySQLite(db_path)
+
+        mgr = ProvenanceManager(storage=storage)
+        v1 = mgr.track_entity("e1", source="doc1", metadata={"key": "val"})
+        assert v1.source_document == "doc1"
+
+        # Force failure on update
+        storage.fail_on_call = 2
+        res = mgr.track_entity("e1", source="doc2")
+        assert res.source_document == "doc1"
+
+        # Mutate the returned pre-failure object
+        res.source_document = "mutated"
+        res.metadata["tampered"] = True
+
+        # Assert stored copy in storage is completely unchanged
+        in_storage = storage.retrieve("e1")
+        assert in_storage.source_document == "doc1"
+        assert in_storage.metadata == {"key": "val"}
+        assert "tampered" not in in_storage.metadata
+
+    @pytest.mark.parametrize("backend_type", ["memory", "sqlite"])
+    def test_track_entities_batch_per_item_savepoint_rollback(self, backend_type, tmp_path):
+        """Test that in batch mode, an exception during primary write rolls back any staged history archive for that item."""
+        if backend_type == "memory":
+            class FlakyInMemory(InMemoryStorage):
+                def __init__(self):
+                    super().__init__()
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakyInMemory()
+        else:
+            db_path = str(tmp_path / "test_batch_sp.db")
+            class FlakySQLite(SQLiteStorage):
+                def __init__(self, path):
+                    super().__init__(path)
+                    self.store_calls = 0
+                    self.fail_on_call = None
+                def _store_with_conn(self, conn, entry):
+                    self.store_calls += 1
+                    if self.store_calls == self.fail_on_call:
+                        raise RuntimeError(f"Simulated error on call {self.store_calls}")
+                    super()._store_with_conn(conn, entry)
+            storage = FlakySQLite(db_path)
+
+        mgr = ProvenanceManager(storage=storage)
+        v1 = mgr.track_entity("e1", source="doc1")
+        assert v1.source_document == "doc1"
+
+        # Fail on call 3 (the primary update for e1, after its history entry was stored on call 2)
+        storage.fail_on_call = 3
+        count = mgr.track_entities_batch(
+            [{"id": "e1"}, {"id": "e2"}],
+            source="doc_batch"
+        )
+
+        assert count == 1  # Only e2 should succeed
+        all_entries = {e.entity_id: e for e in storage.retrieve_all()}
+
+        # Assert e2 is present
+        assert "e2" in all_entries
+        assert all_entries["e2"].source_document == "doc_batch"
+
+        # Assert e1 is untouched and NO history archive was left behind
+        assert all_entries["e1"].source_document == "doc1"
+        assert not any(":v:" in eid for eid in all_entries.keys()), f"Found leaked history entry: {list(all_entries.keys())}"
+
+    def test_track_entity_logs_exception_with_exc_info(self):
+        """Test that track_entity logs errors with exc_info=True when a storage write fails."""
+        class FlakyInMemory(InMemoryStorage):
+            def _store_with_conn(self, conn, entry):
+                raise RuntimeError("Simulated write failure")
+        storage = FlakyInMemory()
+        mgr = ProvenanceManager(storage=storage)
+
+        with patch.object(mgr.logger, "error") as mock_error:
+            res = mgr.track_entity("e1", source="doc1")
+            assert res is None
+            assert mock_error.called
+            _, kwargs = mock_error.call_args
+            assert kwargs.get("exc_info") is True
+
+
 
 
