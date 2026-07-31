@@ -23,6 +23,8 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 import sqlite3
 import json
+import uuid
+import threading
 from collections import deque
 from contextlib import contextmanager
 
@@ -108,6 +110,11 @@ class ProvenanceStorage(ABC):
         """Default transaction context manager for storage backends."""
         yield None
 
+    @contextmanager
+    def savepoint(self, conn: Any = None):
+        """Default savepoint context manager for nested transactions / per-item isolation."""
+        yield conn
+
     def _store_with_conn(self, conn: Any, entry: ProvenanceEntry) -> None:
         """Internal store method using an active connection/transaction."""
         self.store(entry)
@@ -142,6 +149,12 @@ class InMemoryStorage(ProvenanceStorage):
     def __init__(self):
         """Initialize in-memory storage."""
         self._entries: Dict[str, ProvenanceEntry] = {}
+        self._local = threading.local()
+
+    def _get_pending_stack(self) -> list:
+        if not hasattr(self._local, "pending_stack"):
+            self._local.pending_stack = []
+        return self._local.pending_stack
     
     def store(self, entry: ProvenanceEntry) -> None:
         """
@@ -235,15 +248,42 @@ class InMemoryStorage(ProvenanceStorage):
 
     @contextmanager
     def transaction(self):
-        """In-memory transaction context manager."""
-        yield None
+        """In-memory transaction context manager with staging buffer rollback."""
+        stack = self._get_pending_stack()
+        stack.append({})
+        try:
+            yield "IN_MEMORY_TX"
+            pending = stack.pop()
+            if stack:
+                stack[-1].update(pending)
+            else:
+                for entry in pending.values():
+                    self.store(entry)
+        except Exception:
+            if stack:
+                stack.pop()
+            raise
+
+    @contextmanager
+    def savepoint(self, conn: Any = None):
+        """In-memory savepoint context manager with staging buffer rollback."""
+        with self.transaction() as tx:
+            yield tx
 
     def _store_with_conn(self, conn: Any, entry: ProvenanceEntry) -> None:
         """Internal store method using an active connection/transaction."""
-        self.store(entry)
+        stack = self._get_pending_stack()
+        if stack:
+            stack[-1][entry.entity_id] = entry
+        else:
+            self.store(entry)
 
     def _retrieve_with_conn(self, conn: Any, entity_id: str) -> Optional[ProvenanceEntry]:
         """Internal retrieve method using an active connection/transaction."""
+        stack = self._get_pending_stack()
+        for pending in reversed(stack):
+            if entity_id in pending:
+                return pending[entity_id]
         return self.retrieve(entity_id)
 
 
@@ -347,6 +387,32 @@ class SQLiteStorage(ProvenanceStorage):
             raise
         finally:
             conn.close()
+
+    @contextmanager
+    def savepoint(self, conn: Any = None):
+        """
+        Context manager providing a SAVEPOINT for per-item rollback isolation
+        within an existing transaction.
+        
+        If no connection is provided, falls back to a full transaction.
+        """
+        if conn is None:
+            with self.transaction() as tx:
+                yield tx
+            return
+
+        sp_name = f"sp_{uuid.uuid4().hex}"
+        conn.execute(f"SAVEPOINT {sp_name}")
+        try:
+            yield conn
+            conn.execute(f"RELEASE {sp_name}")
+        except Exception:
+            try:
+                conn.execute(f"ROLLBACK TO {sp_name}")
+                conn.execute(f"RELEASE {sp_name}")
+            except Exception:
+                pass
+            raise
 
     @contextmanager
     def _read_connection(self):
