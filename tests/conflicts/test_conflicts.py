@@ -103,7 +103,7 @@ class TestConflictsModule(unittest.TestCase):
                 "source": self.source2,
             },
         ]
-        with patch.object(tracker, "track_property_source", return_value=None):
+        with patch.object(tracker, "track_property_source", return_value=False):
             stats = tracker.track_sources_batch(source_data)
             self.assertEqual(stats["properties_tracked"], 0)
             self.assertEqual(stats["total_tracked"], 0)

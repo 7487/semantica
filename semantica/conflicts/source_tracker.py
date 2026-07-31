@@ -614,8 +614,8 @@ class SourceTracker:
                 if item_type == "entity":
                     entity_id = item.get("entity_id")
                     if entity_id:
-                        entry = self.track_entity_source(entity_id, source_ref, **metadata)
-                        if entry is not None:
+                        ok = self.track_entity_source(entity_id, source_ref, **metadata)
+                        if ok:
                             stats["entities_tracked"] += 1
                             stats["total_tracked"] += 1
                         else:
@@ -628,10 +628,10 @@ class SourceTracker:
                     property_name = item.get("property_name")
                     value = item.get("value")
                     if entity_id and property_name is not None:
-                        entry = self.track_property_source(
+                        ok = self.track_property_source(
                             entity_id, property_name, value, source_ref, **metadata
                         )
-                        if entry is not None:
+                        if ok:
                             stats["properties_tracked"] += 1
                             stats["total_tracked"] += 1
                         else:
@@ -642,10 +642,10 @@ class SourceTracker:
                 elif item_type == "relationship":
                     relationship_id = item.get("relationship_id")
                     if relationship_id:
-                        entry = self.track_relationship_source(
+                        ok = self.track_relationship_source(
                             relationship_id, source_ref, **metadata
                         )
-                        if entry is not None:
+                        if ok:
                             stats["relationships_tracked"] += 1
                             stats["total_tracked"] += 1
                         else:
