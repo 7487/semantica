@@ -94,8 +94,8 @@ class _AgentScopedStore(AgnoContextStore):
                     outcome="stored",
                     confidence=1.0,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[%s] record_decision failed: %s", self._role, exc)
 
         if hasattr(memory, "id"):
             memory.id = mem_id

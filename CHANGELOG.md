@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Agno `_AgentScopedStore.upsert_memory` silently swallowed decision recording failures** (#779)
+  - `upsert_memory()` now logs `logger.warning("[%s] record_decision failed: %s", self._role, exc)` when `record_decision()` fails, matching the error-logging convention used for `store()` in the same method
+  - Preserves graceful fallback behavior: `record_decision()` remains optional and `upsert_memory()` continues without propagating the exception
+  - Added regression coverage in `tests/integrations/agno/test_shared_context.py` for both `store()` and `record_decision()` warning paths
+
 - **MCP `handle_get_causal_chain` returned an empty-but-valid-looking response when both `CausalChainAnalyzer` and the graph fallback were unavailable** (#781, #817) by @Sameer6305 and @KaifAhmad1
   - Returns an explicit `{"error": "Causal chain analysis is not supported on this graph backend", "chain": []}` instead of `{"chain": [], "count": 0, "direction": ...}`, letting clients distinguish "unsupported" from a legitimately empty chain
   - The fallback path now introspects `graph.get_causal_chain`'s signature to forward `direction`/`max_depth` (or a `depth` kwarg, or nothing, depending on what the backend accepts) instead of always calling with just `decision_id`, matching the primary analyzer path's behavior
