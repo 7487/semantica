@@ -258,6 +258,11 @@ Full interactive docs at `http://localhost:8000/docs`. All endpoints accept and 
     | `/api/vocabulary/hierarchy` | `GET` | Concept hierarchy tree |
     | `/api/vocabulary/import` | `POST` | Import SKOS/RDF vocabulary file |
 
+    SKOS hierarchy writes reject cycles in both `skos:broader` and
+    `skos:narrower` relationships. Vocabulary imports validate the complete
+    batch before adding nodes, while direct graph/session edge writes apply
+    the same invariant at the graph storage boundary.
+
     **SPARQL:**
 
     | Endpoint | Method | Description |

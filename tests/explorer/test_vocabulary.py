@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from semantica.explorer.dependencies import get_session
 from semantica.explorer.routes.vocabulary import router
-from semantica.explorer.utils.skos import validate_skos_hierarchy
+from semantica.utils.skos import validate_skos_hierarchy
 
 app = FastAPI()
 app.include_router(router)

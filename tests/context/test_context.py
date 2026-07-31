@@ -203,6 +203,26 @@ class TestContextModule(unittest.TestCase):
         )
         self.assertIsNotNone(retriever)
 
+    def test_context_graph_rejects_cyclic_skos_single_edge_write(self):
+        graph = ContextGraph()
+        graph.add_edge("A", "B", "skos:broader")
+
+        with self.assertRaisesRegex(ValueError, "SKOS hierarchy contains a cycle"):
+            graph.add_edge("B", "A", "skos:broader")
+
+        self.assertEqual(len(graph.edges), 1)
+
+    def test_context_graph_rejects_cyclic_skos_batch_write(self):
+        graph = ContextGraph()
+
+        with self.assertRaisesRegex(ValueError, "SKOS hierarchy contains a cycle"):
+            graph.add_edges([
+                {"source": "A", "target": "B", "type": "skos:broader"},
+                {"source": "A", "target": "B", "type": "skos:narrower"},
+            ])
+
+        self.assertEqual(len(graph.edges), 0)
+
     # --- AgentContext Tests ---
     @patch('semantica.context.agent_memory.AgentMemory._generate_embedding')
     def test_agent_context_end_to_end(self, mock_gen_embedding):

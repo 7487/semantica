@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from ..context.context_graph import ContextGraph, _resolve_edge_identity
 from .search_index import GraphSearchIndex
-from .utils.skos import validate_skos_hierarchy
+from ..utils.skos import validate_skos_hierarchy
 
 _KG_AVAILABLE = False
 try:
