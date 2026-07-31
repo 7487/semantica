@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ProvenanceManager` tracking methods silently swallowed failures without logging and returned fabricated entries** (#783)
+  - `track_relationship()`, `track_chunk()`, and `track_property_source()` now return `Optional[ProvenanceEntry]` (`None` on storage failure, consistent with #782's `track_entity` fix) instead of a fabricated populated object
+  - `_save_entry()` now always logs on any storage failure, including previously-silent per-item batch failures
+  - `track_entities_batch()` and `track_chunks_batch()`'s rare block-level transaction failures are now logged too
+  - `source_tracker.py`'s `track_sources_batch()` no longer counts failed tracking calls in its stats
+
 - **`ProvenanceManager.track_entity` persisted partial history and returned fabricated entries on storage failure** (#782, #816) by @Sameer6305 and @KaifAhmad1
   - `track_entity()`'s two-step write (history archive + primary update) is now atomic — if either write fails, the whole operation rolls back via the existing #807 `transaction()` mechanism, instead of silently persisting a partial state
   - `track_entity()`'s return type is now `Optional[ProvenanceEntry]`: on failure it returns a safe deep copy of the pre-failure existing entry (if one existed) or `None` (if this was a brand-new, never-successfully-tracked entity) — never a fabricated object claiming values that were never actually persisted
