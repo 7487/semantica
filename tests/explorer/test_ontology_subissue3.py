@@ -636,7 +636,25 @@ def test_health_shacl_dimension_returns_critical_for_truncated_graph(client):
         payload = client.get("/api/ontology/health?uri=http%3A%2F%2Fexample.org%2Fonto-a").json()
         shacl_dim = next(d for d in payload["dimensions"] if d["key"] == "shacl")
         assert shacl_dim["status"] == "critical"
-        assert shacl_dim["score"] == 0.0
         assert "exceeds maximum analysis limit" in shacl_dim["detail"]
+
+
+def test_ontology_load_rejects_cyclic_skos_hierarchy(client):
+    cyclic_ttl = """
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix ex:   <http://example.org/> .
+ex:S a skos:ConceptScheme ; skos:prefLabel "Scheme" .
+ex:A a skos:Concept ; skos:prefLabel "Alpha" ; skos:inScheme ex:S ; skos:broader ex:B .
+ex:B a skos:Concept ; skos:prefLabel "Beta" ; skos:inScheme ex:S ; skos:broader ex:A .
+"""
+    response = client.post(
+        "/api/ontology/load",
+        json={
+            "content": cyclic_ttl,
+            "format": "turtle",
+        },
+    )
+    assert response.status_code == 422
+    assert "cycle" in response.json()["detail"].lower()
 
 

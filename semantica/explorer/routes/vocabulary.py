@@ -225,12 +225,11 @@ async def import_vocabulary(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        await asyncio.to_thread(session.validate_skos_hierarchy, edges)
+        nodes_added, edges_added = await asyncio.to_thread(
+            session.add_nodes_and_edges, nodes, edges
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
-    edges_added = await asyncio.to_thread(session.add_edges, edges)
 
     return VocabularyImportResponse(
         status="success",

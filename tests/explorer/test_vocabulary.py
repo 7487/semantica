@@ -124,8 +124,7 @@ def test_hierarchy_cycle_does_not_hang():
 
 
 def test_import_ttl_success():
-    mock_session.add_nodes.return_value = 2
-    mock_session.add_edges.return_value = 1
+    mock_session.add_nodes_and_edges.return_value = (2, 1)
 
     response = client.post(
         "/api/vocabulary/import",
@@ -139,8 +138,7 @@ def test_import_ttl_success():
 
 
 def test_import_raw_text_success():
-    mock_session.add_nodes.return_value = 1
-    mock_session.add_edges.return_value = 0
+    mock_session.add_nodes_and_edges.return_value = (1, 0)
 
     response = client.post(
         "/api/vocabulary/import",
@@ -151,8 +149,7 @@ def test_import_raw_text_success():
 
 
 def test_import_rdf_xml_success():
-    mock_session.add_nodes.return_value = 1
-    mock_session.add_edges.return_value = 0
+    mock_session.add_nodes_and_edges.return_value = (1, 0)
 
     response = client.post(
         "/api/vocabulary/import",
@@ -171,7 +168,11 @@ def test_import_invalid_file_returns_422():
 
 
 def test_import_rejects_cyclic_hierarchy_before_writing_nodes():
-    mock_session.validate_skos_hierarchy.side_effect = lambda edges: validate_skos_hierarchy(edges)
+    def add_nodes_and_edges(nodes, edges):
+        validate_skos_hierarchy(edges)
+        return 0, 0
+
+    mock_session.add_nodes_and_edges.side_effect = add_nodes_and_edges
 
     response = client.post(
         "/api/vocabulary/import",
@@ -180,4 +181,4 @@ def test_import_rejects_cyclic_hierarchy_before_writing_nodes():
 
     assert response.status_code == 422
     assert "cycle" in response.json()["detail"].lower()
-    mock_session.add_nodes.assert_not_called()
+    mock_session.add_nodes_and_edges.assert_called_once()

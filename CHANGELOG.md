@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **No cycle detection for SKOS concepts at write time** (#774, #819) by @mikemikimike, reviewed by @Sameer6305 and @KaifAhmad1
+  - Added cycle detection (`validate_skos_hierarchy`) for `skos:broader` and `skos:narrower` relationships in `ContextGraph.add_edge()` and `ContextGraph.add_edges()`, preventing direct 2-node cycles, self-loops, and multi-hop hierarchy cycles
+  - Added `GraphSession.add_nodes_and_edges()` to validate SKOS hierarchy edges upfront under lock before node insertion, preventing partial-write leaks where nodes remain after a cyclic edge is rejected
+  - Updated vocabulary, ontology (`/api/ontology/load`, `/api/ontology/create`), and JSON/CSV import routes to use `add_nodes_and_edges()` and return HTTP 422 with actionable error messages when a cycle is detected
+
 - **`AgnoDecisionKit`/`AgnoKGToolkit` silently swallowed Agno tool registration failures** (#780, #818) by @Sameer6305 and @KaifAhmad1
   - Removed the `try/except: pass` wrapped around `self.register(fn)` in both toolkits' `__init__`; when Agno is installed, a registration failure now propagates immediately instead of leaving the toolkit half-registered with no signal to the caller
   - Graceful degradation when Agno isn't installed (`AGNO_AVAILABLE=False`) is unchanged — `_tools` is still populated so callers can introspect available tools without the package

@@ -117,7 +117,7 @@ import uuid
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
 from ..utils.helpers import classify_path_distance
-from ..utils.skos import validate_skos_hierarchy
+from ..utils.skos import is_skos_hierarchy_edge, validate_skos_hierarchy
 from .entity_linker import EntityLinker
 
 # Optional imports for advanced features
@@ -592,7 +592,12 @@ class ContextGraph:
         with self._lock:
             # Keep the SKOS hierarchy invariant at the lowest common write
             # layer so direct graph users cannot bypass API/session checks.
-            validate_skos_hierarchy([*self.find_edges(), *edges])
+            hierarchy_edges = [edge for edge in edges if is_skos_hierarchy_edge(edge)]
+            if hierarchy_edges:
+                existing_edges = [
+                    edge for edge in self.find_edges() if is_skos_hierarchy_edge(edge)
+                ]
+                validate_skos_hierarchy([*existing_edges, *hierarchy_edges])
             for raw_edge in edges:
                 if not isinstance(raw_edge, dict):
                     continue
@@ -952,12 +957,12 @@ class ContextGraph:
             family_id=explicit_family_id,
         )
         with self._lock:
-            validate_skos_hierarchy(
-                [
-                    *self.find_edges(),
-                    {"source": source_id, "target": target_id, "type": edge_type},
+            candidate = {"source": source_id, "target": target_id, "type": edge_type}
+            if is_skos_hierarchy_edge(candidate):
+                existing_edges = [
+                    edge for edge in self.find_edges() if is_skos_hierarchy_edge(edge)
                 ]
-            )
+                validate_skos_hierarchy([*existing_edges, candidate])
             return self._add_internal_edge(
                 ContextEdge(
                     edge_id=edge_id,
