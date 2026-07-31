@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `track_entities_batch()` and `track_chunks_batch()`'s rare block-level transaction failures are now logged too
   - `source_tracker.py`'s `track_sources_batch()` no longer counts failed tracking calls in its stats
 
+- **MCP `handle_get_causal_chain` returned an empty-but-valid-looking response when both `CausalChainAnalyzer` and the graph fallback were unavailable** (#781, #817) by @Sameer6305 and @KaifAhmad1
+  - Returns an explicit `{"error": "Causal chain analysis is not supported on this graph backend", "chain": []}` instead of `{"chain": [], "count": 0, "direction": ...}`, letting clients distinguish "unsupported" from a legitimately empty chain
+  - The fallback path now introspects `graph.get_causal_chain`'s signature to forward `direction`/`max_depth` (or a `depth` kwarg, or nothing, depending on what the backend accepts) instead of always calling with just `decision_id`, matching the primary analyzer path's behavior
+  - Hardened input handling: non-dict `args`, non-string `decision_id` (previously a latent `AttributeError` on `.strip()`), and `max_depth` clamped to `(0, 100]` with a safe default on invalid input
+  - Added `tests/test_mcp_decisions_causal_chain.py` (11 tests) covering the unsupported-backend, fallback-forwarding, and validation/exception paths across multiple backend signature shapes
+  - **Follow-up review fix**: the signature-detection try/except previously caught the *actual call*'s exceptions in the same block used for introspection failures, so a genuine bug inside a backend's `get_causal_chain` (raising an unrelated `TypeError`) was misread as a signature mismatch and the backend was invoked a second time with identical arguments before the real error surfaced. Signature introspection and the resulting call are now split into separate try/excepts so a successfully-introspected call is made exactly once; added `test_internal_typeerror_calls_backend_only_once` to lock this in
+
 - **`ProvenanceManager.track_entity` persisted partial history and returned fabricated entries on storage failure** (#782, #816) by @Sameer6305 and @KaifAhmad1
   - `track_entity()`'s two-step write (history archive + primary update) is now atomic — if either write fails, the whole operation rolls back via the existing #807 `transaction()` mechanism, instead of silently persisting a partial state
   - `track_entity()`'s return type is now `Optional[ProvenanceEntry]`: on failure it returns a safe deep copy of the pre-failure existing entry (if one existed) or `None` (if this was a brand-new, never-successfully-tracked entity) — never a fabricated object claiming values that were never actually persisted
