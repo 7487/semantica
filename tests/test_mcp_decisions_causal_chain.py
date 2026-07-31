@@ -232,6 +232,38 @@ class TestMCPDecisionsCausalChain(unittest.TestCase):
             },
         )
 
+    @patch("mcp.tools.decisions.get_graph")
+    @patch("semantica.context.causal_analyzer.CausalChainAnalyzer")
+    def test_internal_typeerror_calls_backend_only_once(self, mock_analyzer_cls, mock_get_graph):
+        """
+        Regression test: a signature that introspects successfully must be called
+        exactly once, even if the call itself raises TypeError for reasons unrelated
+        to the signature (e.g. a bug inside the backend). Previously this TypeError
+        was caught by the same except block used for introspection failures, causing
+        an identical retry call before the error was correctly surfaced.
+        """
+        mock_analyzer_cls.side_effect = ImportError("mocked import error")
+
+        class BadInternalGraphMock:
+            def __init__(self):
+                self.call_count = 0
+
+            def get_causal_chain(self, node_id, direction="downstream", max_depth=5):
+                self.call_count += 1
+                raise TypeError("unsupported operand type(s) for +: 'int' and 'str'")
+
+        graph_mock = BadInternalGraphMock()
+        mock_get_graph.return_value = graph_mock
+        response = handle_get_causal_chain({"decision_id": "dec_err"})
+        self.assertEqual(
+            response,
+            {
+                "error": "unsupported operand type(s) for +: 'int' and 'str'",
+                "chain": [],
+            },
+        )
+        self.assertEqual(graph_mock.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

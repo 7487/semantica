@@ -115,9 +115,21 @@ def handle_get_causal_chain(args: dict) -> dict:
         except (ImportError, AttributeError):
             if hasattr(graph, "get_causal_chain"):
                 import inspect
+                # Introspect the signature in its own try/except: only
+                # failure to introspect (ValueError/TypeError from
+                # inspect.signature itself, e.g. a C-extension callable)
+                # should fall through to the trial-and-error cascade below.
+                # A call made after a *successful* introspection must not be
+                # wrapped in that cascade's except block — otherwise a
+                # genuine bug inside get_causal_chain (raising an unrelated
+                # TypeError) gets misread as "wrong signature" and the
+                # backend is invoked a second time with identical arguments.
                 try:
-                    sig = inspect.signature(graph.get_causal_chain)
-                    params = sig.parameters
+                    params = inspect.signature(graph.get_causal_chain).parameters
+                except (ValueError, TypeError):
+                    params = None
+
+                if params is not None:
                     has_var_kwargs = any(
                         p.kind == inspect.Parameter.VAR_KEYWORD
                         for p in params.values()
@@ -137,7 +149,7 @@ def handle_get_causal_chain(args: dict) -> dict:
                         )
                     else:
                         chain = graph.get_causal_chain(decision_id)
-                except (ValueError, TypeError):
+                else:
                     try:
                         chain = graph.get_causal_chain(
                             decision_id,

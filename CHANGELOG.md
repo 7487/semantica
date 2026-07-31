@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **MCP `handle_get_causal_chain` returned an empty-but-valid-looking response when both `CausalChainAnalyzer` and the graph fallback were unavailable** (#781, #817) by @Sameer6305 and @KaifAhmad1
+  - Returns an explicit `{"error": "Causal chain analysis is not supported on this graph backend", "chain": []}` instead of `{"chain": [], "count": 0, "direction": ...}`, letting clients distinguish "unsupported" from a legitimately empty chain
+  - The fallback path now introspects `graph.get_causal_chain`'s signature to forward `direction`/`max_depth` (or a `depth` kwarg, or nothing, depending on what the backend accepts) instead of always calling with just `decision_id`, matching the primary analyzer path's behavior
+  - Hardened input handling: non-dict `args`, non-string `decision_id` (previously a latent `AttributeError` on `.strip()`), and `max_depth` clamped to `(0, 100]` with a safe default on invalid input
+  - Added `tests/test_mcp_decisions_causal_chain.py` (11 tests) covering the unsupported-backend, fallback-forwarding, and validation/exception paths across multiple backend signature shapes
+  - **Follow-up review fix**: the signature-detection try/except previously caught the *actual call*'s exceptions in the same block used for introspection failures, so a genuine bug inside a backend's `get_causal_chain` (raising an unrelated `TypeError`) was misread as a signature mismatch and the backend was invoked a second time with identical arguments before the real error surfaced. Signature introspection and the resulting call are now split into separate try/excepts so a successfully-introspected call is made exactly once; added `test_internal_typeerror_calls_backend_only_once` to lock this in
+
 - **`ProvenanceManager` duplicated the same checksum/persist/exception-swallow block across 4 tracking methods** (#784, #815) by @Sameer6305 and @KaifAhmad1
   - Consolidated the repeated `entry.checksum = compute_checksum(entry)` / `try: self.storage.store(entry) except Exception: pass` block used by `track_entity`, `track_relationship`, `track_chunk`, and `track_property_source` into a single `ProvenanceManager._save_entry()` helper, preserving the existing graceful-failure behavior and the batch `_conn`/re-raise semantics from #807
   - Added 4 regression tests (`tests/provenance/test_manager.py`) covering storage-failure swallowing for each of the four tracking methods, none of which had coverage for this path before
