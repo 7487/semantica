@@ -122,12 +122,10 @@ class AgnoKGToolkit(_ToolkitBase):  # type: ignore[misc]
             self.export_subgraph,
         ]
         for fn in tools_to_register:
-            self._tools.append(fn)
             if AGNO_AVAILABLE:
-                try:
-                    self.register(fn)
-                except Exception:
-                    pass
+                self.register(fn)
+            if fn not in self._tools:
+                self._tools.append(fn)
 
         logger.info("AgnoKGToolkit initialised (backend=%s)", graph_store_backend)
 

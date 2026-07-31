@@ -129,7 +129,31 @@ class TestAgnoKGToolkitInit(unittest.TestCase):
 
     def test_tools_registered(self):
         kit = AgnoKGToolkit()
-        self.assertTrue(len(kit._tools) >= 7)
+        self.assertEqual(len(kit._tools), 7)
+        self.assertEqual(len(kit._tools), len(set(kit._tools)))
+
+    def test_registration_invoked(self):
+        with patch.object(AgnoKGToolkit, "register") as mock_register:
+            AgnoKGToolkit()
+            self.assertEqual(mock_register.call_count, 7)
+
+    def test_registration_failure_propagates(self):
+        with patch.object(AgnoKGToolkit, "register", side_effect=RuntimeError("Registration failed")):
+            with self.assertRaises(RuntimeError):
+                AgnoKGToolkit()
+
+    def test_graceful_degradation_when_agno_unavailable(self):
+        with patch("integrations.agno.kg_toolkit.AGNO_AVAILABLE", False):
+            with patch.object(AgnoKGToolkit, "register") as mock_register:
+                kit = AgnoKGToolkit()
+                mock_register.assert_not_called()
+                self.assertEqual(len(kit._tools), 7)
+                self.assertEqual(len(kit._tools), len(set(kit._tools)))
+
+    def test_no_duplicate_tools(self):
+        kit = AgnoKGToolkit()
+        self.assertEqual(len(kit._tools), len(set(kit._tools)))
+        self.assertEqual(len(kit._tools), 7)
 
     def test_context_graph_attached(self):
         ctx = MagicMock()
