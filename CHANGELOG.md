@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preserves graceful fallback behavior: `record_decision()` remains optional and `upsert_memory()` continues without propagating the exception
   - Added regression coverage in `tests/integrations/agno/test_shared_context.py` for both `store()` and `record_decision()` warning paths
 
+- **`AgnoDecisionKit`/`AgnoKGToolkit` silently swallowed Agno tool registration failures** (#780, #818) by @Sameer6305 and @KaifAhmad1
+  - Removed the `try/except: pass` wrapped around `self.register(fn)` in both toolkits' `__init__`; when Agno is installed, a registration failure now propagates immediately instead of leaving the toolkit half-registered with no signal to the caller
+  - Graceful degradation when Agno isn't installed (`AGNO_AVAILABLE=False`) is unchanged — `_tools` is still populated so callers can introspect available tools without the package
+  - Fixed a related duplicate-entry bug: `self._tools` was appended to unconditionally *before* `register()` ran, which could double-count a tool when Agno's own `Toolkit.register()` also tracks it in `self._tools`
+  - This is a behavior change for callers that construct these toolkits expecting instantiation to always succeed — audited: no in-repo call site relies on the old silent-failure behavior
+  - Expanded `tests/integrations/agno/test_decision_kit.py` and `test_kg_toolkit.py` with coverage for registration invocation counts, failure propagation, graceful degradation, and no-duplicate-`_tools` assertions
+
 - **MCP `handle_get_causal_chain` returned an empty-but-valid-looking response when both `CausalChainAnalyzer` and the graph fallback were unavailable** (#781, #817) by @Sameer6305 and @KaifAhmad1
   - Returns an explicit `{"error": "Causal chain analysis is not supported on this graph backend", "chain": []}` instead of `{"chain": [], "count": 0, "direction": ...}`, letting clients distinguish "unsupported" from a legitimately empty chain
   - The fallback path now introspects `graph.get_causal_chain`'s signature to forward `direction`/`max_depth` (or a `depth` kwarg, or nothing, depending on what the backend accepts) instead of always calling with just `decision_id`, matching the primary analyzer path's behavior

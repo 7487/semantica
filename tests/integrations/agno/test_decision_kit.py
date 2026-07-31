@@ -8,7 +8,7 @@ import json
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +75,31 @@ class TestAgnoDecisionKitInit(unittest.TestCase):
     def test_tools_registered(self):
         kit = AgnoDecisionKit(context=_make_context())
         # Tools should be registered (Toolkit.register was called)
-        self.assertTrue(len(kit._tools) >= 5)
+        self.assertEqual(len(kit._tools), 6)
+        self.assertEqual(len(kit._tools), len(set(kit._tools)))
+
+    def test_registration_invoked(self):
+        with patch.object(AgnoDecisionKit, "register") as mock_register:
+            AgnoDecisionKit(context=_make_context())
+            self.assertEqual(mock_register.call_count, 6)
+
+    def test_registration_failure_propagates(self):
+        with patch.object(AgnoDecisionKit, "register", side_effect=RuntimeError("Registration failed")):
+            with self.assertRaises(RuntimeError):
+                AgnoDecisionKit(context=_make_context())
+
+    def test_graceful_degradation_when_agno_unavailable(self):
+        with patch("integrations.agno.decision_kit.AGNO_AVAILABLE", False):
+            with patch.object(AgnoDecisionKit, "register") as mock_register:
+                kit = AgnoDecisionKit(context=_make_context())
+                mock_register.assert_not_called()
+                self.assertEqual(len(kit._tools), 6)
+                self.assertEqual(len(kit._tools), len(set(kit._tools)))
+
+    def test_no_duplicate_tools(self):
+        kit = AgnoDecisionKit(context=_make_context())
+        self.assertEqual(len(kit._tools), len(set(kit._tools)))
+        self.assertEqual(len(kit._tools), 6)
 
     def test_policy_tool_can_be_disabled(self):
         kit = AgnoDecisionKit(context=_make_context(), enable_policy_check=False)
