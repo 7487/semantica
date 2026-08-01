@@ -6,7 +6,7 @@ import asyncio
 from collections import defaultdict
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from ..dependencies import get_session
 from ..schemas import ConceptNode, ConceptSummary, VocabularyImportResponse, VocabularyScheme
@@ -224,8 +224,12 @@ async def import_vocabulary(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
-    edges_added = await asyncio.to_thread(session.add_edges, edges)
+    try:
+        nodes_added, edges_added = await asyncio.to_thread(
+            session.add_nodes_and_edges, nodes, edges
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return VocabularyImportResponse(
         status="success",
