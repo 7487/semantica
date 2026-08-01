@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - This is a behavior change for callers that construct these toolkits expecting instantiation to always succeed — audited: no in-repo call site relies on the old silent-failure behavior
   - Expanded `tests/integrations/agno/test_decision_kit.py` and `test_kg_toolkit.py` with coverage for registration invocation counts, failure propagation, graceful degradation, and no-duplicate-`_tools` assertions
 
+- **`ProvenanceManager` tracking methods silently swallowed failures without logging and returned fabricated entries** (#783)
+  - `track_relationship()`, `track_chunk()`, and `track_property_source()` now return `Optional[ProvenanceEntry]` (`None` on storage failure, consistent with #782's `track_entity` fix) instead of a fabricated populated object
+  - `_save_entry()` now always logs on any storage failure, including previously-silent per-item batch failures
+  - `track_entities_batch()` and `track_chunks_batch()`'s rare block-level transaction failures are now logged too
+  - `source_tracker.py`'s `track_sources_batch()` no longer counts failed tracking calls in its stats
+
 - **MCP `handle_get_causal_chain` returned an empty-but-valid-looking response when both `CausalChainAnalyzer` and the graph fallback were unavailable** (#781, #817) by @Sameer6305 and @KaifAhmad1
   - Returns an explicit `{"error": "Causal chain analysis is not supported on this graph backend", "chain": []}` instead of `{"chain": [], "count": 0, "direction": ...}`, letting clients distinguish "unsupported" from a legitimately empty chain
   - The fallback path now introspects `graph.get_causal_chain`'s signature to forward `direction`/`max_depth` (or a `depth` kwarg, or nothing, depending on what the backend accepts) instead of always calling with just `decision_id`, matching the primary analyzer path's behavior
