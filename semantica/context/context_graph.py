@@ -597,7 +597,7 @@ class ContextGraph:
                 existing_edges = [
                     edge for edge in self.find_edges() if is_skos_hierarchy_edge(edge)
                 ]
-                validate_skos_hierarchy([*existing_edges, *hierarchy_edges])
+                validate_skos_hierarchy(hierarchy_edges, existing_edges)
             for raw_edge in edges:
                 if not isinstance(raw_edge, dict):
                     continue
@@ -962,7 +962,7 @@ class ContextGraph:
                 existing_edges = [
                     edge for edge in self.find_edges() if is_skos_hierarchy_edge(edge)
                 ]
-                validate_skos_hierarchy([*existing_edges, candidate])
+                validate_skos_hierarchy([candidate], existing_edges)
             return self._add_internal_edge(
                 ContextEdge(
                     edge_id=edge_id,

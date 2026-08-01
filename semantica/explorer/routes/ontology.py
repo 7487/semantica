@@ -1339,15 +1339,19 @@ async def load_ontology(
             except OSError as cleanup_exc:
                 logger.debug("Failed to remove temporary ontology file: %s", cleanup_exc)
                 
+    except HTTPException:
+        # Re-raise HTTPExceptions we deliberately raised above (e.g. the 422 from
+        # SKOS cycle validation) instead of letting the broad `except Exception`
+        # below mask them as an ingestor failure and silently retry via the
+        # fallback parser.
+        raise
     except Exception as ingest_exc:
         logger.warning(f"OntologyIngestor failed, falling back to basic parsing: {ingest_exc}")
-        
+
         # Fallback to basic parsing
         nodes, edges, metadata = await asyncio.to_thread(
             _parse_rdf_sync, content_str.encode("utf-8"), fmt
         )
-    except HTTPException:
-        raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Could not parse ontology: {exc}") from exc
 
