@@ -1,6 +1,7 @@
 """Tests for Ontology Hub subissue 3 APIs."""
 
 from unittest.mock import patch
+from urllib.parse import quote
 
 import pytest
 
@@ -8,7 +9,6 @@ from semantica.context.context_graph import ContextGraph
 from semantica.explorer.app import create_app
 from semantica.explorer.routes.ontology import OntologyEntry
 from semantica.explorer.session import GraphSession
-from semantica.utils.skos import validate_skos_hierarchy
 
 try:
     from starlette.testclient import TestClient
@@ -698,7 +698,7 @@ def test_ontology_load_does_not_swallow_422_from_ingestor_success_path(client):
 
 
 # ---------------------------------------------------------------------------
-# refresh_ontology — atomic add_nodes_and_edges() coverage (#775)
+# refresh_ontology — single combined add_nodes_and_edges() coverage (#775)
 # ---------------------------------------------------------------------------
 
 _REFRESH_TTL = """
@@ -737,12 +737,13 @@ def _register_refresh_entry(client, uri="http://example.org/refresh-onto", sourc
 
 def test_refresh_ontology_success_adds_nodes_and_edges(client):
     entry = _register_refresh_entry(client)
+    encoded_uri = quote(entry.uri, safe="")
 
     with patch(
         "semantica.explorer.routes.ontology._fetch_url_sync",
         return_value=_REFRESH_TTL.encode("utf-8"),
     ):
-        response = client.post(f"/api/ontology/{entry.uri}/refresh")
+        response = client.post(f"/api/ontology/{encoded_uri}/refresh")
 
     assert response.status_code == 200
     payload = response.json()
@@ -753,6 +754,7 @@ def test_refresh_ontology_success_adds_nodes_and_edges(client):
 
 def test_refresh_ontology_rejects_cyclic_skos_hierarchy_without_partial_write(client):
     entry = _register_refresh_entry(client)
+    encoded_uri = quote(entry.uri, safe="")
 
     graph = client.app.state.session.graph
     nodes_before = len(graph.nodes)
@@ -764,12 +766,15 @@ def test_refresh_ontology_rejects_cyclic_skos_hierarchy_without_partial_write(cl
         "semantica.explorer.session.GraphSession.add_nodes_and_edges",
         wraps=client.app.state.session.add_nodes_and_edges,
     ) as spy:
-        response = client.post(f"/api/ontology/{entry.uri}/refresh")
+        response = client.post(f"/api/ontology/{encoded_uri}/refresh")
 
     assert response.status_code == 422
     assert "cycle" in response.json()["detail"].lower()
-    # A single atomic call was made — not separate add_nodes()/add_edges() calls —
-    # and the cyclic edges must not have left any nodes behind in the graph.
+    # A single combined add_nodes_and_edges() call was made — not separate
+    # add_nodes()/add_edges() calls — so the upfront SKOS validation runs
+    # before either write and the cyclic edges leave no nodes behind in the
+    # graph. add_nodes_and_edges() provides pre-write validation and
+    # lock-based mutual exclusion, not general transactional rollback.
     spy.assert_called_once()
     assert len(graph.nodes) == nodes_before
 
@@ -781,7 +786,8 @@ def test_refresh_ontology_unknown_uri_returns_404(client):
 
 def test_refresh_ontology_missing_source_url_returns_422(client):
     entry = _register_refresh_entry(client, uri="http://example.org/refresh-onto-nosrc", source_url=None)
-    response = client.post(f"/api/ontology/{entry.uri}/refresh")
+    encoded_uri = quote(entry.uri, safe="")
+    response = client.post(f"/api/ontology/{encoded_uri}/refresh")
     assert response.status_code == 422
     assert "source url" in response.json()["detail"].lower()
 
