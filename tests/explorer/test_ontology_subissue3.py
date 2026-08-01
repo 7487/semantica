@@ -6,7 +6,9 @@ import pytest
 
 from semantica.context.context_graph import ContextGraph
 from semantica.explorer.app import create_app
+from semantica.explorer.routes.ontology import OntologyEntry
 from semantica.explorer.session import GraphSession
+from semantica.utils.skos import validate_skos_hierarchy
 
 try:
     from starlette.testclient import TestClient
@@ -693,5 +695,94 @@ def test_ontology_load_does_not_swallow_422_from_ingestor_success_path(client):
     assert response.status_code == 422
     assert "cycle" in response.json()["detail"].lower()
     fallback_parse.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# refresh_ontology — atomic add_nodes_and_edges() coverage (#775)
+# ---------------------------------------------------------------------------
+
+_REFRESH_TTL = """
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <http://example.org/refresh-onto#> .
+<http://example.org/refresh-onto> a owl:Ontology .
+ex:Widget a owl:Class ; rdfs:label "Widget" .
+ex:Gadget a owl:Class ; rdfs:label "Gadget" ; rdfs:subClassOf ex:Widget .
+"""
+
+_REFRESH_CYCLIC_TTL = """
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix ex:   <http://example.org/refresh-onto#> .
+ex:S a skos:ConceptScheme ; skos:prefLabel "Scheme" .
+ex:A a skos:Concept ; skos:prefLabel "Alpha" ; skos:inScheme ex:S ; skos:broader ex:B .
+ex:B a skos:Concept ; skos:prefLabel "Beta" ; skos:inScheme ex:S ; skos:broader ex:A .
+"""
+
+
+def _register_refresh_entry(client, uri="http://example.org/refresh-onto", source_url="http://example.org/refresh-onto.ttl"):
+    entry = OntologyEntry(
+        uri=uri,
+        name="Refresh Ontology",
+        format="turtle",
+        status="external",
+        source_url=source_url,
+        loaded_at="2024-01-01T00:00:00+00:00",
+    )
+    # Registry is created lazily on app.state by _get_registry; seed it directly.
+    if not hasattr(client.app.state, "ontology_registry"):
+        client.app.state.ontology_registry = {}
+    client.app.state.ontology_registry[uri] = entry
+    return entry
+
+
+def test_refresh_ontology_success_adds_nodes_and_edges(client):
+    entry = _register_refresh_entry(client)
+
+    with patch(
+        "semantica.explorer.routes.ontology._fetch_url_sync",
+        return_value=_REFRESH_TTL.encode("utf-8"),
+    ):
+        response = client.post(f"/api/ontology/{entry.uri}/refresh")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["uri"] == entry.uri
+    assert payload["nodes_added"] >= 2   # Widget, Gadget (+ ontology node depending on parser)
+    assert payload["edges_added"] >= 1   # Gadget rdfs:subClassOf Widget
+
+
+def test_refresh_ontology_rejects_cyclic_skos_hierarchy_without_partial_write(client):
+    entry = _register_refresh_entry(client)
+
+    graph = client.app.state.session.graph
+    nodes_before = len(graph.nodes)
+
+    with patch(
+        "semantica.explorer.routes.ontology._fetch_url_sync",
+        return_value=_REFRESH_CYCLIC_TTL.encode("utf-8"),
+    ), patch(
+        "semantica.explorer.session.GraphSession.add_nodes_and_edges",
+        wraps=client.app.state.session.add_nodes_and_edges,
+    ) as spy:
+        response = client.post(f"/api/ontology/{entry.uri}/refresh")
+
+    assert response.status_code == 422
+    assert "cycle" in response.json()["detail"].lower()
+    # A single atomic call was made — not separate add_nodes()/add_edges() calls —
+    # and the cyclic edges must not have left any nodes behind in the graph.
+    spy.assert_called_once()
+    assert len(graph.nodes) == nodes_before
+
+
+def test_refresh_ontology_unknown_uri_returns_404(client):
+    response = client.post("/api/ontology/http%3A%2F%2Fexample.org%2Fnot-registered/refresh")
+    assert response.status_code == 404
+
+
+def test_refresh_ontology_missing_source_url_returns_422(client):
+    entry = _register_refresh_entry(client, uri="http://example.org/refresh-onto-nosrc", source_url=None)
+    response = client.post(f"/api/ontology/{entry.uri}/refresh")
+    assert response.status_code == 422
+    assert "source url" in response.json()["detail"].lower()
 
 

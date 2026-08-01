@@ -2770,8 +2770,13 @@ async def refresh_ontology(
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Refresh parse error: {exc}") from exc
 
-    nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
-    edges_added = await asyncio.to_thread(session.add_edges, edges)
+    try:
+        nodes_added, edges_added = await asyncio.to_thread(
+            session.add_nodes_and_edges, nodes, edges
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     entry.loaded_at = datetime.now(UTC).isoformat()
 
     return RefreshResponse(uri=ontology_uri, nodes_added=nodes_added, edges_added=edges_added)
