@@ -123,12 +123,10 @@ class AgnoDecisionKit(_ToolkitBase):  # type: ignore[misc]
             tools_to_register.append(self.check_policy)
 
         for fn in tools_to_register:
-            self._tools.append(fn)
             if AGNO_AVAILABLE:
-                try:
-                    self.register(fn)
-                except Exception:
-                    pass
+                self.register(fn)
+            if fn not in self._tools:
+                self._tools.append(fn)
 
         logger.info("AgnoDecisionKit initialised")
 

@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from ..context.context_graph import ContextGraph, _resolve_edge_identity
 from .search_index import GraphSearchIndex
+from ..utils.skos import is_skos_hierarchy_edge, validate_skos_hierarchy
 
 _KG_AVAILABLE = False
 try:
@@ -736,6 +737,7 @@ class GraphSession:
 
     def add_edges(self, edges: List[Dict[str, Any]]) -> int:
         with self._lock:
+            self.validate_skos_hierarchy(edges)
             added = self.graph.add_edges(edges)
             has_mutation_callback = callable(getattr(self.graph, "mutation_callback", None))
             if added and not has_mutation_callback:
@@ -743,6 +745,38 @@ class GraphSession:
         if added and not has_mutation_callback:
             self.rebuild_search_index()
         return added
+
+    def validate_skos_hierarchy(self, edges: List[Dict[str, Any]]) -> None:
+        """Validate new SKOS hierarchy edges against the current graph."""
+        hierarchy_edges = [edge for edge in edges if is_skos_hierarchy_edge(edge)]
+        if not hierarchy_edges:
+            return
+        existing_edges = [
+            edge for edge in self.graph.find_edges() if is_skos_hierarchy_edge(edge)
+        ]
+        validate_skos_hierarchy(hierarchy_edges, existing_edges)
+
+    def add_nodes_and_edges(
+        self,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+    ) -> tuple[int, int]:
+        """
+        Validate SKOS hierarchy edges upfront and add nodes and edges under lock.
+
+        Note: This provides lock-based mutual exclusion and pre-write validation,
+        not transactional rollback atomicity.
+        """
+        with self._lock:
+            self.validate_skos_hierarchy(edges)
+            nodes_added = self.graph.add_nodes(nodes)
+            edges_added = self.graph.add_edges(edges)
+            has_mutation_callback = callable(getattr(self.graph, "mutation_callback", None))
+            if (nodes_added or edges_added) and not has_mutation_callback:
+                self._bump_graph_revision_locked()
+        if (nodes_added or edges_added) and not has_mutation_callback:
+            self.rebuild_search_index()
+        return nodes_added, edges_added
 
     def add_node(
         self,
@@ -771,6 +805,7 @@ class GraphSession:
         **properties: Any,
     ) -> bool:
         with self._lock:
+            self.validate_skos_hierarchy([{"source": source_id, "target": target_id, "type": edge_type}])
             added = self.graph.add_edge(
                 source_id,
                 target_id,
