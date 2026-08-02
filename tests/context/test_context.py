@@ -203,6 +203,39 @@ class TestContextModule(unittest.TestCase):
         )
         self.assertIsNotNone(retriever)
 
+    def test_context_graph_rejects_cyclic_skos_single_edge_write(self):
+        graph = ContextGraph()
+        graph.add_edge("A", "B", "skos:broader")
+
+        with self.assertRaisesRegex(ValueError, "SKOS hierarchy contains a cycle"):
+            graph.add_edge("B", "A", "skos:broader")
+
+        self.assertEqual(len(graph.edges), 1)
+
+    def test_context_graph_rejects_cyclic_skos_batch_write(self):
+        graph = ContextGraph()
+
+        with self.assertRaisesRegex(ValueError, "SKOS hierarchy contains a cycle"):
+            graph.add_edges([
+                {"source": "A", "target": "B", "type": "skos:broader"},
+                {"source": "A", "target": "B", "type": "skos:narrower"},
+            ])
+
+        self.assertEqual(len(graph.edges), 0)
+
+    def test_context_graph_preexisting_unrelated_cycle_does_not_block_new_write(self):
+        """A cycle already persisted elsewhere in the graph (e.g. legacy data
+        written before cycle detection existed) must not poison unrelated
+        SKOS hierarchy writes for concepts it doesn't touch."""
+        from semantica.context.context_graph import ContextEdge
+
+        graph = ContextGraph()
+        graph._add_internal_edge(ContextEdge(source_id="X", target_id="Y", edge_type="skos:broader"))
+        graph._add_internal_edge(ContextEdge(source_id="Y", target_id="X", edge_type="skos:broader"))
+
+        self.assertTrue(graph.add_edge("C", "D", "skos:broader"))
+        self.assertEqual(len(graph.edges), 3)
+
     # --- AgentContext Tests ---
     @patch('semantica.context.agent_memory.AgentMemory._generate_embedding')
     def test_agent_context_end_to_end(self, mock_gen_embedding):

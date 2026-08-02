@@ -112,8 +112,10 @@ async def import_file(
                 }
             )
 
-        nodes_added = session.add_nodes(nodes)
-        edges_added = session.add_edges(edges)
+        try:
+            nodes_added, edges_added = session.add_nodes_and_edges(nodes, edges)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _import_response(nodes_added, edges_added)
 
     if filename.endswith(".csv"):
@@ -184,8 +186,10 @@ async def import_file(
                 detail="No valid nodes or edges could be parsed from the CSV payload.",
             )
 
-        nodes_added = session.add_nodes(nodes)
-        edges_added = session.add_edges(edges)
+        try:
+            nodes_added, edges_added = session.add_nodes_and_edges(nodes, edges)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _import_response(nodes_added, edges_added)
 
     raise HTTPException(

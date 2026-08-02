@@ -1289,6 +1289,8 @@ async def load_ontology(
                 temp_path,
                 format=fmt
             )
+            if not ontology_data.data.get("classes") and not ontology_data.data.get("properties"):
+                raise ValueError("No OWL classes or properties found by OntologyIngestor")
             
             # Convert to graph nodes/edges using ontology data
             nodes, edges = await asyncio.to_thread(
@@ -1296,9 +1298,12 @@ async def load_ontology(
                 ontology_data.data
             )
             
-            # Add nodes and edges to session
-            nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
-            edges_added = await asyncio.to_thread(session.add_edges, edges)
+            try:
+                nodes_added, edges_added = await asyncio.to_thread(
+                    session.add_nodes_and_edges, nodes, edges
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             
             # Register in registry
             registry = _get_registry(request)
@@ -1334,21 +1339,29 @@ async def load_ontology(
             except OSError as cleanup_exc:
                 logger.debug("Failed to remove temporary ontology file: %s", cleanup_exc)
                 
+    except HTTPException:
+        # Re-raise HTTPExceptions we deliberately raised above (e.g. the 422 from
+        # SKOS cycle validation) instead of letting the broad `except Exception`
+        # below mask them as an ingestor failure and silently retry via the
+        # fallback parser.
+        raise
     except Exception as ingest_exc:
         logger.warning(f"OntologyIngestor failed, falling back to basic parsing: {ingest_exc}")
-        
+
         # Fallback to basic parsing
         nodes, edges, metadata = await asyncio.to_thread(
             _parse_rdf_sync, content_str.encode("utf-8"), fmt
         )
-    except HTTPException:
-        raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Could not parse ontology: {exc}") from exc
 
     # Fallback path - use basic parsing
-    nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
-    edges_added = await asyncio.to_thread(session.add_edges, edges)
+    try:
+        nodes_added, edges_added = await asyncio.to_thread(
+            session.add_nodes_and_edges, nodes, edges
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     registry = _get_registry(request)
     ontology_uri = metadata.get("uri", f"temp:{uuid.uuid4().hex[:12]}")
@@ -1545,8 +1558,12 @@ async def create_ontology(
             logger.exception("Failed to generate ontology from schema text; aborting ontology creation.")
             raise HTTPException(status_code=500, detail=f"Ontology generation failed: {exc}") from exc
 
-    nodes_added = await asyncio.to_thread(session.add_nodes, nodes)
-    edges_added = await asyncio.to_thread(session.add_edges, edges)
+    try:
+        nodes_added, edges_added = await asyncio.to_thread(
+            session.add_nodes_and_edges, nodes, edges
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     registry = _get_registry(request)
     registry[onto_uri] = OntologyEntry(
