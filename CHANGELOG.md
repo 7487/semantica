@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Follow-up fix by @KaifAhmad1: `validate_skos_hierarchy()` previously re-walked *every* SKOS hierarchy edge already in the graph on each write, so one pre-existing cycle anywhere (e.g. legacy data) blocked all unrelated future writes; it now only traverses concepts touched by the edges being written, while still checking against existing edges for cycles that span old and new data
   - Follow-up fix by @KaifAhmad1: in `/api/ontology/load`, `except HTTPException: raise` was unreachable because a broader `except Exception` clause above it already matched `HTTPException`, so a 422 raised after a successful `OntologyIngestor` parse was silently swallowed and reprocessed via the fallback RDF parser; reordered the clauses so the deliberate 422 always propagates
 
+- **Agno `_AgentScopedStore.upsert_memory` silently swallowed decision recording failures** (#779)
+  - `upsert_memory()` now logs `logger.warning("[%s] record_decision failed: %s", self._role, exc, exc_info=True)` when `record_decision()` fails, matching the error-logging convention used for `store()` in the same method with traceback context preserved
+  - Preserves graceful fallback behavior: `record_decision()` remains optional and `upsert_memory()` continues without propagating the exception
+  - Added regression coverage in `tests/integrations/agno/test_shared_context.py` for both `store()` and `record_decision()` warning paths
+
 - **`AgnoDecisionKit`/`AgnoKGToolkit` silently swallowed Agno tool registration failures** (#780, #818) by @Sameer6305 and @KaifAhmad1
   - Removed the `try/except: pass` wrapped around `self.register(fn)` in both toolkits' `__init__`; when Agno is installed, a registration failure now propagates immediately instead of leaving the toolkit half-registered with no signal to the caller
   - Graceful degradation when Agno isn't installed (`AGNO_AVAILABLE=False`) is unchanged — `_tools` is still populated so callers can introspect available tools without the package
