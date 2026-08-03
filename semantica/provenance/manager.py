@@ -1418,12 +1418,22 @@ class ProvenanceManager:
         Part A item 2).
 
         Sorts entries by sequence_id (global insertion order) and checks
-        both that each entry's own checksum matches its content, and that
-        each entry's previous_checksum matches the checksum of the entry
-        that precedes it. A gap in the chain — a surviving entry whose
-        previous_checksum doesn't match its predecessor's checksum — is
-        exactly what wholesale row deletion produces, since per-row
-        checksums alone can't detect that a row is simply missing.
+        three things: each entry's own checksum matches its content; each
+        entry's previous_checksum matches the checksum of the entry that
+        precedes it; and sequence_id is exactly the predecessor's plus one
+        (no gap, no duplicate). Every _save_entry() call assigns
+        head_sequence + 1, and archival relabels (see track_entity's
+        versioning and invalidate()) always preserve their existing
+        sequence_id rather than consuming a new one — so under this design,
+        the full set of currently-existing sequence_id values is always
+        exactly {1..N} with nothing missing, unless a row was hard-deleted.
+        A surviving entry whose previous_checksum doesn't match its
+        predecessor, or whose sequence_id isn't predecessor+1, is exactly
+        what wholesale row deletion produces; checking both signals also
+        guards against the narrow case where two distinct rows happen to
+        share a checksum (compute_checksum() deliberately excludes entity_id,
+        see integrity.py), which alone would let a checksum-only check miss
+        a gap that the sequence check still catches.
 
         Returns:
             Dictionary with "valid", "total_entries", and "broken_links"
@@ -1436,6 +1446,7 @@ class ProvenanceManager:
 
         broken_links: List[Dict[str, Any]] = []
         expected_previous: Optional[str] = None
+        expected_sequence: Optional[int] = None
         for entry in entries:
             if not verify_checksum(entry):
                 broken_links.append({
@@ -1443,16 +1454,29 @@ class ProvenanceManager:
                     "sequence_id": entry.sequence_id,
                     "reason": "checksum_mismatch",
                 })
-                continue
-            if entry.previous_checksum != expected_previous:
-                broken_links.append({
-                    "entity_id": entry.entity_id,
-                    "sequence_id": entry.sequence_id,
-                    "reason": "chain_break",
-                    "expected_previous_checksum": expected_previous,
-                    "actual_previous_checksum": entry.previous_checksum,
-                })
+            else:
+                sequence_gap = (
+                    expected_sequence is not None
+                    and entry.sequence_id != expected_sequence + 1
+                )
+                checksum_break = entry.previous_checksum != expected_previous
+                if sequence_gap or checksum_break:
+                    broken_links.append({
+                        "entity_id": entry.entity_id,
+                        "sequence_id": entry.sequence_id,
+                        "reason": "chain_break",
+                        "expected_previous_checksum": expected_previous,
+                        "actual_previous_checksum": entry.previous_checksum,
+                        "expected_sequence_id": (
+                            expected_sequence + 1 if expected_sequence is not None else None
+                        ),
+                    })
+
+            # Advance state from this entry's own stored fields regardless of
+            # whether it was flagged above, so a single corrupted entry
+            # doesn't cascade into spurious breaks for every entry after it.
             expected_previous = entry.checksum
+            expected_sequence = entry.sequence_id
 
         return {
             "valid": len(broken_links) == 0,

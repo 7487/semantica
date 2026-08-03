@@ -5,6 +5,7 @@ Tests for InMemoryStorage and SQLiteStorage backends.
 """
 
 import pytest
+import sqlite3
 import tempfile
 import os
 from semantica.provenance.schemas import ProvenanceEntry
@@ -193,6 +194,79 @@ class TestInMemoryStorage:
 
 class TestSQLiteStorage:
     """Test SQLiteStorage backend."""
+
+    def test_migrates_pre_existing_old_schema_database(self):
+        """Regression test: SQLiteStorage._init_db() previously only ran
+        CREATE TABLE IF NOT EXISTS, which does not alter an existing table.
+        A provenance.db created before issue #825's Part A/B columns existed
+        would otherwise break on every insert/select once the new code's
+        wider positional INSERT and _row_to_entry's fixed indices no longer
+        matched the old (narrower) row width. SQLiteStorage now migrates any
+        missing columns in on open."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            db_path = tmp.name
+
+        try:
+            # Simulate a database created by the pre-#825 code: only the
+            # original 19 columns, no agent_type/sequence_id/valid_from/etc.
+            conn = sqlite3.connect(db_path)
+            conn.execute("""
+                CREATE TABLE provenance (
+                    entity_id TEXT PRIMARY KEY,
+                    entity_type TEXT NOT NULL,
+                    activity_id TEXT NOT NULL,
+                    agent_id TEXT DEFAULT 'semantica',
+                    source_document TEXT,
+                    source_location TEXT,
+                    source_quote TEXT,
+                    timestamp TEXT NOT NULL,
+                    first_seen TEXT,
+                    last_updated TEXT,
+                    confidence REAL DEFAULT 1.0,
+                    checksum TEXT,
+                    parent_entity_id TEXT,
+                    used_entities TEXT,
+                    start_index INTEGER,
+                    end_index INTEGER,
+                    credibility REAL,
+                    metadata TEXT,
+                    version TEXT DEFAULT '1.0'
+                )
+            """)
+            conn.execute(
+                "INSERT INTO provenance VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "old_entity", "entity", "legacy_activity", "semantica", "doc1",
+                    None, None, "2025-01-01T00:00:00", "2025-01-01T00:00:00",
+                    "2025-01-01T00:00:00", 1.0, "oldchecksum", None, "[]",
+                    None, None, None, "{}", "1.0",
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+            # Opening with the current SQLiteStorage must not crash, and must
+            # migrate the table in place rather than requiring a fresh file.
+            storage = SQLiteStorage(db_path)
+
+            old_entry = storage.retrieve("old_entity")
+            assert old_entry is not None
+            assert old_entry.entity_id == "old_entity"
+            assert old_entry.agent_type == "software_agent"  # new column default
+            assert old_entry.sequence_id is None  # never assigned pre-migration
+
+            # New writes against the migrated table must work too.
+            new_entry = ProvenanceEntry(
+                entity_id="new_entity", entity_type="entity", activity_id="act",
+                agent_id="alice", sequence_id=1, checksum="chk1",
+            )
+            storage.store(new_entry)
+            retrieved = storage.retrieve("new_entity")
+            assert retrieved.agent_id == "alice"
+            assert retrieved.sequence_id == 1
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
 
     def test_all_fields_round_trip_through_sqlite(self):
         """Regression test: every ProvenanceEntry field, including issue #825

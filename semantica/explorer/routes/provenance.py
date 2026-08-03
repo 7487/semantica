@@ -82,7 +82,12 @@ def _add_chain_edges(
             seen_edges.add(edge_key)
 
             edges.append({
-                "id": f"{src}-{eid}",
+                # Includes direction to match the seen_edges uniqueness key
+                # above: the same (src, eid) pair can legitimately appear in
+                # both directions (e.g. cycles/overlap between the ancestor
+                # and descendant chains), and without this the two edges
+                # would collide on the same id.
+                "id": f"{src}-{eid}-{direction}",
                 "source": src,
                 "target": eid,
                 "label": activity,

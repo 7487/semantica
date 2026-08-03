@@ -13,7 +13,7 @@ Author: Semantica Contributors
 License: MIT
 """
 
-from typing import Any, Optional
+from typing import Optional
 from datetime import datetime
 import uuid
 

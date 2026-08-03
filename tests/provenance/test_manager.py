@@ -1102,6 +1102,31 @@ class TestHashChain:
         assert result["valid"] is False
         assert any(link["reason"] == "chain_break" for link in result["broken_links"])
 
+    def test_verify_chain_detects_tampered_sequence_gap(self, tmp_path):
+        """The sequence_id continuity check catches a gap introduced by
+        directly tampering with a row's sequence_id column, independent of
+        the previous_checksum comparison — hardening against the narrow case
+        where compute_checksum()'s deliberate exclusion of entity_id could
+        otherwise let two distinct rows coincidentally share a checksum."""
+        import sqlite3
+        db_path = str(tmp_path / "chain_seq_gap.db")
+        prov_mgr = ProvenanceManager(storage_path=db_path)
+        prov_mgr.track_entity("e1", source="doc1")
+        prov_mgr.track_entity("e2", source="doc1")
+        prov_mgr.track_entity("e3", source="doc1")
+
+        conn = sqlite3.connect(db_path)
+        conn.execute("UPDATE provenance SET sequence_id = 10 WHERE entity_id = 'e3'")
+        conn.commit()
+        conn.close()
+
+        prov_mgr2 = ProvenanceManager(storage_path=db_path)
+        result = prov_mgr2.verify_chain()
+        assert result["valid"] is False
+        broken = [link for link in result["broken_links"] if link["entity_id"] == "e3"]
+        assert broken
+        assert broken[0]["expected_sequence_id"] == 3
+
     def test_sequence_ids_are_assigned_and_monotonic(self):
         prov_mgr = ProvenanceManager()
         e1 = prov_mgr.track_entity("e1", source="doc1")

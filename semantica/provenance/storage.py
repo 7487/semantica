@@ -532,13 +532,54 @@ class SQLiteStorage(ProvenanceStorage):
         finally:
             conn.close()
 
+    # Columns added after the table was first shipped (issue #825, Part A/B).
+    # CREATE TABLE IF NOT EXISTS alone does not alter an existing table, so a
+    # provenance.db created before these columns existed would otherwise fail
+    # on every insert/select once the row width and _row_to_entry's fixed
+    # indices grew past the old schema. _migrate_schema() adds any of these
+    # that are missing from an already-existing table.
+    _MIGRATION_COLUMNS: List[Tuple[str, str]] = [
+        ("agent_type", "TEXT DEFAULT 'software_agent'"),
+        ("is_automated", "INTEGER DEFAULT 1"),
+        ("role", "TEXT"),
+        ("sequence_id", "INTEGER"),
+        ("previous_checksum", "TEXT"),
+        ("previous_version_id", "TEXT"),
+        ("derived_from_id", "TEXT"),
+        ("invalidated", "INTEGER DEFAULT 0"),
+        ("invalidated_at_time", "TEXT"),
+        ("invalidated_by", "TEXT"),
+        ("invalidation_reason", "TEXT"),
+        ("activity_started_at_time", "TEXT"),
+        ("activity_ended_at_time", "TEXT"),
+        ("acted_on_behalf_of", "TEXT"),
+        ("informed_by_activities", "TEXT"),
+        ("valid_from", "TEXT"),
+        ("valid_until", "TEXT"),
+        ("revision_type", "TEXT"),
+        ("supersedes", "TEXT"),
+        ("bundle_id", "TEXT"),
+    ]
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        """Add any columns introduced after the table was first created to an
+        already-existing table (see _MIGRATION_COLUMNS)."""
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(provenance)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        for column_name, column_def in self._MIGRATION_COLUMNS:
+            if column_name not in existing_columns:
+                cursor.execute(
+                    f"ALTER TABLE provenance ADD COLUMN {column_name} {column_def}"
+                )
+
     def _init_db(self) -> None:
         """Create tables with W3C PROV-O compliant schema."""
         conn = sqlite3.connect(self.db_path)
         try:
             self._configure_connection(conn)
             cursor = conn.cursor()
-            
+
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS provenance (
                     entity_id TEXT PRIMARY KEY,
@@ -582,6 +623,11 @@ class SQLiteStorage(ProvenanceStorage):
                     bundle_id TEXT
                 )
             """)
+
+            # Add any columns missing from a table that already existed
+            # before these were introduced (see _MIGRATION_COLUMNS) — a no-op
+            # for a table that was just freshly created above.
+            self._migrate_schema(conn)
 
             # Create indexes for efficient querying
             cursor.execute("""
