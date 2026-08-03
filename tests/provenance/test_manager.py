@@ -763,9 +763,15 @@ class TestProvenanceManager:
         prov_mgr = ProvenanceManager(storage_path=db_path)
         chunks = [{"id": f"chk_{i}", "start_index": 0, "end_index": 10} for i in range(5)]
 
+        # Capture the unpatched bound method first: once `transaction` is patched below,
+        # `prov_mgr.storage.transaction` would resolve to the mock itself, and calling it
+        # from inside failing_tx() would recurse into the mock instead of the real
+        # implementation (RecursionError, not the intended sqlite3.OperationalError).
+        orig_transaction = prov_mgr.storage.transaction
+
         @contextmanager
         def failing_tx():
-            with prov_mgr.storage.transaction() as conn:
+            with orig_transaction() as conn:
                 yield conn
                 raise sqlite3.OperationalError("Commit failed")
 
@@ -775,6 +781,11 @@ class TestProvenanceManager:
             assert count == 0
             mock_log_error.assert_called_once()
             assert "Block-level storage transaction failed in track_chunks_batch" in mock_log_error.call_args[0][0]
+            # Confirm the logged exception is the injected commit failure, not some
+            # other failure mode (e.g. a mocking mistake re-entering the patched mock).
+            logged_exc = mock_log_error.call_args[0][1]
+            assert isinstance(logged_exc, sqlite3.OperationalError)
+            assert str(logged_exc) == "Commit failed"
 
         assert len(prov_mgr.storage.retrieve_all()) == 0
 
