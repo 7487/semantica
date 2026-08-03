@@ -637,10 +637,58 @@ class TestProvenanceManager:
             # and the old assertion was encoding the bug this issue was filed to fix.
             assert entry is None
 
+    def test_track_relationship_storage_error_swallowed_sqlite(self, tmp_path):
+        """Test that track_relationship returns None when storage.store() fails
+        on the SQLite backend, mirroring the InMemory contract verified by
+        test_track_relationship_storage_error_swallowed (#783/#785)."""
+        db_path = str(tmp_path / "test_track_relationship_sqlite.db")
+        prov_mgr = ProvenanceManager(storage_path=db_path)
+        with patch.object(prov_mgr.storage, "store", side_effect=RuntimeError("storage error")):
+            entry = prov_mgr.track_relationship("r_test", source="doc_1")
+            # Returning None is correct because nothing was actually persisted,
+            # and the old assertion was encoding the bug this issue was filed to fix.
+            assert entry is None
+
+    def test_track_chunk_storage_error_swallowed_sqlite(self, tmp_path):
+        """Test that track_chunk returns None when storage.store() fails
+        on the SQLite backend, mirroring the InMemory contract verified by
+        test_track_chunk_storage_error_swallowed (#783/#785)."""
+        db_path = str(tmp_path / "test_track_chunk_sqlite.db")
+        prov_mgr = ProvenanceManager(storage_path=db_path)
+        with patch.object(prov_mgr.storage, "store", side_effect=RuntimeError("storage error")):
+            entry = prov_mgr.track_chunk(
+                chunk_id="c_test",
+                source_document="doc_1",
+                source_path="/path/to/doc.pdf",
+                start_index=0,
+                end_index=100,
+            )
+            # Returning None is correct because nothing was actually persisted,
+            # and the old assertion was encoding the bug this issue was filed to fix.
+            assert entry is None
+
     def test_track_property_source_storage_error_swallowed(self):
         """Test that track_property_source returns None when storage.store() fails,
         since nothing was persisted (#783)."""
         prov_mgr = ProvenanceManager()
+        source = SourceReference(document="doc_1", page=1, confidence=0.9)
+        with patch.object(prov_mgr.storage, "store", side_effect=RuntimeError("storage error")):
+            entry = prov_mgr.track_property_source(
+                entity_id="e_test",
+                property_name="prop_test",
+                value="val",
+                source=source,
+            )
+            # Returning None is correct because nothing was actually persisted,
+            # and the old assertion was encoding the bug this issue was filed to fix.
+            assert entry is None
+
+    def test_track_property_source_storage_error_swallowed_sqlite(self, tmp_path):
+        """Test that track_property_source returns None when storage.store() fails
+        on the SQLite backend, mirroring the InMemory contract verified by
+        test_track_property_source_storage_error_swallowed (#783/#785)."""
+        db_path = str(tmp_path / "test_track_property_source_sqlite.db")
+        prov_mgr = ProvenanceManager(storage_path=db_path)
         source = SourceReference(document="doc_1", page=1, confidence=0.9)
         with patch.object(prov_mgr.storage, "store", side_effect=RuntimeError("storage error")):
             entry = prov_mgr.track_property_source(
@@ -689,6 +737,46 @@ class TestProvenanceManager:
             count = prov_mgr.track_entities_batch(entities, "doc_1")
             assert count == 0
             assert mock_log_error.call_count == 2
+
+    def test_chunks_batch_logs_per_item_failure_memory(self):
+        """Test that track_chunks_batch emits item-level logs via _save_entry when items fail,
+        mirroring test_track_entities_batch_logs_per_item_failure for the chunk path (#783/#785)."""
+        prov_mgr = ProvenanceManager()
+        chunks = [
+            {"id": "chk_fail_1", "start_index": 0, "end_index": 10},
+            {"id": "chk_fail_2", "start_index": 0, "end_index": 10},
+        ]
+        with patch.object(prov_mgr.storage, "_store_with_conn", side_effect=RuntimeError("batch store error")), \
+             patch.object(prov_mgr.logger, "error") as mock_log_error:
+            count = prov_mgr.track_chunks_batch(chunks, source_document="doc_1")
+            assert count == 0
+            assert mock_log_error.call_count == 2
+
+    def test_track_chunks_batch_block_level_transaction_failure_logs(self, tmp_path):
+        """Test that track_chunks_batch logs the block-level failure message when the
+        shared transaction itself fails to commit, mirroring the entities-batch coverage
+        established by test_batch_rollback_does_not_count_unpersisted_entries (#807/#785)."""
+        from contextlib import contextmanager
+        import sqlite3
+
+        db_path = str(tmp_path / "test_chunks_block_level_failure.db")
+        prov_mgr = ProvenanceManager(storage_path=db_path)
+        chunks = [{"id": f"chk_{i}", "start_index": 0, "end_index": 10} for i in range(5)]
+
+        @contextmanager
+        def failing_tx():
+            with prov_mgr.storage.transaction() as conn:
+                yield conn
+                raise sqlite3.OperationalError("Commit failed")
+
+        with patch.object(prov_mgr.storage, "transaction", side_effect=failing_tx), \
+             patch.object(prov_mgr.logger, "error") as mock_log_error:
+            count = prov_mgr.track_chunks_batch(chunks, source_document="doc_1")
+            assert count == 0
+            mock_log_error.assert_called_once()
+            assert "Block-level storage transaction failed in track_chunks_batch" in mock_log_error.call_args[0][0]
+
+        assert len(prov_mgr.storage.retrieve_all()) == 0
 
     def test_track_entity_pre_build_failure_fallback_skips_store(self):
         """Test that when track_entity fails before the entry is built (e.g. a
