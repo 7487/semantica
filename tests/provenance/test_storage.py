@@ -130,14 +130,120 @@ class TestInMemoryStorage:
         
         storage.store(entry)
         count = storage.clear()
-        
+
         assert count == 1
         assert len(storage.retrieve_all()) == 0
+
+    def test_get_chain_head(self):
+        """Issue #825, Part A item 2 — chain head reporting."""
+        storage = InMemoryStorage()
+        assert storage.get_chain_head() is None
+
+        entry1 = ProvenanceEntry(
+            entity_id="e1", entity_type="entity", activity_id="act",
+            sequence_id=1, checksum="checksum_1",
+        )
+        storage.store(entry1)
+        assert storage.get_chain_head() == (1, "checksum_1")
+
+        entry2 = ProvenanceEntry(
+            entity_id="e2", entity_type="entity", activity_id="act",
+            sequence_id=2, checksum="checksum_2",
+        )
+        storage.store(entry2)
+        assert storage.get_chain_head() == (2, "checksum_2")
+
+    def test_trace_descendants(self):
+        """Issue #825, Part A item 5 — reverse (downstream) lineage traversal."""
+        storage = InMemoryStorage()
+        storage.store(ProvenanceEntry(entity_id="a", entity_type="entity", activity_id="act"))
+        storage.store(ProvenanceEntry(
+            entity_id="b", entity_type="entity", activity_id="act", parent_entity_id="a"
+        ))
+        storage.store(ProvenanceEntry(
+            entity_id="c", entity_type="entity", activity_id="act", parent_entity_id="b"
+        ))
+        storage.store(ProvenanceEntry(
+            entity_id="d", entity_type="entity", activity_id="act", used_entities=["a"]
+        ))
+
+        descendants = storage.trace_descendants("a")
+        entity_ids = {e.entity_id for e in descendants}
+        assert entity_ids == {"b", "c", "d"}
+
+    def test_trace_descendants_respects_max_depth(self):
+        storage = InMemoryStorage()
+        storage.store(ProvenanceEntry(entity_id="a", entity_type="entity", activity_id="act"))
+        storage.store(ProvenanceEntry(
+            entity_id="b", entity_type="entity", activity_id="act", parent_entity_id="a"
+        ))
+        storage.store(ProvenanceEntry(
+            entity_id="c", entity_type="entity", activity_id="act", parent_entity_id="b"
+        ))
+
+        descendants = storage.trace_descendants("a", max_depth=1)
+        entity_ids = {e.entity_id for e in descendants}
+        assert entity_ids == {"b"}
+
+    def test_trace_descendants_empty_for_leaf(self):
+        storage = InMemoryStorage()
+        storage.store(ProvenanceEntry(entity_id="leaf", entity_type="entity", activity_id="act"))
+        assert storage.trace_descendants("leaf") == []
 
 
 class TestSQLiteStorage:
     """Test SQLiteStorage backend."""
-    
+
+    def test_all_fields_round_trip_through_sqlite(self):
+        """Regression test: every ProvenanceEntry field, including issue #825
+        Part A and Part B additions, must survive a SQLite store/retrieve
+        round trip byte-for-byte. Part B's activity/actedOnBehalfOf/
+        informedBy/revision/bundle fields were initially added to the
+        dataclass and to export_prov() without updating SQLiteStorage's DDL/
+        INSERT/_row_to_entry — InMemoryStorage stores the dataclass directly
+        so it masked the gap, but SQLite silently dropped every one of those
+        fields on write."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            db_path = tmp.name
+
+        try:
+            storage = SQLiteStorage(db_path)
+            entry = ProvenanceEntry(
+                entity_id="entity_1",
+                entity_type="entity",
+                activity_id="extraction",
+                agent_id="alice",
+                agent_type="person",
+                is_automated=False,
+                role="approver",
+                sequence_id=1,
+                previous_checksum="prevchk",
+                parent_entity_id="parent_1",
+                used_entities=["u1", "u2"],
+                previous_version_id="entity_1:v:1",
+                derived_from_id="source_1",
+                invalidated=True,
+                invalidated_at_time="2026-01-01T00:00:00",
+                invalidated_by="reviewer_jane",
+                invalidation_reason="retracted",
+                activity_started_at_time="2026-01-01T00:00:00",
+                activity_ended_at_time="2026-01-01T00:00:05",
+                acted_on_behalf_of="org1",
+                informed_by_activities=["act_a", "act_b"],
+                valid_from="2026-01-01",
+                valid_until="2026-06-01",
+                revision_type="correction",
+                supersedes="old_claim",
+                bundle_id="ingestion_run_1",
+            )
+            storage.store(entry)
+            retrieved = storage.retrieve("entity_1")
+
+            assert retrieved == entry
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
     def test_store_and_retrieve(self):
         """Test storing and retrieving entries."""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
@@ -211,8 +317,71 @@ class TestSQLiteStorage:
             storage.store(entry2)
             
             lineage = storage.trace_lineage("entity_2")
-            
+
             assert len(lineage) == 2
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_get_chain_head(self):
+        """Issue #825, Part A item 2 — chain head reporting."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            db_path = tmp.name
+
+        try:
+            storage = SQLiteStorage(db_path)
+            assert storage.get_chain_head() is None
+
+            entry1 = ProvenanceEntry(
+                entity_id="e1", entity_type="entity", activity_id="act",
+                sequence_id=1, checksum="checksum_1",
+            )
+            storage.store(entry1)
+            assert storage.get_chain_head() == (1, "checksum_1")
+
+            entry2 = ProvenanceEntry(
+                entity_id="e2", entity_type="entity", activity_id="act",
+                sequence_id=2, checksum="checksum_2",
+            )
+            storage.store(entry2)
+            assert storage.get_chain_head() == (2, "checksum_2")
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_trace_descendants(self):
+        """Issue #825, Part A item 5 — reverse (downstream) lineage traversal."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            db_path = tmp.name
+
+        try:
+            storage = SQLiteStorage(db_path)
+            storage.store(ProvenanceEntry(entity_id="a", entity_type="entity", activity_id="act"))
+            storage.store(ProvenanceEntry(
+                entity_id="b", entity_type="entity", activity_id="act", parent_entity_id="a"
+            ))
+            storage.store(ProvenanceEntry(
+                entity_id="c", entity_type="entity", activity_id="act", parent_entity_id="b"
+            ))
+            storage.store(ProvenanceEntry(
+                entity_id="d", entity_type="entity", activity_id="act", used_entities=["a"]
+            ))
+
+            descendants = storage.trace_descendants("a")
+            entity_ids = {e.entity_id for e in descendants}
+            assert entity_ids == {"b", "c", "d"}
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_trace_descendants_empty_for_leaf(self):
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            db_path = tmp.name
+
+        try:
+            storage = SQLiteStorage(db_path)
+            storage.store(ProvenanceEntry(entity_id="leaf", entity_type="entity", activity_id="act"))
+            assert storage.trace_descendants("leaf") == []
         finally:
             if os.path.exists(db_path):
                 os.unlink(db_path)
