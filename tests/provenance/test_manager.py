@@ -466,6 +466,30 @@ class TestProvenanceManager:
         lineage = prov_mgr.get_lineage("entity_1")
         assert lineage == {}
 
+    def test_clear_resets_chain_state(self):
+        """Regression: clear() must fully reset chain state so the first write
+        after clear starts a fresh chain and verify_chain() passes."""
+        prov_mgr = ProvenanceManager()
+
+        prov_mgr.track_entity("e1", source="doc1")
+        prov_mgr.track_entity("e2", source="doc1")
+        prov_mgr.clear()
+
+        # Chain head must be empty immediately after clear
+        assert prov_mgr.storage.get_chain_head() is None
+
+        # First write after clear starts a fresh chain (sequence_id=1, previous_checksum=None)
+        entry = prov_mgr.track_entity("e3", source="doc2")
+        assert entry.sequence_id == 1
+        assert entry.previous_checksum is None
+
+        # verify_chain() must pass on the fresh chain
+        prov_mgr.track_entity("e4", source="doc2")
+        result = prov_mgr.verify_chain()
+        assert result["valid"] is True
+        assert result["total_entries"] == 2
+        assert result["broken_links"] == []
+
     def test_retrack_with_explicit_parent_overrides_history_link(self):
         """#742 — re-tracking an entity with an explicit parent_entity_id must
         honor the new value, not silently replace it with an auto-generated

@@ -135,6 +135,31 @@ class TestInMemoryStorage:
         assert count == 1
         assert len(storage.retrieve_all()) == 0
 
+    def test_clear_resets_chain_state(self):
+        """Issue #825 fix: clear() must reset chain state so get_chain_head()
+        returns None and the first write after clear starts a fresh chain."""
+        storage = InMemoryStorage()
+
+        entry1 = ProvenanceEntry(
+            entity_id="e1", entity_type="entity", activity_id="act",
+            sequence_id=1, checksum="checksum_1",
+        )
+        storage.store(entry1)
+        assert storage.get_chain_head() == (1, "checksum_1")
+
+        storage.clear()
+
+        # Chain head must be None after clear
+        assert storage.get_chain_head() is None
+
+        # First write after clear starts a fresh chain
+        entry2 = ProvenanceEntry(
+            entity_id="e2", entity_type="entity", activity_id="act",
+            sequence_id=1, checksum="checksum_fresh",
+        )
+        storage.store(entry2)
+        assert storage.get_chain_head() == (1, "checksum_fresh")
+
     def test_get_chain_head(self):
         """Issue #825, Part A item 2 — chain head reporting."""
         storage = InMemoryStorage()

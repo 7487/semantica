@@ -317,6 +317,9 @@ class InMemoryStorage(ProvenanceStorage):
         """
         count = len(self._entries)
         self._entries.clear()
+        with self._seq_lock:
+            self._seq_counter = 0
+            self._chain_head = None
         return count
 
     @contextmanager
