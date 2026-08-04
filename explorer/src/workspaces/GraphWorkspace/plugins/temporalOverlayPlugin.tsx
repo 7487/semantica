@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Loader2 } from "lucide-react";
+import type Graph from "graphology";
 
-import { graph } from "../../../store/graphStore";
+import { graph, type NodeAttributes } from "../../../store/graphStore";
 import { GRAPH_THEME } from "../graphTheme";
 import { fetchTemporalDiff, type TemporalDiffResult } from "./temporalDiffState";
 import type { GraphPlugin, GraphPluginContext } from "./types";
@@ -40,11 +41,42 @@ const DIFF_REMOVED_COLOR = GRAPH_THEME.ui.control.dangerText;
 // state every diffed node is in here. baseColor is read unconditionally by resolveNodeColor's
 // default branch regardless of interaction state or zoom tier, so it is the one attribute
 // confirmed to actually render the diff highlight.
+//
+// Writes go to BOTH the store graph and context.displayGraph:
+// - context.displayGraph is the live Graph instance currently bound to Sigma (updated by
+//   GraphCanvas.tsx via sigma.setGraph() / runtimeRef.current.displayGraph = displayGraph
+//   whenever the display graph is rebuilt). The nodeReducer reads attributes from this
+//   instance, so writing here makes the highlight visible in the currently-rendered frame.
+// - graph (store singleton) carries the value into the *next* display graph rebuild:
+//   aggregateDisplayGraph copies node attributes shallowly from the store graph, so a
+//   mutation that only touches context.displayGraph would be lost on the next rebuild.
+// Using a type assertion to Graph<NodeAttributes, EdgeAttributes> is consistent with how
+// the rest of GraphCanvas/graphSceneState cast the same union when they need to call
+// mutation methods; TypeScript cannot resolve setNodeAttribute across the union directly.
+
+function toMutable(g: GraphPluginContext["displayGraph"]) {
+  return g as Graph<NodeAttributes>;
+}
+
+function writeBaseColor(
+  context: GraphPluginContext,
+  nodeId: string,
+  color: string | undefined,
+): void {
+  // Write to the store graph first (survives display graph rebuilds).
+  if (graph.hasNode(nodeId)) {
+    graph.setNodeAttribute(nodeId, "baseColor", color);
+  }
+  // Write to the current display graph instance Sigma is rendering.
+  const dg = toMutable(context.displayGraph);
+  if (dg !== graph && dg.hasNode(nodeId)) {
+    dg.setNodeAttribute(nodeId, "baseColor", color);
+  }
+}
+
 function clearDiffHighlight(context: GraphPluginContext, previousColors: Map<string, string | undefined>) {
   previousColors.forEach((color, nodeId) => {
-    if (graph.hasNode(nodeId)) {
-      graph.setNodeAttribute(nodeId, "baseColor", color);
-    }
+    writeBaseColor(context, nodeId, color);
   });
   context.scene?.requestRender();
 }
@@ -52,9 +84,11 @@ function clearDiffHighlight(context: GraphPluginContext, previousColors: Map<str
 function applyDiffHighlight(context: GraphPluginContext, result: TemporalDiffResult): Map<string, string | undefined> {
   const previousColors = new Map<string, string | undefined>();
   const paint = (nodeId: string, color: string) => {
+    // Capture from the store graph — this is the authoritative source for the node's
+    // original baseColor, since aggregateDisplayGraph copies from there.
     if (graph.hasNode(nodeId)) {
       previousColors.set(nodeId, graph.getNodeAttribute(nodeId, "baseColor"));
-      graph.setNodeAttribute(nodeId, "baseColor", color);
+      writeBaseColor(context, nodeId, color);
     }
   };
   result.added_nodes.forEach((nodeId) => paint(nodeId, DIFF_ADDED_COLOR));
