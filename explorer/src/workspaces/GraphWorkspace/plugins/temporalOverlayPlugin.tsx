@@ -120,15 +120,18 @@ function DiffSection({ context }: { context: GraphPluginContext }) {
   }, []);
 
   const handleCompare = () => {
-    if (!fromTime.trim() || !toTime.trim()) {
+    const from = fromTime.trim();
+    const to = toTime.trim();
+
+    if (!from || !to) {
       setValidationMessage("Both a from and to time are required.");
       return;
     }
-    if (!isValidDateInput(fromTime) || !isValidDateInput(toTime)) {
+    if (!isValidDateInput(from) || !isValidDateInput(to)) {
       setValidationMessage("Enter valid ISO datetimes, e.g. 2024-01-01T00:00:00.");
       return;
     }
-    if (new Date(fromTime).getTime() >= new Date(toTime).getTime()) {
+    if (new Date(from).getTime() >= new Date(to).getTime()) {
       setValidationMessage("From time must be before to time.");
       return;
     }
@@ -143,7 +146,7 @@ function DiffSection({ context }: { context: GraphPluginContext }) {
     previousColorsRef.current = new Map();
     setRequestState({ status: "loading" });
 
-    fetchTemporalDiff(fromTime, toTime, controller.signal)
+    fetchTemporalDiff(from, to, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) {
           return;
