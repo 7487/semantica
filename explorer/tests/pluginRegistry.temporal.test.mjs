@@ -1,33 +1,19 @@
 /**
- * Regression tests for Issue #830: plugin registry shouldLoad predicates.
+ * Regression tests for issue #830: plugin registry shouldLoad predicates.
  *
- * The original temporal-overlay shouldLoad was:
- *   ({ panelState, temporalState }) =>
- *     Boolean(panelState["temporal-panel"] || temporalState?.currentTime)
- *
- * This caused an infinite render loop because temporalState.currentTime is
- * non-null from startup (TimelinePanel fires onTimeChange on mount), so the
- * predicate returned true before the panel was ever opened, repeatedly
- * triggering the plugin-loading useEffect during every scrubber update and
- * cancelling in-flight load() calls before they could register the plugin.
- *
- * The fix: each predicate reads only panelState so plugin loading is
- * gated strictly on the user opening the corresponding panel.
- *
- * These tests import the PRODUCTION predicates from pluginRegistryPredicates.ts
- * via tsx so that a future regression in GraphWorkspace.tsx is detected here.
+ * Imports the production predicates from pluginRegistryPredicates.ts so that
+ * a regression in GraphWorkspace.tsx is detected here. The key invariant: no
+ * predicate may read temporalState — doing so caused a render loop because
+ * temporalState.currentTime is non-null from startup, which triggered eager
+ * plugin loads on every scrubber update and continuously cancelled in-flight
+ * load() calls before they could register the plugin.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-// tsx is available as a Node loader — use createRequire to exercise the
-// TypeScript module from this .mjs file.
 const require = createRequire(import.meta.url);
 
-// tsx must be registered before requiring .ts files.  The test:plugin-registry
-// script calls this file via `node --import tsx --test`, so tsx is already
-// active in the process when this module runs.
 const {
   explorationEffectsShouldLoad,
   neighborhoodPanelShouldLoad,
@@ -44,9 +30,7 @@ test("temporal-overlay shouldLoad: false when panel is closed and no scrubber ti
 });
 
 test("temporal-overlay shouldLoad: false when panel is closed even if scrubber time is set", () => {
-  // Before the fix this returned true — TimelinePanel sets currentTime on mount,
-  // causing eager loads that continuously reset the cancelled flag and prevented
-  // plugin registration.
+  // Before the fix, a non-null currentTime caused an eager load on every scrubber update.
   assert.equal(
     temporalOverlayShouldLoad({
       panelState: { "temporal-panel": false },
@@ -86,8 +70,8 @@ test("neighborhood-panel shouldLoad: gates only on neighborhood-panel state", ()
 });
 
 test("all three shouldLoad conditions are consistent: none reference temporalState", () => {
-  // A predicate that regressed to reading temporalState?.currentTime would
-  // return true here even though every panel is closed — detecting the loop bug.
+  // A regressed predicate reading temporalState?.currentTime would return true
+  // for a closed panel when currentTime is set — detecting the loop bug.
   const nonNullTemporalState = { currentTime: new Date(), activeNodeCount: 6 };
 
   assert.equal(

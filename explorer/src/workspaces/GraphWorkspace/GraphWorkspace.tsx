@@ -1120,11 +1120,9 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
   const [activeNodeCount, setActiveNodeCount] = useState<number | null>(null);
   const [temporalBounds, setTemporalBounds] = useState<TemporalBounds | null>(null);
   const [scrubberTime, setScrubberTime] = useState<Date | null>(null);
-  // Tracks the millisecond value of the last time setScrubberTime was called,
-  // so the TimelinePanel onTimeChange callback can skip redundant updates when
-  // React 18 concurrent mode re-runs the effect with a new Date object for the
-  // same timestamp (issue #830: redundant setScrubberTime calls → temporalState
-  // churn → diagnostics effect loop in dev mode).
+  // Deduplicates setScrubberTime calls by millisecond value so that React 18
+  // concurrent-mode re-renders with a new Date object for the same timestamp
+  // do not churn temporalState and retrigger the diagnostics effect (issue #830).
   const lastScrubberMsRef = useRef<number | null>(null);
   const onTimeChange = useCallback((time: Date) => {
     const ms = time.getTime();
@@ -2293,12 +2291,11 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
       return;
     }
 
-    // Compare against the last accepted snapshot synchronously via a ref —
-    // this prevents React from entering the loop at all, rather than bailing
-    // out inside the functional updater after a render has already been
-    // scheduled (issue #830: calling setGraphDiagnosticsState with a new
-    // object on every effect run caused a render→effect→setState→render cycle
-    // that exceeded React's max update depth in dev mode).
+    // Compare against the last accepted snapshot synchronously before calling
+    // setState. buildEffectAvailability always returns a new object, so an
+    // unconditional setGraphDiagnosticsState on every call created a
+    // render → diagnostics effect → setState → render cycle that exceeded
+    // React's max update depth in dev mode (issue #830).
     const prev = lastDiagnosticsRef.current;
     if (prev !== null) {
       const EFFECT_KEYS = [
@@ -2328,8 +2325,8 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
         prev.structureLayer?.lastDrawAt !== diagnostics.structureLayer?.lastDrawAt ||
         prev.structureLayer?.enabled !== diagnostics.structureLayer?.enabled;
 
-      // distanceVisual comes from distanceVisualStateRef.current in GraphCanvas —
-      // same object reference when distances haven't changed.
+      // distanceVisual is compared by reference: GraphCanvas passes the same
+      // object when distances haven't changed.
       const distanceVisualChanged = prev.distanceVisual !== diagnostics.distanceVisual;
 
       if (!availabilityChanged && !edgeClassesChanged && !structureLayerChanged && !distanceVisualChanged) {
