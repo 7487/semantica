@@ -158,4 +158,4 @@ def test_missing_optional_dependency_has_install_hint():
         side_effect=import_without_oxigraph,
     ):
         with pytest.raises(ImportError, match="tripletstore-oxigraph"):
-            OxigraphStore()
+            _store()

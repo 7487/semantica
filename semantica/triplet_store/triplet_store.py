@@ -156,9 +156,11 @@ class TripletStore:
 
             self.logger.info(f"Initialized {self.backend_type} backend")
 
+        except ImportError:
+            raise
         except Exception as e:
             self.logger.error(f"Failed to initialize {self.backend_type} backend: {e}")
-            raise ProcessingError(f"Failed to initialize backend: {e}")
+            raise ProcessingError(f"Failed to initialize backend: {e}") from e
 
     def store(
         self,
