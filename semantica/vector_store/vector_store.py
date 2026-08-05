@@ -496,8 +496,8 @@ class VectorStore:
                     # Some stores have store_vectors method
                     return self._backend_store.store_vectors(vectors, metadata=metadata, **options)
                 else:
-                    # Basic add_vectors without metadata
-                    return self._backend_store.add_vectors(vectors, **options)
+                    # add_vectors accepts metadata directly (e.g. FAISSStore)
+                    return self._backend_store.add_vectors(vectors, metadata=metadata, **options)
             else:
                 raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not have add or add_vectors method")
         
