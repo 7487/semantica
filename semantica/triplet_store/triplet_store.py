@@ -3,7 +3,7 @@ Triplet Store Core Module
 
 This module provides the core triplet store interface and management classes,
 providing a unified interface across multiple RDF store backends
-(Blazegraph, Jena, RDF4J).
+(Blazegraph, Jena, RDF4J, Anzo, and Oxigraph).
 
 Key Features:
     - Unified triplet store interface
@@ -42,11 +42,16 @@ class TripletStore:
     Main triplet store interface.
 
     Provides a unified interface for working with RDF triple stores,
-    supporting Blazegraph, Jena, and RDF4J backends.
+    supporting server-backed stores and an embedded Oxigraph backend.
     """
 
-    SUPPORTED_BACKENDS = {"blazegraph", "jena", "rdf4j", "anzo"}
-    NAMED_GRAPH_CAPABLE_BACKENDS = {"blazegraph", "rdf4j", "anzo"}
+    SUPPORTED_BACKENDS = {"blazegraph", "jena", "rdf4j", "anzo", "oxigraph"}
+    NAMED_GRAPH_CAPABLE_BACKENDS = {
+        "blazegraph",
+        "rdf4j",
+        "anzo",
+        "oxigraph",
+    }
 
     def __init__(
         self,
@@ -58,7 +63,8 @@ class TripletStore:
         Initialize triplet store.
 
         Args:
-            backend: Backend type ("blazegraph", "jena", "rdf4j")
+            backend: Backend type ("blazegraph", "jena", "rdf4j", "anzo",
+                or "oxigraph")
             endpoint: Store endpoint URL
             **config: Backend-specific configuration
         """
@@ -142,6 +148,11 @@ class TripletStore:
                     )
 
                 self._store_backend = AnzoStore(**backend_config)
+
+            elif self.backend_type == "oxigraph":
+                from .oxigraph_store import OxigraphStore
+
+                self._store_backend = OxigraphStore(**self.config)
 
             self.logger.info(f"Initialized {self.backend_type} backend")
 
