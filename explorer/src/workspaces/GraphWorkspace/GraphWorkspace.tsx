@@ -1119,6 +1119,20 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
   const [activeNodeCount, setActiveNodeCount] = useState<number | null>(null);
   const [temporalBounds, setTemporalBounds] = useState<TemporalBounds | null>(null);
   const [scrubberTime, setScrubberTime] = useState<Date | null>(null);
+  // Tracks the millisecond value of the last time setScrubberTime was called,
+  // so the TimelinePanel onTimeChange callback can skip redundant updates when
+  // React 18 concurrent mode re-runs the effect with a new Date object for the
+  // same timestamp (issue #830: redundant setScrubberTime calls → temporalState
+  // churn → diagnostics effect loop in dev mode).
+  const lastScrubberMsRef = useRef<number | null>(null);
+  const onTimeChange = useCallback((time: Date) => {
+    const ms = time.getTime();
+    if (ms === lastScrubberMsRef.current) {
+      return;
+    }
+    lastScrubberMsRef.current = ms;
+    setScrubberTime(time);
+  }, []);
   const [loadingProgress, setLoadingProgress] = useState<GraphLoadProgress | null>(null);
   const [pluginPanelState, setPluginPanelState] = useState<Record<string, boolean>>({
     "effects-panel": false,
@@ -1129,6 +1143,9 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
   const [pluginRuntimeVersion, setPluginRuntimeVersion] = useState(0);
   const [effectsState, setEffectsState] = useState<GraphEffectsState>(DEFAULT_EFFECTS_STATE);
   const [graphDiagnosticsState, setGraphDiagnosticsState] = useState<GraphRuntimeDiagnosticsSnapshot | null>(null);
+  // Tracks the last accepted diagnostics outside React's state cycle, allowing
+  // handleDiagnosticsChange to compare synchronously before calling setState.
+  const lastDiagnosticsRef = useRef<GraphRuntimeDiagnosticsSnapshot | null>(null);
   const [graphAnalyticsState, setGraphAnalyticsState] = useState<GraphAnalyticsSnapshot | null>(null);
   const [loadedPlugins, setLoadedPlugins] = useState<Record<string, GraphPlugin>>({});
 
@@ -2074,7 +2091,7 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
         title: "Toggle temporal context panel",
         order: 40,
         load: loadTemporalOverlayPlugin,
-        shouldLoad: ({ panelState, temporalState }) => Boolean(panelState["temporal-panel"] || temporalState?.currentTime),
+        shouldLoad: ({ panelState }) => Boolean(panelState["temporal-panel"]),
       },
     ],
     [],
@@ -2274,6 +2291,52 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
     if (!GRAPH_THEME.effects.diagnostics.enabledInDev) {
       return;
     }
+
+    // Compare against the last accepted snapshot synchronously via a ref —
+    // this prevents React from entering the loop at all, rather than bailing
+    // out inside the functional updater after a render has already been
+    // scheduled (issue #830: calling setGraphDiagnosticsState with a new
+    // object on every effect run caused a render→effect→setState→render cycle
+    // that exceeded React's max update depth in dev mode).
+    const prev = lastDiagnosticsRef.current;
+    if (prev !== null) {
+      const EFFECT_KEYS = [
+        "pathPulse", "pathFlow", "lens", "temporalEmphasis", "semanticRegions",
+        "contours", "pathfinding", "communities", "centrality", "legend", "diagnostics",
+      ] as const;
+      const prevEA = prev.effectAvailability;
+      const nextEA = diagnostics.effectAvailability;
+      const availabilityChanged = EFFECT_KEYS.some((key) => {
+        const p = prevEA[key];
+        const n = nextEA[key];
+        return (
+          p.enabled !== n.enabled ||
+          p.available !== n.available ||
+          p.reason !== n.reason ||
+          p.detail !== n.detail ||
+          p.visibleSegments !== n.visibleSegments ||
+          p.segmentCap !== n.segmentCap
+        );
+      });
+
+      const edgeClassesChanged =
+        prev.edgeClasses?.updatedAt !== diagnostics.edgeClasses?.updatedAt;
+
+      const structureLayerChanged =
+        prev.structureLayer?.cacheKey !== diagnostics.structureLayer?.cacheKey ||
+        prev.structureLayer?.lastDrawAt !== diagnostics.structureLayer?.lastDrawAt ||
+        prev.structureLayer?.enabled !== diagnostics.structureLayer?.enabled;
+
+      // distanceVisual comes from distanceVisualStateRef.current in GraphCanvas —
+      // same object reference when distances haven't changed.
+      const distanceVisualChanged = prev.distanceVisual !== diagnostics.distanceVisual;
+
+      if (!availabilityChanged && !edgeClassesChanged && !structureLayerChanged && !distanceVisualChanged) {
+        return;
+      }
+    }
+
+    lastDiagnosticsRef.current = diagnostics;
     setGraphDiagnosticsState(diagnostics);
   }, []);
 
@@ -2922,7 +2985,7 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
               <div className="explore-scene-footer">
                 <Suspense fallback={<div style={timelineFallbackStyle}>Loading timeline…</div>}>
                   <LazyTimelinePanel
-                    onTimeChange={setScrubberTime}
+                    onTimeChange={onTimeChange}
                     minDate={temporalBounds?.min ?? undefined}
                     maxDate={temporalBounds?.max ?? undefined}
                   />
