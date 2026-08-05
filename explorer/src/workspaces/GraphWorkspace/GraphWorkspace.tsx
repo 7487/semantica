@@ -38,6 +38,7 @@ import {
   type GraphPluginPanelDescriptor,
   type GraphPluginToolbarItem,
 } from "./plugins";
+import { explorationEffectsShouldLoad, neighborhoodPanelShouldLoad, temporalOverlayShouldLoad } from "./pluginRegistryPredicates";
 import type { LinkPrediction, PathResponse } from "./GraphInspectorPanel";
 import type { GraphSceneHandle, GraphSceneRuntime } from "./scene";
 import type {
@@ -126,7 +127,7 @@ type LazyPluginRegistryEntry = {
   load: () => Promise<GraphPlugin>;
   shouldLoad: (context: {
     panelState: Record<string, boolean>;
-    temporalState: GraphTemporalState | null;
+    temporalState?: GraphTemporalState | null;
   }) => boolean;
 };
 
@@ -2073,7 +2074,7 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
         title: "Open exploration effects controls",
         order: 18,
         load: loadExplorationEffectsPlugin,
-        shouldLoad: ({ panelState }) => Boolean(panelState["effects-panel"]),
+        shouldLoad: explorationEffectsShouldLoad,
       },
       {
         id: "neighborhood-panel",
@@ -2082,7 +2083,7 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
         title: "Toggle neighborhood panel",
         order: 30,
         load: loadNeighborhoodPanelPlugin,
-        shouldLoad: ({ panelState }) => Boolean(panelState["neighborhood-panel"]),
+        shouldLoad: neighborhoodPanelShouldLoad,
       },
       {
         id: "temporal-overlay",
@@ -2091,7 +2092,7 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
         title: "Toggle temporal context panel",
         order: 40,
         load: loadTemporalOverlayPlugin,
-        shouldLoad: ({ panelState }) => Boolean(panelState["temporal-panel"]),
+        shouldLoad: temporalOverlayShouldLoad,
       },
     ],
     [],
@@ -2109,7 +2110,7 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
         return;
       }
 
-      if (!entry.shouldLoad({ panelState: pluginPanelState, temporalState })) {
+      if (!entry.shouldLoad({ panelState: pluginPanelState })) {
         return;
       }
 
@@ -2128,7 +2129,7 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
     return () => {
       cancelled = true;
     };
-  }, [loadedPlugins, pluginPanelState, pluginRegistry, temporalState]);
+  }, [loadedPlugins, pluginPanelState, pluginRegistry]);
 
   const setEffectToggle = useCallback((effect: GraphEffectToggle, enabled: boolean | ((current: boolean) => boolean)) => {
     setEffectsState((current) => {

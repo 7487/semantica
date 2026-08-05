@@ -1,51 +1,54 @@
 /**
- * Regression tests for Issue #830: temporal-overlay plugin shouldLoad condition.
+ * Regression tests for Issue #830: plugin registry shouldLoad predicates.
  *
- * The original shouldLoad was:
+ * The original temporal-overlay shouldLoad was:
  *   ({ panelState, temporalState }) =>
  *     Boolean(panelState["temporal-panel"] || temporalState?.currentTime)
  *
- * This caused an infinite render loop because:
- *   1. TimelinePanel calls onTimeChange(defaultTime) on mount, making
- *      temporalState.currentTime non-null from startup.
- *   2. temporalState is a useMemo that produces a new object reference
- *      on every activeNodeCount / scrubberTime change.
- *   3. The plugin-loading useEffect has temporalState in its dep array,
- *      so it re-runs on every temporal update.
- *   4. With shouldLoad returning true from startup, entry.load() fired
- *      on every re-run while the previous async import was still in-flight,
- *      continuously setting cancelled = true on the prior run before
- *      setLoadedPlugins could be called, so loadedPlugins["temporal-overlay"]
- *      was never populated and the cycle never settled.
+ * This caused an infinite render loop because temporalState.currentTime is
+ * non-null from startup (TimelinePanel fires onTimeChange on mount), so the
+ * predicate returned true before the panel was ever opened, repeatedly
+ * triggering the plugin-loading useEffect during every scrubber update and
+ * cancelling in-flight load() calls before they could register the plugin.
  *
- * The fix: use only panelState["temporal-panel"], matching the exact
- * pattern of the other two registry entries (exploration-effects,
- * neighborhood-panel) that have never exhibited this problem.
+ * The fix: each predicate reads only panelState so plugin loading is
+ * gated strictly on the user opening the corresponding panel.
+ *
+ * These tests import the PRODUCTION predicates from pluginRegistryPredicates.ts
+ * via tsx so that a future regression in GraphWorkspace.tsx is detected here.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 
-// The fixed shouldLoad condition, extracted verbatim from GraphWorkspace.tsx.
-// If this function is ever changed in GraphWorkspace.tsx, this test will catch
-// a regression back to the temporalState-referencing form.
-function temporalShouldLoad({ panelState }) {
-  return Boolean(panelState["temporal-panel"]);
-}
+// tsx is available as a Node loader — use createRequire to exercise the
+// TypeScript module from this .mjs file.
+const require = createRequire(import.meta.url);
+
+// tsx must be registered before requiring .ts files.  The test:plugin-registry
+// script calls this file via `node --import tsx --test`, so tsx is already
+// active in the process when this module runs.
+const {
+  explorationEffectsShouldLoad,
+  neighborhoodPanelShouldLoad,
+  temporalOverlayShouldLoad,
+} = require("../src/workspaces/GraphWorkspace/pluginRegistryPredicates.ts");
+
+// ── temporal-overlay ─────────────────────────────────────────────────────────
 
 test("temporal-overlay shouldLoad: false when panel is closed and no scrubber time", () => {
   assert.equal(
-    temporalShouldLoad({ panelState: { "temporal-panel": false } }),
+    temporalOverlayShouldLoad({ panelState: { "temporal-panel": false } }),
     false,
   );
 });
 
 test("temporal-overlay shouldLoad: false when panel is closed even if scrubber time is set", () => {
-  // Before the fix, this would return true because temporalState?.currentTime
-  // was included in the condition.  TimelinePanel sets currentTime on mount,
-  // so this would have triggered an eager load before the user opened the panel,
-  // causing the render loop.
+  // Before the fix this returned true — TimelinePanel sets currentTime on mount,
+  // causing eager loads that continuously reset the cancelled flag and prevented
+  // plugin registration.
   assert.equal(
-    temporalShouldLoad({
+    temporalOverlayShouldLoad({
       panelState: { "temporal-panel": false },
       temporalState: { currentTime: new Date() },
     }),
@@ -55,14 +58,14 @@ test("temporal-overlay shouldLoad: false when panel is closed even if scrubber t
 
 test("temporal-overlay shouldLoad: true only when the panel is explicitly opened", () => {
   assert.equal(
-    temporalShouldLoad({ panelState: { "temporal-panel": true } }),
+    temporalOverlayShouldLoad({ panelState: { "temporal-panel": true } }),
     true,
   );
 });
 
 test("temporal-overlay shouldLoad: true when panel opened even without a scrubber time", () => {
   assert.equal(
-    temporalShouldLoad({
+    temporalOverlayShouldLoad({
       panelState: { "temporal-panel": true },
       temporalState: { currentTime: null },
     }),
@@ -70,43 +73,34 @@ test("temporal-overlay shouldLoad: true when panel opened even without a scrubbe
   );
 });
 
-// Verify the other two registry entries' shouldLoad conditions are unchanged
-// and still gate only on their respective panelState keys — establishing that
-// they have never had and still don't have the temporalState cross-dependency.
-function effectsShouldLoad({ panelState }) {
-  return Boolean(panelState["effects-panel"]);
-}
-
-function neighborhoodShouldLoad({ panelState }) {
-  return Boolean(panelState["neighborhood-panel"]);
-}
+// ── other entries — confirm they also gate only on panelState ─────────────────
 
 test("exploration-effects shouldLoad: gates only on effects-panel state", () => {
-  assert.equal(effectsShouldLoad({ panelState: { "effects-panel": false } }), false);
-  assert.equal(effectsShouldLoad({ panelState: { "effects-panel": true } }), true);
+  assert.equal(explorationEffectsShouldLoad({ panelState: { "effects-panel": false } }), false);
+  assert.equal(explorationEffectsShouldLoad({ panelState: { "effects-panel": true } }), true);
 });
 
 test("neighborhood-panel shouldLoad: gates only on neighborhood-panel state", () => {
-  assert.equal(neighborhoodShouldLoad({ panelState: { "neighborhood-panel": false } }), false);
-  assert.equal(neighborhoodShouldLoad({ panelState: { "neighborhood-panel": true } }), true);
+  assert.equal(neighborhoodPanelShouldLoad({ panelState: { "neighborhood-panel": false } }), false);
+  assert.equal(neighborhoodPanelShouldLoad({ panelState: { "neighborhood-panel": true } }), true);
 });
 
 test("all three shouldLoad conditions are consistent: none reference temporalState", () => {
-  // A shouldLoad that references temporalState as a load trigger would return
-  // true even when the panel is closed, given a non-null currentTime.
+  // A predicate that regressed to reading temporalState?.currentTime would
+  // return true here even though every panel is closed — detecting the loop bug.
   const nonNullTemporalState = { currentTime: new Date(), activeNodeCount: 6 };
 
   assert.equal(
-    temporalShouldLoad({ panelState: { "temporal-panel": false }, temporalState: nonNullTemporalState }),
+    temporalOverlayShouldLoad({ panelState: { "temporal-panel": false }, temporalState: nonNullTemporalState }),
     false,
     "temporal-overlay must not load when panel is closed, regardless of scrubber time",
   );
   assert.equal(
-    effectsShouldLoad({ panelState: { "effects-panel": false }, temporalState: nonNullTemporalState }),
+    explorationEffectsShouldLoad({ panelState: { "effects-panel": false }, temporalState: nonNullTemporalState }),
     false,
   );
   assert.equal(
-    neighborhoodShouldLoad({ panelState: { "neighborhood-panel": false }, temporalState: nonNullTemporalState }),
+    neighborhoodPanelShouldLoad({ panelState: { "neighborhood-panel": false }, temporalState: nonNullTemporalState }),
     false,
   );
 });
