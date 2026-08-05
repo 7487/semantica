@@ -644,8 +644,13 @@ class VectorStore:
                 return self._backend_store.search(query_vector, top_k=k, **options)
             elif hasattr(self._backend_store, 'search_similar'):
                 return self._backend_store.search_similar(query_vector, k=k, **options)
+            elif hasattr(self._backend_store, 'search_vectors'):
+                # Some stores (QdrantStore, MilvusStore, PineconeStore) name
+                # their count parameter differently (limit vs k), so bind it
+                # positionally rather than guessing the keyword.
+                return self._backend_store.search_vectors(query_vector, k, **options)
             else:
-                raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not have search or search_similar method")
+                raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not have search, search_similar, or search_vectors method")
         
         # Use in-memory implementation
         tracking_id = self.progress_tracker.start_tracking(

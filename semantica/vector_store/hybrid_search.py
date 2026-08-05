@@ -298,9 +298,13 @@ class HybridSearch:
         Returns:
             List of search results
         """
-        # Handle legacy argument top_k
+        # Handle legacy argument top_k. Must be popped, not just read: it's
+        # later forwarded via **options to VectorStore.search_vectors(),
+        # which itself passes an explicit top_k=k to some backends (e.g.
+        # sqlite, pgvector) — a leftover 'top_k' in options collides with
+        # that and raises "got multiple values for keyword argument".
         if "top_k" in options:
-            k = options["top_k"]
+            k = options.pop("top_k")
         # query_vector is derived from `query` above; drop any stray value
         # passed in **options so it doesn't collide with that derivation.
         # (**options is a fresh dict per call, so this can't affect the caller.)
@@ -373,12 +377,17 @@ class HybridSearch:
 
                     # Normalize to the same result schema the local search
                     # path produces, since backends don't all return the
-                    # same set of keys.
+                    # same set of keys. Unlike the local path (which always
+                    # knows distance = 1.0 - cosine_similarity), backends use
+                    # different metrics (L2, inner product, cosine, ...), so
+                    # a missing distance is left as None rather than guessed
+                    # from score — assuming cosine semantics would produce
+                    # nonsensical values for e.g. raw L2 distances.
                     normalized_results = [
                         {
                             "id": result.get("id"),
                             "score": result.get("score", 0.0),
-                            "distance": result.get("distance", result.get("score", 0.0)),
+                            "distance": result.get("distance"),
                             "metadata": result.get("metadata", {}),
                         }
                         for result in backend_results[:k]
