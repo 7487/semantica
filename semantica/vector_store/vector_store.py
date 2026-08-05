@@ -67,6 +67,7 @@ License: MIT
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 import concurrent.futures
+import inspect
 
 import numpy as np
 
@@ -113,7 +114,7 @@ class VectorStore:
         self.dimension = self.config.get("dimension", 768)
 
         # Initialize backend-specific store if not using generic in-memory implementation
-        self._backend_store = None
+        self._backend_store: Any = None
         self.embedder = None  # Always initialized; may be overridden in _init_backend_store
         if self.backend != "inmemory":
             self._init_backend_store()
@@ -496,8 +497,16 @@ class VectorStore:
                     # Some stores have store_vectors method
                     return self._backend_store.store_vectors(vectors, metadata=metadata, **options)
                 else:
-                    # add_vectors accepts metadata directly (e.g. FAISSStore)
-                    return self._backend_store.add_vectors(vectors, metadata=metadata, **options)
+                    try:
+                        add_vectors_params = inspect.signature(self._backend_store.add_vectors).parameters
+                        supports_metadata = 'metadata' in add_vectors_params or any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD for p in add_vectors_params.values()
+                        )
+                    except (ValueError, TypeError):
+                        supports_metadata = True
+                    if supports_metadata:
+                        return self._backend_store.add_vectors(vectors, metadata=metadata, **options)
+                    return self._backend_store.add_vectors(vectors, **options)
             else:
                 raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not have add or add_vectors method")
         
