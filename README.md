@@ -73,7 +73,7 @@ Semantica sits underneath your LLM, vector store, and agent framework as a deter
 - **Knowledge Pipeline:** Multi-source ingestion, entity-aware chunking, NER/relation/event extraction, and knowledge graph construction, with semantic deduplication and provenance-preserving merges throughout
 - **Enterprise Data Platforms:** Native connectors for Databricks (Unity Catalog + Delta Lake, PAT/OAuth M2M auth, catalog/schema/table/lineage introspection) and Snowflake (warehouse/database/schema, key-pair and OAuth auth), so tables already living in your lakehouse or warehouse become graph nodes with provenance, not another export/import hop
 - **Graph Analytics:** Centrality, community detection, link prediction, and shortest-path queries over the graph you just built
-- **Polyglot Graph Storage:** Native RDF (Blazegraph, Apache Jena, Eclipse RDF4J via SPARQL) and Labeled Property Graphs (Neo4j, FalkorDB, Apache AGE, AWS Neptune via Cypher), plus vector stores, all swappable without touching your code
+- **Polyglot Graph Storage:** Native RDF (embedded Oxigraph, Blazegraph, Apache Jena, Eclipse RDF4J via SPARQL) and Labeled Property Graphs (Neo4j, FalkorDB, Apache AGE, AWS Neptune via Cypher), plus vector stores, all swappable without touching your code
 - **Visualization:** Explore any graph, ontology, or timeline in an interactive browser workbench
 - **Drop-in Integrations:** Native Agno support, a full-featured MCP server, a comprehensive CLI, a REST API, and plugins across major editors
 
@@ -160,7 +160,7 @@ Sources → Ingest → Parse → Normalize → Split → Extract → Conflict De
 - **Extract → Conflict Detection → Deduplication:** NER, relations, events, triplets; conflicting facts flagged and resolved before they merge
 - **Knowledge Graph:** `GraphBuilder` constructs the graph; bi-temporal facts and full graph analytics (centrality, communities, link prediction) run on top of it
 - **Ontology · Reasoning · Provenance · Decisions:** the intelligence layer sitting on the KG, with SHACL/OWL governance, Rete/Datalog/SPARQL inference, W3C PROV-O lineage, and first-class decision records
-- **Storage:** polyglot by design, with RDF triple stores (Blazegraph, Apache Jena, Eclipse RDF4J), Labeled Property Graphs (Neo4j, FalkorDB, Apache AGE, AWS Neptune), and vector stores, all swappable without touching your code
+- **Storage:** polyglot by design, with RDF triple stores (embedded Oxigraph, Blazegraph, Apache Jena, Eclipse RDF4J), Labeled Property Graphs (Neo4j, FalkorDB, Apache AGE, AWS Neptune), and vector stores, all swappable without touching your code
 - **Outputs:** export (RDF, OWL, Parquet, Cypher, JSON-LD), interactive visualization, and access via REST API, MCP server, or CLI
 
 **→ [Full Mermaid diagrams for the pipeline and the decision intelligence lifecycle](ARCHITECTURE.md)**
@@ -1145,7 +1145,7 @@ if report.valid:
 | **Ontology Hub** | SHACL Studio · visual editor · cross-ontology alignments · health dashboard |
 | **Vector Store** | FAISS · Pinecone · Weaviate · Qdrant · Milvus · PgVector · hybrid + filtered search |
 | **Graph Databases (LPG)** | Neo4j · FalkorDB · Apache AGE · AWS Neptune |
-| **Triple Stores (RDF)** | Blazegraph · Apache Jena · Eclipse RDF4J · unified `TripletStore` interface · SPARQL query & bulk load |
+| **Triple Stores (RDF)** | Oxigraph (embedded) · Blazegraph · Apache Jena · Eclipse RDF4J · unified `TripletStore` interface · SPARQL query & bulk load |
 | **Enterprise Data Platforms** | Databricks (`DatabricksIngestor`: Unity Catalog + Delta Lake, PAT/OAuth M2M, table/query ingestion, catalog/schema/table/lineage introspection) · Snowflake (`SnowflakeIngestor`: warehouse/database/schema, password/key-pair/OAuth auth) |
 | **LLM Providers** | **All already supported today:** OpenAI (GPT-4o, o1, o3) · Anthropic (Claude) · Google Gemini · Mistral · Meta Llama · Groq · Cohere · Azure OpenAI · AWS Bedrock · Ollama · DeepSeek · Perplexity · Together AI · Fireworks AI · Replicate · HuggingFace · via `semantica.llms` and LiteLLM |
 
@@ -1511,6 +1511,7 @@ pip install semantica[graph-neo4j]          # Neo4j graph store (LPG)
 pip install semantica[graph-falkordb]       # FalkorDB graph store (LPG)
 pip install semantica[graph-apache-age]     # Apache AGE graph store (LPG)
 pip install semantica[graph-amazon-neptune] # AWS Neptune graph store (LPG)
+pip install semantica[tripletstore-oxigraph] # Embedded in-memory/on-disk RDF store
 # RDF triple stores (Blazegraph, Apache Jena, Eclipse RDF4J) need no extra:
 # semantica.triplet_store talks SPARQL over HTTP using the core `requests` dependency
 pip install semantica[vectorstore-qdrant]   # Qdrant vector store

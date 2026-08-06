@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Embedded Oxigraph backend for `TripletStore`** (#838, closes #834) by @Linxiushen
+  - Added `OxigraphStore` (`semantica/triplet_store/oxigraph_store.py`), an in-process SPARQL 1.1 store via the optional `pyoxigraph` dependency — no external server (Blazegraph/Jena/RDF4J/Anzo) required, fixing the confusing plain connection-error failure `TripletStore` previously produced with no server running (no local Docker daemon, no Java, CI, or a fresh laptop)
+  - Runs fully in memory by default, or persists to a local directory via `TripletStore(backend="oxigraph", path=...)`; reopening the same directory resumes existing data
+  - Full CRUD, native batch loading (`Store.extend`), named-graph scoping (`graph=` on add/query), and SPARQL SELECT/ASK/CONSTRUCT/DESCRIBE result mapping matching the existing backend contract; reuses `sparql_escaping.py` for datatype-IRI resolution instead of reimplementing it, and preserves RDF literal datatype/language metadata across writes, reads, and query results
+  - New optional `semantica[tripletstore-oxigraph]` extra (`pyoxigraph>=0.5.0`), included in the `all` extra; the import is lazy, so `TripletStore` and the rest of Semantica keep working without `pyoxigraph` installed
+  - Wired into `TripletStore` (`backend="oxigraph"`, added to `SUPPORTED_BACKENDS` and `NAMED_GRAPH_CAPABLE_BACKENDS`) and exported from `semantica.triplet_store`; README, module reference, glossary, and usage guide updated with install/configuration examples
+  - **Fixed along the way**: a missing `pyoxigraph` install surfaced as a generic wrapped `ProcessingError` instead of the underlying `ImportError` and its install hint, because `TripletStore._initialize_store_backend()`'s broad `except Exception` caught and rewrapped it; `ImportError` is now re-raised as-is so the `pip install "semantica[tripletstore-oxigraph]"` hint reaches the caller
+  - New integration tests in `tests/triplet_store/test_oxigraph_store.py` covering persistence/reopen, named-graph isolation, SELECT/ASK/CONSTRUCT result shapes, and the missing-dependency error message; skipped automatically when `pyoxigraph` isn't installed, and not yet exercised in CI since it doesn't install the optional extra or run the Python test suite
+
 - **PROV-O trust blockers and general spec completeness for `ProvenanceManager`** (#825) by @KaifAhmad1
   - **Invalidation instead of hard delete**: new `ProvenanceManager.invalidate(entity_id, agent_id, reason=None)` tombstones an entry — archives its pre-invalidation state under a stable versioned key, then appends the invalidated entry (`invalidated`, `invalidated_at_time`, `invalidated_by`, `invalidation_reason`) — instead of mutating or deleting it, so an audit can prove a fact existed, was reviewed, and was retracted. `ProvenanceManager.clear()` remains the bulk dev/test store-reset utility it always was; it was not repurposed
   - **Hash-chained integrity**: every entry now carries `sequence_id`/`previous_checksum`, chaining it to the entry immediately before it in insertion order. New `ProvenanceManager.verify_chain()` walks the chain and reports any break, including a row hard-deleted directly from the underlying table — something a lone per-row SHA-256 checksum can never detect on its own. `compute_checksum()` now also covers `agent_id`/`agent_type`, the lineage-link fields, and the invalidation fields, closing several fields that previously weren't tamper-evident
@@ -59,6 +68,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Documented the file contract and workflow in `docs/reference/context.md`; 43 new tests in `tests/context/test_agent_memory_markdown.py` cover round-trip losslessness, idempotency, validation errors, rollback on failure, and vector-store sync ordering
 
 ### Fixed
+
+- **`QdrantStore.search_vectors()` returned results keyed by `"payload"` instead of `"metadata"`** (#841, closes #840) by @divyankshah
+  - `QdrantCollection.search_points()` built its result dicts as `{"id", "score", "payload"}`, while `PineconeStore.search_vectors()` and every other backend consumed by `HybridSearch` use `"metadata"`. This silently dropped Qdrant metadata from results and made `HybridSearch.filter_by_metadata()` reject every candidate whenever a filter was applied, since it looks up `result["metadata"]` and got nothing back
+  - Normalized `search_points()` to return `"metadata"` instead of `"payload"`, matching the existing convention; no other module reads the old key, so the rename is a straight fix rather than a partial one
+  - Extended `tests/vector_store/test_vector_store_deepdive.py::test_qdrant_store` to assert the returned key is `"metadata"` (not `"payload"`) and that `HybridSearch.filter_by_metadata()` correctly matches against Qdrant results end-to-end
 
 - **Explorer Temporal panel never rendered after clicking the toolbar button** (#830, #836) by @Sameer6305
   - The panel stayed permanently stuck on "Loading temporal…" in `npm run dev`, with repeating "Maximum update depth exceeded" errors in the browser console. Two independent render loops were responsible:

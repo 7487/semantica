@@ -165,7 +165,7 @@ class QdrantCollection:
                     {
                         "id": result.id,
                         "score": result.score,
-                        "payload": result.payload or {},
+                        "metadata": result.payload or {},
                     }
                 )
 

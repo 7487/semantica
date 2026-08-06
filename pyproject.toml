@@ -146,6 +146,9 @@ graph-all = [
   "semantica[graph-neo4j,graph-falkordb,graph-amazon-neptune,graph-apache-age]"
 ]
 
+# ---- Triplet Store Backends ----
+tripletstore-oxigraph = ["pyoxigraph>=0.5.0"]
+
 # ---- Vector Store Backends ----
 vectorstore-qdrant = ["qdrant-client>=1.0.0"]
 vectorstore-weaviate = ["weaviate-client>=4.0.0"]
@@ -239,8 +242,8 @@ explorer-lite = [
 
 # Everything (cross-platform — gpu excluded; install semantica[gpu] separately on Linux)
 all = [
-  "semantica[dev,viz,infra,cloud,monitoring,watch,llm-all,models-huggingface,split-all,graph-all,vectorstore-all,parse-docling,ingest-parquet,ingest-arrow,shacl,explorer]",
-  "semantica[dev,viz,infra,cloud,monitoring,watch,llm-all,models-huggingface,split-all,graph-all,vectorstore-all,parse-docling,ingest-parquet,ingest-arrow,shacl,agno]"
+  "semantica[dev,viz,infra,cloud,monitoring,watch,llm-all,models-huggingface,split-all,graph-all,tripletstore-oxigraph,vectorstore-all,parse-docling,ingest-parquet,ingest-arrow,shacl,explorer]",
+  "semantica[dev,viz,infra,cloud,monitoring,watch,llm-all,models-huggingface,split-all,graph-all,tripletstore-oxigraph,vectorstore-all,parse-docling,ingest-parquet,ingest-arrow,shacl,agno]"
 ]
 
 # ---------------- ENTRYPOINTS ----------------
