@@ -346,9 +346,6 @@ class DecisionEmbeddingPipeline:
                 # If vector is all zeros (placeholder), we use the score from search_vectors
                 if not np.any(original_vec):
                     score = candidate_embeddings["scores"][idx]
-                    # Simple normalization if score looks like a distance (FAISS)
-                    if score > 1.0:
-                        score = 1.0 / (1.0 + score)
                     sim["semantic_similarity"] = score
                     # Recompute overall similarity
                     sim["similarity"] = (actual_weights[0] * score) + (actual_weights[1] * sim["structural_similarity"])
@@ -793,29 +790,69 @@ class DecisionEmbeddingPipeline:
         if query_vector is None:
             query_vector = np.zeros(self.embedding_dimension)
             
-        results = self.vector_store.search_vectors(query_vector, k=limit, **(filters or {}))
-        
         embeddings = []
         metadata = []
         scores = []
         
-        for res in results:
-            vector_metadata = res.get("metadata", {})
+        # If we have filters, we might need to fetch more candidates iteratively
+        # if the backend doesn't support native filtering and we rely on post-filtering.
+        current_k = limit
+        max_k = limit * 10 if limit else 100000
+        
+        while current_k <= max_k:
+            results = self.vector_store.search_vectors(query_vector, k=current_k, filter=filters)
             
-            # Extract structural embedding if available
-            struct_emb = vector_metadata.get("structural_embedding")
-            if struct_emb:
-                struct_emb = np.array(struct_emb)
-            else:
-                struct_emb = np.zeros(self.node_embedding_dimension)
+            # Post-filter and collect
+            collected_embeddings = []
+            collected_metadata = []
+            collected_scores = []
             
-            vector = res.get("vector")
-            if vector is None:
-                vector = np.zeros(self.embedding_dimension)
+            for res in results:
+                # Handle unstandardized backends (e.g. Qdrant uses payload, Pinecone uses metadata)
+                vector_metadata = res.get("metadata") or res.get("payload") or {}
                 
-            embeddings.append((vector, struct_emb))
-            metadata.append(vector_metadata)
-            scores.append(res.get("score", 0.0))
+                # Apply post-filtering for backends that ignored the `filter` param
+                if filters:
+                    match = True
+                    for key, value in filters.items():
+                        if key not in vector_metadata or vector_metadata.get(key) != value:
+                            match = False
+                            break
+                    if not match:
+                        continue
+                
+                # Extract structural embedding if available
+                struct_emb = vector_metadata.get("structural_embedding")
+                if struct_emb:
+                    struct_emb = np.array(struct_emb)
+                else:
+                    struct_emb = np.zeros(self.node_embedding_dimension)
+                
+                # Handle unstandardized backends (e.g. Pinecone might use values)
+                vector = res.get("vector")
+                if vector is None:
+                    vector = res.get("values")
+                if vector is None:
+                    vector = np.zeros(self.embedding_dimension)
+                    
+                collected_embeddings.append((vector, struct_emb))
+                collected_metadata.append(vector_metadata)
+                
+                if "distance" in res and res["distance"] is not None:
+                    collected_scores.append(1.0 / (1.0 + float(res["distance"])))
+                else:
+                    collected_scores.append(float(res.get("score", 0.0)))
+            
+            # If we fetched enough matching results, or if the backend returned fewer results
+            # than we asked for (meaning we hit the end of the db), we can stop fetching.
+            if len(collected_embeddings) >= limit or len(results) < current_k:
+                embeddings = collected_embeddings[:limit]
+                metadata = collected_metadata[:limit]
+                scores = collected_scores[:limit]
+                break
+                
+            # Otherwise, double the search pool and try again
+            current_k *= 2
         
         return {"embeddings": embeddings, "metadata": metadata, "scores": scores}
     
@@ -835,8 +872,6 @@ class DecisionEmbeddingPipeline:
             # Calculate semantic similarity
             if not np.any(sem_emb) and candidate_scores:
                 similarity = candidate_scores[i]
-                if similarity > 1.0:
-                    similarity = 1.0 / (1.0 + similarity)
             else:
                 similarity = self.hybrid_calculator._calculate_similarity(
                     query_embedding, sem_emb, "cosine"

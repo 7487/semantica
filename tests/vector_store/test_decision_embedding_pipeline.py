@@ -395,6 +395,9 @@ class TestDecisionEmbeddingPipelineEdgeCases:
 
     def test_find_similar_decisions_real_faiss_backend(self):
         """Regression test for FAISS backend crashing due to .vectors access (issue #839)"""
+        # Skip if faiss is not installed
+        pytest.importorskip("faiss")
+        
         try:
             from semantica.vector_store import VectorStore
         except ImportError:
@@ -402,6 +405,9 @@ class TestDecisionEmbeddingPipelineEdgeCases:
             
         # Create a real VectorStore with FAISS backend
         vs = VectorStore(backend="faiss", config={"dimension": 384})
+        # Force fallback random embeddings of the exact dimension (384) to avoid sentence-transformers 
+        # dependency or default 128-d mismatches.
+        vs.embedder = None
         vs.initialize_decision_pipeline()
         
         # Store a couple of dummy decisions to ensure index has data
@@ -425,6 +431,7 @@ class TestDecisionEmbeddingPipelineEdgeCases:
             pytest.skip("VectorStore not available")
             
         vs = VectorStore(backend="inmemory", config={"dimension": 384})
+        vs.embedder = None
         vs.initialize_decision_pipeline()
         
         vs.store_decision(scenario="Apple product launch", category="tech")
