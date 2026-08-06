@@ -232,6 +232,16 @@ class TestVectorStoreDeepDive(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["id"], "vec_1")
 
+        self.assertIn("metadata", results[0])
+        self.assertNotIn("payload", results[0])
+        self.assertEqual(results[0]["metadata"], {"type": "a"})
+
+        hybrid = HybridSearch()
+        matched = hybrid.filter_by_metadata(
+            results, MetadataFilter().eq("type", "a")
+        )
+        self.assertEqual(len(matched), 1)
+
     @patch('semantica.vector_store.weaviate_store.weaviate')
     @patch('semantica.vector_store.weaviate_store.MetadataQuery')
     @patch('semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE', True)
