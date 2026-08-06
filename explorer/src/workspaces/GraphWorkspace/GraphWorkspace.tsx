@@ -2323,7 +2323,11 @@ export function GraphWorkspace({ externalFocusNodeId, externalFocusToken }: Grap
       const structureLayerChanged =
         prev.structureLayer?.cacheKey !== diagnostics.structureLayer?.cacheKey ||
         prev.structureLayer?.lastDrawAt !== diagnostics.structureLayer?.lastDrawAt ||
-        prev.structureLayer?.enabled !== diagnostics.structureLayer?.enabled;
+        prev.structureLayer?.enabled !== diagnostics.structureLayer?.enabled ||
+        prev.structureLayer?.disabledReason !== diagnostics.structureLayer?.disabledReason ||
+        prev.structureLayer?.curveCount !== diagnostics.structureLayer?.curveCount ||
+        prev.structureLayer?.bridgeCurveCount !== diagnostics.structureLayer?.bridgeCurveCount ||
+        prev.structureLayer?.backboneCurveCount !== diagnostics.structureLayer?.backboneCurveCount;
 
       // distanceVisual is compared by reference: GraphCanvas passes the same
       // object when distances haven't changed.
