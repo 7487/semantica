@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`QdrantStore.search_vectors()` returned results keyed by `"payload"` instead of `"metadata"`** (#841, closes #840) by @divyankshah
+  - `QdrantCollection.search_points()` built its result dicts as `{"id", "score", "payload"}`, while `PineconeStore.search_vectors()` and every other backend consumed by `HybridSearch` use `"metadata"`. This silently dropped Qdrant metadata from results and made `HybridSearch.filter_by_metadata()` reject every candidate whenever a filter was applied, since it looks up `result["metadata"]` and got nothing back
+  - Normalized `search_points()` to return `"metadata"` instead of `"payload"`, matching the existing convention; no other module reads the old key, so the rename is a straight fix rather than a partial one
+  - Extended `tests/vector_store/test_vector_store_deepdive.py::test_qdrant_store` to assert the returned key is `"metadata"` (not `"payload"`) and that `HybridSearch.filter_by_metadata()` correctly matches against Qdrant results end-to-end
+
 - **Explorer Temporal panel never rendered after clicking the toolbar button** (#830, #836) by @Sameer6305
   - The panel stayed permanently stuck on "Loading temporal…" in `npm run dev`, with repeating "Maximum update depth exceeded" errors in the browser console. Two independent render loops were responsible:
   - **Diagnostics state churn**: `handleDiagnosticsChange` unconditionally called `setGraphDiagnosticsState` on every invocation. `buildEffectAvailability` (inside `GraphCanvas`'s diagnostics `useEffect`) always returns a new object, so each call scheduled a re-render that immediately retriggered the effect. Fixed by comparing the incoming snapshot field-by-field against the last accepted value via `lastDiagnosticsRef` before calling `setState`
