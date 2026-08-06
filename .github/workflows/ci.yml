@@ -30,11 +30,18 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: explorer/package-lock.json
-      - name: Build Explorer frontend
+      - name: Install Explorer frontend dependencies
+        working-directory: explorer
+        run: npm ci
+      - name: Test Explorer frontend
         working-directory: explorer
         run: |
-          npm ci
-          npm run build
+          npm run test:graph-store
+          npm run test:graph-workspace
+          npm run test:plugin-registry
+      - name: Build Explorer frontend
+        working-directory: explorer
+        run: npm run build
       - run: pip install build
       - run: python -m build
       - name: Verify Explorer frontend is packaged
