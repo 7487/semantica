@@ -67,6 +67,7 @@ License: MIT
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 import concurrent.futures
+import inspect
 
 import numpy as np
 
@@ -113,7 +114,7 @@ class VectorStore:
         self.dimension = self.config.get("dimension", 768)
 
         # Initialize backend-specific store if not using generic in-memory implementation
-        self._backend_store = None
+        self._backend_store: Any = None
         self.embedder = None  # Always initialized; may be overridden in _init_backend_store
         if self.backend != "inmemory":
             self._init_backend_store()
@@ -496,7 +497,15 @@ class VectorStore:
                     # Some stores have store_vectors method
                     return self._backend_store.store_vectors(vectors, metadata=metadata, **options)
                 else:
-                    # Basic add_vectors without metadata
+                    try:
+                        add_vectors_params = inspect.signature(self._backend_store.add_vectors).parameters
+                        supports_metadata = 'metadata' in add_vectors_params or any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD for p in add_vectors_params.values()
+                        )
+                    except (ValueError, TypeError):
+                        supports_metadata = True
+                    if supports_metadata:
+                        return self._backend_store.add_vectors(vectors, metadata=metadata, **options)
                     return self._backend_store.add_vectors(vectors, **options)
             else:
                 raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not have add or add_vectors method")
@@ -644,8 +653,13 @@ class VectorStore:
                 return self._backend_store.search(query_vector, top_k=k, **options)
             elif hasattr(self._backend_store, 'search_similar'):
                 return self._backend_store.search_similar(query_vector, k=k, **options)
+            elif hasattr(self._backend_store, 'search_vectors'):
+                # Some stores (QdrantStore, MilvusStore, PineconeStore) name
+                # their count parameter differently (limit vs k), so bind it
+                # positionally rather than guessing the keyword.
+                return self._backend_store.search_vectors(query_vector, k, **options)
             else:
-                raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not have search or search_similar method")
+                raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not have search, search_similar, or search_vectors method")
         
         # Use in-memory implementation
         tracking_id = self.progress_tracker.start_tracking(
