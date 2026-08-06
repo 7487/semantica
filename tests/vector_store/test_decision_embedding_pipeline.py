@@ -393,6 +393,53 @@ class TestDecisionEmbeddingPipelineEdgeCases:
         assert all("decision_data" in result for result in results)
         assert all("vector_id" in result for result in results)
 
+    def test_find_similar_decisions_real_faiss_backend(self):
+        """Regression test for FAISS backend crashing due to .vectors access (issue #839)"""
+        try:
+            from semantica.vector_store import VectorStore
+        except ImportError:
+            pytest.skip("VectorStore not available")
+            
+        # Create a real VectorStore with FAISS backend
+        vs = VectorStore(backend="faiss", config={"dimension": 384})
+        vs.initialize_decision_pipeline()
+        
+        # Store a couple of dummy decisions to ensure index has data
+        vs.store_decision(scenario="A test decision 1", category="test")
+        vs.store_decision(scenario="A test decision 2", category="test")
+        
+        # This will call _get_candidate_embeddings without a mock
+        # Before the fix, this crashed with AttributeError: 'VectorStore' object has no attribute 'vectors'
+        results = vs.search_decisions("test query", limit=2)
+        
+        # Assert it returns results and doesn't crash
+        assert isinstance(results, list)
+        assert len(results) <= 2
+
+
+    def test_find_similar_decisions_real_inmemory_backend(self):
+        """Regression test for inmemory backend preserving behavior after issue #839 fix"""
+        try:
+            from semantica.vector_store import VectorStore
+        except ImportError:
+            pytest.skip("VectorStore not available")
+            
+        vs = VectorStore(backend="inmemory", config={"dimension": 384})
+        vs.initialize_decision_pipeline()
+        
+        vs.store_decision(scenario="Apple product launch", category="tech")
+        vs.store_decision(scenario="Microsoft earnings report", category="tech")
+        vs.store_decision(scenario="Local bakery opens", category="food")
+        
+        results = vs.search_decisions("software company", limit=2)
+        
+        assert isinstance(results, list)
+        assert len(results) <= 2
+        
+        if len(results) > 0:
+            assert "similarity" in results[0]
+            assert "semantic_similarity" in results[0]
+            assert "structural_similarity" in results[0]
 
 if __name__ == "__main__":
     pytest.main([__file__])
