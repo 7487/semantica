@@ -658,6 +658,38 @@ def test_empty_markdown_export_and_import_are_no_ops():
     assert memory.import_data("", format="markdown") == 0
 
 
+def test_markdown_string_path_read_errors_are_not_treated_as_content(tmp_path):
+    source = tmp_path / "memory.md"
+    source.write_text(
+        markdown_document(required_frontmatter(), "Content"), encoding="utf-8"
+    )
+    memory = AgentMemory()
+
+    with patch.object(
+        memory,
+        "_read_markdown_path",
+        side_effect=PermissionError("read denied"),
+    ):
+        with pytest.raises(PermissionError, match="read denied"):
+            memory.import_data(str(source), format="markdown")
+
+
+def test_markdown_string_path_inspection_errors_are_actionable():
+    memory = AgentMemory()
+
+    with patch(
+        "semantica.context.agent_memory.Path.exists",
+        side_effect=PermissionError("inspection denied"),
+    ):
+        with pytest.raises(
+            OSError, match="Failed to inspect possible Markdown import path"
+        ) as exc_info:
+            memory.import_data("memory.md", format="markdown")
+
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+    assert "inspection denied" in str(exc_info.value.__cause__)
+
+
 def test_legacy_dict_import_behavior_is_unchanged():
     memory = AgentMemory()
     data = {

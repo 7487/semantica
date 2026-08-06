@@ -1865,10 +1865,15 @@ class AgentMemory:
             if "\n" not in data and "\r" not in data:
                 candidate = Path(data)
                 try:
-                    if candidate.exists():
-                        documents = self._read_markdown_path(candidate)
-                except OSError:
-                    pass
+                    candidate_exists = candidate.exists()
+                except OSError as exc:
+                    raise OSError(
+                        "Failed to inspect possible Markdown import "
+                        f"path: {candidate}"
+                    ) from exc
+
+                if candidate_exists:
+                    documents = self._read_markdown_path(candidate)
 
             if documents is None:
                 documents = [("markdown document", data)]
