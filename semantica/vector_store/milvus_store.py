@@ -523,6 +523,20 @@ class MilvusStore:
             )
             raise
 
+    def get_vector(self, vector_id: str) -> Optional[np.ndarray]:
+        """Get vector by ID."""
+        raise NotImplementedError(
+            "MilvusStore generates its own INT64 primary keys via auto_id=True and drops string IDs "
+            "during insertion, making direct ID lookup impossible."
+        )
+
+    def get_metadata(self, vector_id: str) -> Optional[Dict[str, Any]]:
+        """Get metadata by ID."""
+        raise NotImplementedError(
+            "MilvusStore generates its own INT64 primary keys via auto_id=True and drops string IDs "
+            "during insertion, making direct ID lookup impossible."
+        )
+
     def get_stats(self, collection_name: Optional[str] = None) -> Dict[str, Any]:
         """Get collection statistics."""
         if self.collection is None and collection_name:

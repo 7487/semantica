@@ -567,8 +567,8 @@ class VectorStore:
         
         # Save Python-level data
         data = {
-            "vectors": self.vectors,
-            "metadata": self.metadata,
+            "vectors": getattr(self, "vectors", {}),
+            "metadata": getattr(self, "metadata", {}),
             "config": self.config,
             "backend": self.backend,
             "dimension": self.dimension
@@ -759,11 +759,21 @@ class VectorStore:
 
     def get_vector(self, vector_id: str) -> Optional[np.ndarray]:
         """Get vector by ID."""
-        return self.vectors.get(vector_id)
+        if self.backend == "inmemory":
+            return self.vectors.get(vector_id)
+        elif self._backend_store and hasattr(self._backend_store, "get_vector"):
+            return self._backend_store.get_vector(vector_id)
+        else:
+            raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not implement get_vector")
 
     def get_metadata(self, vector_id: str) -> Optional[Dict[str, Any]]:
         """Get metadata for vector."""
-        return self.metadata.get(vector_id)
+        if self.backend == "inmemory":
+            return self.metadata.get(vector_id)
+        elif self._backend_store and hasattr(self._backend_store, "get_metadata"):
+            return self._backend_store.get_metadata(vector_id)
+        else:
+            raise NotImplementedError(f"Backend store {type(self._backend_store).__name__} does not implement get_metadata")
 
     def initialize_decision_pipeline(
         self,
