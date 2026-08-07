@@ -1,6 +1,8 @@
 import errno
+import os
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -696,6 +698,85 @@ def test_markdown_string_path_inspection_errors_are_actionable():
     assert exc_info.value.filename == "blocked-memory.md"
     assert "inspection denied" in str(exc_info.value)
     assert exc_info.value.__cause__ is original_error
+
+
+@pytest.mark.parametrize("use_string_path", [False, True])
+def test_markdown_import_rejects_symlinked_file(tmp_path, use_string_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        markdown_document(required_frontmatter(), "Do not import"),
+        encoding="utf-8",
+    )
+    source = tmp_path / "memory.md"
+    source.symlink_to(outside)
+    payload = str(source) if use_string_path else source
+    memory = AgentMemory()
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        memory.import_data(payload, format="markdown")
+
+    assert memory.count() == 0
+
+
+@pytest.mark.parametrize("use_string_path", [False, True])
+def test_markdown_import_rejects_broken_symlink(tmp_path, use_string_path):
+    source = tmp_path / "missing-memory.md"
+    source.symlink_to(tmp_path / "missing-target.md")
+    payload = str(source) if use_string_path else source
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        AgentMemory().import_data(payload, format="markdown")
+
+
+@pytest.mark.parametrize("use_string_path", [False, True])
+def test_markdown_import_rejects_symlinked_directory(tmp_path, use_string_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "memory.md").write_text(
+        markdown_document(required_frontmatter(), "Do not import"),
+        encoding="utf-8",
+    )
+    source = tmp_path / "memory-export"
+    source.symlink_to(outside, target_is_directory=True)
+    payload = str(source) if use_string_path else source
+    memory = AgentMemory()
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        memory.import_data(payload, format="markdown")
+
+    assert memory.count() == 0
+
+
+def test_markdown_import_rejects_symlinked_file_in_directory(tmp_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        markdown_document(required_frontmatter(), "Do not import"),
+        encoding="utf-8",
+    )
+    source = tmp_path / "memory-export"
+    source.mkdir()
+    (source / "memory.md").symlink_to(outside)
+    memory = AgentMemory()
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        memory.import_data(source, format="markdown")
+
+    assert memory.count() == 0
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="requires O_NOFOLLOW")
+def test_markdown_import_does_not_follow_symlink_raced_before_open(tmp_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        markdown_document(required_frontmatter(), "Do not import"),
+        encoding="utf-8",
+    )
+    source = tmp_path / "memory.md"
+    source.symlink_to(outside)
+
+    with patch.object(Path, "is_symlink", return_value=False):
+        with pytest.raises(ValueError, match="symbolic link"):
+            AgentMemory._read_markdown_file(source)
 
 
 def test_legacy_dict_import_behavior_is_unchanged():

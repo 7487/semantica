@@ -626,7 +626,8 @@ files is idempotent. Memory-local `entities` and `relationships` are preserved a
 provenance but are not applied to `ContextGraph` by Markdown import. Use a dedicated
 export directory: matching files are overwritten, but unrelated or stale Markdown
 files are not deleted automatically. Export refuses to overwrite symbolic links and
-uses atomic file replacement. Timestamp offsets are preserved in Markdown and
+uses atomic file replacement; import also refuses symbolic-link files and directories.
+Timestamp offsets are preserved in Markdown and
 normalized to UTC only for comparisons, so aware and local-naive records can be
 queried together safely. Vector-store writes are deferred until the in-memory import
 commits; adapter synchronization remains best-effort and logs failures.

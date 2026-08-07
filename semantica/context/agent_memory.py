@@ -59,9 +59,11 @@ License: MIT
 """
 
 import copy
+import errno
 import hashlib
 import os
 import re
+import stat
 import tempfile
 from collections import deque
 from dataclasses import dataclass, field
@@ -1865,7 +1867,8 @@ class AgentMemory:
             if "\n" not in data and "\r" not in data:
                 candidate = Path(data)
                 try:
-                    candidate_exists = candidate.exists()
+                    candidate_is_symlink = candidate.is_symlink()
+                    candidate_exists = candidate_is_symlink or candidate.exists()
                 except OSError as exc:
                     error_message = (
                         "Failed to inspect possible Markdown import "
@@ -1907,28 +1910,63 @@ class AgentMemory:
         return memories
 
     def _read_markdown_path(self, path: Path) -> List[Tuple[str, str]]:
+        if path.is_symlink():
+            raise ValueError(f"Refusing to import Markdown symbolic link: {path}")
+
         if not path.exists():
             raise FileNotFoundError(f"Markdown import path does not exist: {path}")
 
         if path.is_dir():
-            file_paths = sorted(
-                (
-                    file_path
-                    for file_path in path.iterdir()
-                    if file_path.is_file()
-                    and file_path.suffix.lower() in self._MARKDOWN_EXTENSIONS
-                ),
-                key=lambda file_path: (file_path.name.casefold(), file_path.name),
-            )
+            file_paths = []
+            for file_path in path.iterdir():
+                if file_path.suffix.lower() not in self._MARKDOWN_EXTENSIONS:
+                    continue
+                if file_path.is_symlink():
+                    raise ValueError(
+                        f"Refusing to import Markdown symbolic link: {file_path}"
+                    )
+                if file_path.is_file():
+                    file_paths.append(file_path)
+            file_paths.sort(key=lambda item: (item.name.casefold(), item.name))
         elif path.is_file():
             file_paths = [path]
         else:
             raise ValueError(f"Markdown import path is not a file or directory: {path}")
 
         return [
-            (str(file_path), file_path.read_text(encoding="utf-8"))
+            (str(file_path), self._read_markdown_file(file_path))
             for file_path in file_paths
         ]
+
+    @staticmethod
+    def _read_markdown_file(file_path: Path) -> str:
+        """Read a regular Markdown file without following a raced symlink."""
+        if file_path.is_symlink():
+            raise ValueError(f"Refusing to import Markdown symbolic link: {file_path}")
+
+        flags = os.O_RDONLY
+        nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+        flags |= nofollow_flag
+        try:
+            file_descriptor = os.open(file_path, flags)
+        except OSError as exc:
+            if nofollow_flag and exc.errno == errno.ELOOP:
+                raise ValueError(
+                    f"Refusing to import Markdown symbolic link: {file_path}"
+                ) from exc
+            raise
+
+        try:
+            if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
+                raise ValueError(
+                    f"Markdown import path is not a regular file: {file_path}"
+                )
+            with os.fdopen(file_descriptor, mode="r", encoding="utf-8") as source:
+                file_descriptor = -1
+                return source.read()
+        finally:
+            if file_descriptor >= 0:
+                os.close(file_descriptor)
 
     def _markdown_to_memory_dict(
         self, document: str, source: str = "markdown document"
