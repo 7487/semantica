@@ -399,6 +399,10 @@ class MilvusStore:
         except Exception as e:
             raise ProcessingError(f"Failed to get collection: {str(e)}")
 
+    def insert_vectors(self, vectors: List[Union[np.ndarray, List[float]]], **options) -> Any:
+        """Backward compatibility alias for add_vectors."""
+        return self.add_vectors(vectors, **options)
+
     def add_vectors(
         self, 
         vectors: List[Union[np.ndarray, List[float]]], 
@@ -544,8 +548,9 @@ class MilvusStore:
             return None
             
         try:
+            safe_id = vector_id.replace('"', '\\"')
             res = self.collection.collection.query(
-                expr=f'id == "{vector_id}"', 
+                expr=f'id == "{safe_id}"', 
                 output_fields=["vector"]
             )
             if res and len(res) > 0:
@@ -560,8 +565,9 @@ class MilvusStore:
             return None
             
         try:
+            safe_id = vector_id.replace('"', '\\"')
             res = self.collection.collection.query(
-                expr=f'id == "{vector_id}"', 
+                expr=f'id == "{safe_id}"', 
                 output_fields=["metadata"]
             )
             if res and len(res) > 0:
