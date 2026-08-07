@@ -436,6 +436,29 @@ d = graph.to_dict()
 # d["statistics"] → {"node_count": int, "edge_count": int}
 ```
 
+For a human-editable, version-control-friendly representation, save a Markdown
+directory instead:
+
+```python
+graph.save_to_file("context_graph/", format="markdown")
+
+restored = ContextGraph(advanced_analytics=True)
+restored.load_from_file("context_graph/", format="markdown")
+```
+
+The directory contains a versioned `graph.md` manifest for graph identity,
+relationships, and cross-graph link descriptors, plus one file per node under
+`nodes/`. A node's content is its Markdown body; its ID, type, properties,
+metadata, and temporal validity are YAML frontmatter. Node, edge, family, graph,
+and cross-graph link IDs are preserved across round trips.
+
+Markdown loading uses replacement semantics, like `from_dict()`: it parses and
+validates the complete directory before replacing the current graph. Invalid YAML,
+duplicate IDs, dangling edge endpoints, unsupported versions, and unsafe symbolic
+links fail without partially mutating the graph. Re-exporting to an existing managed
+directory atomically replaces it, removing stale node files. To avoid accidental data
+loss, a non-empty directory without the ContextGraph manifest is never replaced.
+
 If the graph had cross-graph links created with `link_graph()`, call `resolve_links()` after loading to restore live navigation — object references cannot be serialized, so they must be reconnected manually:
 
 ```python
