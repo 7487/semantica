@@ -448,5 +448,40 @@ class TestDecisionEmbeddingPipelineEdgeCases:
             assert "semantic_similarity" in results[0]
             assert "structural_similarity" in results[0]
 
+    def test_get_candidate_embeddings_returns_partial_matches_when_pool_exhausted(self):
+        """Regression test: _get_candidate_embeddings must not discard matches found
+        in its final retry iteration when the expand-and-retry loop exhausts max_k
+        without ever crossing `limit` matches or getting a short page back."""
+        pipeline = DecisionEmbeddingPipeline.__new__(DecisionEmbeddingPipeline)
+        pipeline.vector_store = Mock()
+        pipeline.embedding_dimension = 384
+        pipeline.node_embedding_dimension = 128
+
+        rare_indices = {10, 30, 50, 70}
+
+        def fake_search_vectors(query_vector, k=10, filter=None):
+            # Always returns a full page, so the backend never hits the
+            # "len(results) < current_k" stop condition.
+            return [
+                {
+                    "id": f"v{i}",
+                    "vector": np.random.rand(384),
+                    "metadata": {"category": "rare" if i in rare_indices else "common"},
+                    "score": 1.0 - i / 1000.0,
+                }
+                for i in range(k)
+            ]
+
+        pipeline.vector_store.search_vectors.side_effect = fake_search_vectors
+
+        result = pipeline._get_candidate_embeddings(
+            np.random.rand(384), limit=10, filters={"category": "rare"}
+        )
+
+        assert len(result["embeddings"]) == len(rare_indices)
+        assert len(result["metadata"]) == len(rare_indices)
+        assert len(result["scores"]) == len(rare_indices)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

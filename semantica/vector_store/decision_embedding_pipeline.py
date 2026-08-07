@@ -790,15 +790,16 @@ class DecisionEmbeddingPipeline:
         if query_vector is None:
             query_vector = np.zeros(self.embedding_dimension)
             
-        embeddings = []
-        metadata = []
-        scores = []
-        
+        embeddings = None
+        metadata = None
+        scores = None
+        collected_embeddings, collected_metadata, collected_scores = [], [], []
+
         # If we have filters, we might need to fetch more candidates iteratively
         # if the backend doesn't support native filtering and we rely on post-filtering.
         current_k = limit
         max_k = limit * 10 if limit else 100000
-        
+
         while current_k <= max_k:
             results = self.vector_store.search_vectors(query_vector, k=current_k, filter=filters)
             
@@ -853,7 +854,16 @@ class DecisionEmbeddingPipeline:
                 
             # Otherwise, double the search pool and try again
             current_k *= 2
-        
+
+        if embeddings is None:
+            # max_k was exhausted without either stop condition firing (e.g. the
+            # backend always returns a full page and filtered matches never reach
+            # `limit`). Fall back to whatever the final, largest iteration found
+            # rather than discarding it and returning nothing.
+            embeddings = collected_embeddings[:limit]
+            metadata = collected_metadata[:limit]
+            scores = collected_scores[:limit]
+
         return {"embeddings": embeddings, "metadata": metadata, "scores": scores}
     
     def _find_semantic_similar(
