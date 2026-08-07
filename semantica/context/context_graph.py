@@ -1291,6 +1291,24 @@ class ContextGraph:
                 str(edge["type"]),
             )
         )
+        seen_edge_ids: Set[str] = set()
+        duplicate_edge_ids: Set[str] = set()
+        for edge in edges:
+            edge_id = edge["id"]
+            if not isinstance(edge_id, str) or not edge_id.strip():
+                raise ValueError(
+                    "Cannot export ContextGraph: every edge must have a string ID."
+                )
+            if edge_id in seen_edge_ids:
+                duplicate_edge_ids.add(edge_id)
+            seen_edge_ids.add(edge_id)
+        if duplicate_edge_ids:
+            duplicates = ", ".join(
+                repr(edge_id) for edge_id in sorted(duplicate_edge_ids)
+            )
+            raise ValueError(
+                f"Cannot export ContextGraph: duplicate edge ID(s): {duplicates}."
+            )
         links = sorted(
             links_by_id.values(), key=lambda link: str(link.get("link_id", ""))
         )
@@ -1783,13 +1801,22 @@ class ContextGraph:
     ) -> Optional[str]:
         if value is None:
             return None
-        if isinstance(value, (date, datetime)):
+        if isinstance(value, datetime):
+            return _normalize_temporal_input(value)
+        if isinstance(value, date):
             return value.isoformat()
         if isinstance(value, str) and value.strip():
+            try:
+                _normalize_temporal_input(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid Markdown frontmatter in {source}: "
+                    f"'{field_name}' must be a valid ISO-8601 string."
+                ) from exc
             return value
         raise ValueError(
             f"Invalid Markdown frontmatter in {source}: "
-            f"'{field_name}' must be an ISO-8601 string."
+            f"'{field_name}' must be a valid ISO-8601 string."
         )
 
 

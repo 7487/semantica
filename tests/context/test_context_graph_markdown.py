@@ -224,6 +224,21 @@ def test_markdown_empty_graph_round_trip(tmp_path):
     assert restored.edges == []
 
 
+def test_markdown_export_rejects_duplicate_edge_ids_before_writing(tmp_path):
+    graph = ContextGraph(advanced_analytics=False)
+    graph.add_node("source", "Note", "Source")
+    graph.add_node("target", "Note", "Target")
+    graph.add_edge("source", "target", "REFERENCES")
+    graph.add_edge("source", "target", "REFERENCES")
+    export_path = tmp_path / "graph"
+
+    assert graph.edges[0].edge_id == graph.edges[1].edge_id
+    with pytest.raises(ValueError, match=r"duplicate edge ID.*[0-9a-f-]+"):
+        graph.save_to_file(export_path, format="markdown")
+
+    assert not export_path.exists()
+
+
 @pytest.mark.parametrize(
     "corruption, expected_error",
     [
@@ -280,6 +295,38 @@ def test_invalid_markdown_does_not_mutate_existing_graph(
     before = _normalized_state(target)
 
     with pytest.raises(ValueError, match=expected_error):
+        target.load_from_file(export_path, format="markdown")
+
+    assert _normalized_state(target) == before
+
+
+@pytest.mark.parametrize(
+    ("location", "field_name"),
+    [("node", "valid_from"), ("edge", "valid_until")],
+)
+def test_invalid_markdown_temporal_value_does_not_mutate_existing_graph(
+    tmp_path, location, field_name
+):
+    source, _, _ = _sample_graph()
+    export_path = tmp_path / location
+    source.save_to_file(export_path, format="markdown")
+
+    if location == "node":
+        document_path = _node_file(export_path, "policy/\u6771\u4eac")
+    else:
+        document_path = export_path / "graph.md"
+    frontmatter, body = _read_markdown(document_path)
+    if location == "node":
+        frontmatter[field_name] = "not-a-date"
+    else:
+        frontmatter["edges"][0][field_name] = "not-a-date"
+    _write_markdown(document_path, frontmatter, body)
+
+    target = ContextGraph(advanced_analytics=False)
+    target.add_node("sentinel", "Existing", "Do not replace")
+    before = _normalized_state(target)
+
+    with pytest.raises(ValueError, match=rf"'{field_name}'.*valid ISO-8601"):
         target.load_from_file(export_path, format="markdown")
 
     assert _normalized_state(target) == before
