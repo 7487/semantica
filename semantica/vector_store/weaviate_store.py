@@ -177,7 +177,7 @@ class WeaviateQuery:
                 results.append(
                     {
                         "id": str(obj.uuid),
-                        "properties": obj.properties,
+                        "metadata": obj.properties if obj.properties is not None else {},
                         "distance": obj.metadata.distance if obj.metadata else None,
                         "score": 1.0
                         - (
@@ -185,6 +185,7 @@ class WeaviateQuery:
                             if obj.metadata and obj.metadata.distance
                             else 0.0
                         ),
+                        "vector": None,
                     }
                 )
 

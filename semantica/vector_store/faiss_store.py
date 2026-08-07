@@ -149,6 +149,7 @@ class FAISSSearch:
                         "score": similarity_score,
                         "distance": dist_val,
                         "metadata": self.index.metadata.get(vector_id, {}),
+                        "vector": None,
                     }
                 )
 

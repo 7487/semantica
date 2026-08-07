@@ -196,6 +196,7 @@ class PineconeIndex:
                         "id": match.id,
                         "score": match.score,
                         "metadata": match.metadata or {},
+                        "vector": None,
                     }
                 )
 

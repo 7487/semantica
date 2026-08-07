@@ -166,6 +166,7 @@ class QdrantCollection:
                         "id": result.id,
                         "score": result.score,
                         "metadata": result.payload or {},
+                        "vector": None,
                     }
                 )
 
