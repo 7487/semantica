@@ -93,7 +93,7 @@ class FAISSIndex:
 
     def get_metadata(self, vector_id: str) -> Optional[Dict[str, Any]]:
         """Get metadata by ID."""
-        raise NotImplementedError("FAISS does not store metadata natively. Please use a secondary metadata store.")
+        return self.metadata.get(vector_id)
 
     def save(self, path: Union[str, Path]):
         """Save index to disk."""

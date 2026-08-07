@@ -417,14 +417,14 @@ class TestVectorStoreRetrieval:
             pytest.skip("FAISS not installed")
             
         vs = VectorStore(backend="faiss", config={"dimension": 3})
-        vs.store_vectors([np.array([0.1, 0.2, 0.3], dtype=np.float32)], ids=["test1"])
+        vs.store_vectors([np.array([0.1, 0.2, 0.3], dtype=np.float32)], ids=["test1"], metadata=[{"foo": "faiss_bar"}])
         
         vec = vs.get_vector("test1")
         assert vec is not None
         np.testing.assert_array_almost_equal(vec, np.array([0.1, 0.2, 0.3], dtype=np.float32))
         
-        with pytest.raises(NotImplementedError, match="does not store metadata"):
-            vs.get_metadata("test1")
+        meta = vs.get_metadata("test1")
+        assert meta == {"foo": "faiss_bar"}
             
     def test_cloud_backends_untested(self):
         """

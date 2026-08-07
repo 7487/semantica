@@ -595,7 +595,7 @@ class SQLiteVecStore:
     def get_vector(self, vector_id: str) -> Optional[np.ndarray]:
         """Get vector by ID."""
         try:
-            results = self.get_vectors([vector_id])
+            results = self.get([vector_id])
             if results and len(results) > 0:
                 return results[0].get("vector")
             return None
@@ -606,7 +606,7 @@ class SQLiteVecStore:
     def get_metadata(self, vector_id: str) -> Optional[Dict[str, Any]]:
         """Get metadata by ID."""
         try:
-            results = self.get_vectors([vector_id])
+            results = self.get([vector_id])
             if results and len(results) > 0:
                 return results[0].get("metadata")
             return None
