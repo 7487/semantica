@@ -164,9 +164,10 @@ class QdrantCollection:
                 results.append(
                     {
                         "id": result.id,
-                        "score": result.score,
+                        "score": 1.0 / (1.0 + max(0.0, 1.0 - float(result.score))),
                         "metadata": result.payload or {},
                         "vector": None,
+                        "distance": None,
                     }
                 )
 

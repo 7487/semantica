@@ -78,25 +78,23 @@ from ..embeddings import EmbeddingGenerator
 from .hybrid_similarity import HybridSimilarityCalculator
 from .decision_embedding_pipeline import DecisionEmbeddingPipeline
 
-class SearchResult(TypedDict, total=False):
+class SearchResult(TypedDict):
     """Canonical schema returned by VectorStore.search_vectors().
 
     Required fields (always present):
-        id       – string identifier of the stored vector.
-        score    – float similarity score, higher is better (normalised by each backend).
+        id       – string or integer identifier of the stored vector.
+        score    – float similarity score, higher is better (normalised to 0.0–1.0 across all backends).
         metadata – dict of associated metadata; empty dict when none is stored.
         vector   – np.ndarray when the backend returns the raw vector, otherwise None.
-
-    Optional/preserved fields (may be present depending on backend):
         distance – raw native distance value preserved for backends that expose it
-                   (FAISS L2, Weaviate cosine); None when not available.
+                   (FAISS L2, Weaviate cosine), otherwise None.
     """
 
-    id: str
+    id: Union[str, int]
     score: float
     metadata: Dict[str, Any]
     vector: Optional[Any]          # np.ndarray | None
-    distance: Optional[float]      # preserved when backend exposes it; not required
+    distance: Optional[float]
 
 
 class VectorStore:
@@ -1299,6 +1297,7 @@ class VectorRetriever:
                     "vector": vectors[idx],
                     "score": float(similarities[idx]),
                     "metadata": {},
+                    "distance": None,
                 }
             )
 

@@ -1,16 +1,14 @@
-﻿"""
+"""
 Test: Search Result Schema Compliance -- Issue #845
 
 Every backend wrapper's search method must return a list of dicts that each
 contain the four required canonical fields:
 
-    id       : str
+    id       : str | int
     score    : float
     metadata : dict  (always a dict, {} when none stored)
     vector   : any   (np.ndarray | None; None when backend doesn't return vectors)
-
-Optional preserved fields (may be present):
-    distance : float | None  (preserved from FAISS, Weaviate; absent elsewhere)
+    distance : float | None  (preserved from FAISS, Weaviate, Milvus; None elsewhere)
 """
 
 import unittest
@@ -29,11 +27,14 @@ def _assert_canonical_schema(test_case, results):
     for r in results:
         test_case.assertIsInstance(r, dict, "result must be a dict")
         test_case.assertIn("id", r, "result must contain 'id'")
+        test_case.assertTrue(isinstance(r["id"], (str, int)), "'id' must be a str or int")
         test_case.assertIn("score", r, "result must contain 'score'")
         test_case.assertIn("metadata", r, "result must contain 'metadata'")
         test_case.assertIn("vector", r, "result must contain 'vector'")
+        test_case.assertIn("distance", r, "result must contain 'distance'")
         test_case.assertIsInstance(r["metadata"], dict, "'metadata' must be a dict")
         test_case.assertIsInstance(r["score"], float, "'score' must be a float")
+        test_case.assertTrue(r["distance"] is None or isinstance(r["distance"], float), "'distance' must be float or None")
 
 
 # ---------------------------------------------------------------------------

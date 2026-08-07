@@ -194,9 +194,10 @@ class PineconeIndex:
                 results.append(
                     {
                         "id": match.id,
-                        "score": match.score,
+                        "score": 1.0 / (1.0 + max(0.0, 1.0 - float(match.score))),
                         "metadata": match.metadata or {},
                         "vector": None,
+                        "distance": None,
                     }
                 )
 

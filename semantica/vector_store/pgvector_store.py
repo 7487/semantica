@@ -446,6 +446,7 @@ class PgVectorStore:
                         "score": similarity,
                         "metadata": meta if isinstance(meta, dict) else json.loads(meta),
                         "vector": None,
+                        "distance": None,
                     })
 
                 return results
