@@ -576,6 +576,61 @@ class MilvusStore:
         except Exception:
             return None
 
+    def filter_by_metadata(
+        self, filters: Dict[str, Any], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter vectors by metadata using Milvus expression filtering.
+
+        Args:
+            filters: Metadata filter criteria
+            limit: Maximum number of results
+
+        Returns:
+            List of matching result dicts with 'id', 'metadata', and 'vector'
+        """
+        if self.collection is None or not MILVUS_AVAILABLE:
+            return []
+
+        expr_parts = []
+        if filters:
+            for key, value in filters.items():
+                if isinstance(value, dict):
+                    if "min" in value and value["min"] is not None:
+                        expr_parts.append(f'metadata["{key}"] >= {value["min"]}')
+                    if "max" in value and value["max"] is not None:
+                        expr_parts.append(f'metadata["{key}"] <= {value["max"]}')
+                elif isinstance(value, list):
+                    formatted_vals = [f'"{v}"' if isinstance(v, str) else str(v) for v in value]
+                    expr_parts.append(f'metadata["{key}"] in [{", ".join(formatted_vals)}]')
+                elif isinstance(value, str):
+                    expr_parts.append(f'metadata["{key}"] == "{value}"')
+                else:
+                    expr_parts.append(f'metadata["{key}"] == {value}')
+
+        expr = " and ".join(expr_parts) if expr_parts else "id != ''"
+
+        try:
+            query_results = self.collection.collection.query(
+                expr=expr,
+                limit=limit,
+                output_fields=["id", "vector", "metadata"],
+            )
+            results = []
+            for item in query_results:
+                vec = item.get("vector")
+                results.append(
+                    {
+                        "id": str(item.get("id")),
+                        "metadata": item.get("metadata") or {},
+                        "vector": np.array(vec) if vec is not None else None,
+                    }
+                )
+            return results
+        except Exception as e:
+            self.logger.warning(f"Failed to query Milvus vectors by metadata expression: {e}")
+            return []
+
     def get_stats(self, collection_name: Optional[str] = None) -> Dict[str, Any]:
         """Get collection statistics."""
         if self.collection is None and collection_name:

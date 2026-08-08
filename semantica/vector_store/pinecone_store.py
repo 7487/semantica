@@ -630,6 +630,65 @@ class PineconeStore:
             self.logger.warning(f"Failed to get metadata for {vector_id}: {e}")
             return None
 
+    def filter_by_metadata(
+        self, filters: Dict[str, Any], limit: int = 10, namespace: str = ""
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter vectors by metadata using Pinecone metadata filters.
+
+        Args:
+            filters: Metadata filter criteria
+            limit: Maximum number of results
+            namespace: Namespace to search in
+
+        Returns:
+            List of matching result dicts with 'id', 'metadata', and 'vector'
+        """
+        if self.index is None or not PINECONE_AVAILABLE:
+            return []
+
+        pinecone_filter = {}
+        if filters:
+            for key, value in filters.items():
+                if isinstance(value, dict):
+                    cond = {}
+                    if "min" in value and value["min"] is not None:
+                        cond["$gte"] = value["min"]
+                    if "max" in value and value["max"] is not None:
+                        cond["$lte"] = value["max"]
+                    if cond:
+                        pinecone_filter[key] = cond
+                elif isinstance(value, list):
+                    pinecone_filter[key] = {"$in": value}
+                else:
+                    pinecone_filter[key] = value
+
+        dimension = getattr(self, "dimension", 768)
+        dummy_vector = [0.0] * dimension
+
+        try:
+            response = self.index.index.query(
+                vector=dummy_vector,
+                top_k=limit,
+                filter=pinecone_filter if pinecone_filter else None,
+                namespace=namespace,
+                include_metadata=True,
+                include_values=True,
+            )
+            results = []
+            for match in response.matches:
+                results.append(
+                    {
+                        "id": match.id,
+                        "metadata": match.metadata or {},
+                        "vector": np.array(match.values) if match.values else None,
+                    }
+                )
+            return results
+        except Exception as e:
+            self.logger.warning(f"Failed to filter Pinecone vectors by metadata: {e}")
+            return []
+
     def fetch_vectors(
         self, vector_ids: List[str], namespace: str = "", **options
     ) -> Dict[str, Any]:

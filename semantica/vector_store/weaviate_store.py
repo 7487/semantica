@@ -447,6 +447,47 @@ class WeaviateStore:
             self.logger.warning(f"Failed to get metadata for {vector_id}: {e}")
             return None
 
+    def filter_by_metadata(
+        self, filters: Dict[str, Any], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter stored objects by metadata in Weaviate.
+
+        Args:
+            filters: Metadata filter criteria
+            limit: Maximum number of results
+
+        Returns:
+            List of matching result dicts with 'id', 'metadata', and 'vector'
+        """
+        if self.collection is None or not WEAVIATE_AVAILABLE:
+            return []
+
+        from .vector_store import _matches_filter
+
+        try:
+            objs = self.collection.query.fetch_objects(
+                limit=limit,
+                include_vector=True
+            )
+            results = []
+            for obj in objs.objects:
+                properties = obj.properties or {}
+                if _matches_filter(properties, filters):
+                    results.append(
+                        {
+                            "id": str(obj.uuid),
+                            "metadata": properties,
+                            "vector": np.array(obj.vector) if obj.vector else None,
+                        }
+                    )
+                    if len(results) >= limit:
+                        break
+            return results
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch Weaviate objects by metadata filter: {e}")
+            return []
+
     def query_vectors(
         self,
         query_vector: np.ndarray,

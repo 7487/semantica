@@ -1119,60 +1119,69 @@ class VectorStore:
             from datetime import datetime, timedelta
             cutoff = datetime.now() - timedelta(days=7)
             filters["timestamp"] = {"min": cutoff.isoformat()}
-        
         return filters
 
     def _filter_by_metadata(self, filters: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         """Filter decisions by metadata only."""
-        results = []
-        
-        for vector_id, metadata in self.metadata.items():
-            match = True
+        if self.backend == "inmemory":
+            results = []
             
-            for key, value in filters.items():
-                if key not in metadata:
-                    match = False
-                    break
-                
-                if isinstance(value, dict):
-                    # Handle range filters
-                    metadata_value = metadata[key]
-                    if "min" in value and metadata_value < value["min"]:
-                        match = False
-                        break
-                    if "max" in value and metadata_value > value["max"]:
-                        match = False
-                        break
-                elif isinstance(value, list):
-                    # Handle list membership
-                    metadata_value = metadata[key]
-                    if isinstance(metadata_value, list):
-                        # Both are lists - check for intersection
-                        if not set(metadata_value) & set(value):
-                            match = False
-                            break
-                    else:
-                        # Metadata value is scalar, check if it's in the filter list
-                        if metadata_value not in value:
-                            match = False
-                            break
-                else:
-                    # Handle exact match
-                    if metadata[key] != value:
-                        match = False
+            for vector_id, metadata in self.metadata.items():
+                if _matches_filter(metadata, filters):
+                    results.append({
+                        "id": vector_id,
+                        "metadata": metadata,
+                        "vector": self.vectors.get(vector_id)
+                    })
+                    
+                    if len(results) >= limit:
                         break
             
-            if match:
-                results.append({
-                    "id": vector_id,
-                    "metadata": metadata,
-                    "vector": self.vectors.get(vector_id)
-                })
-                
-                if len(results) >= limit:
-                    break
-        
-        return results
+            return results
+        elif self._backend_store is not None and hasattr(self._backend_store, "filter_by_metadata"):
+            return self._backend_store.filter_by_metadata(filters=filters, limit=limit)
+        else:
+            raise NotImplementedError(
+                f"Backend store {type(self._backend_store).__name__ if self._backend_store else self.backend} does not implement filter_by_metadata"
+            )
+
+
+def _matches_filter(metadata: Dict[str, Any], filters: Dict[str, Any]) -> bool:
+    """Check if metadata dictionary matches filter criteria."""
+    if not filters:
+        return True
+    if metadata is None:
+        return False
+
+    for key, value in filters.items():
+        if key not in metadata:
+            return False
+
+        metadata_value = metadata[key]
+
+        if isinstance(value, dict):
+            # Handle range filters
+            if "min" in value and value["min"] is not None:
+                if metadata_value is None or metadata_value < value["min"]:
+                    return False
+            if "max" in value and value["max"] is not None:
+                if metadata_value is None or metadata_value > value["max"]:
+                    return False
+        elif isinstance(value, list):
+            # Handle list membership
+            if isinstance(metadata_value, list):
+                if not (set(metadata_value) & set(value)):
+                    return False
+            else:
+                if metadata_value not in value:
+                    return False
+        else:
+            # Handle exact match
+            if metadata_value != value:
+                return False
+
+    return True
+
 
 
 class VectorIndexer:
