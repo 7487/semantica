@@ -559,12 +559,15 @@ class VectorStore:
         import pickle
         
         os.makedirs(path, exist_ok=True)
-        
+
         # Save metadata and vectors (generic fallback)
         # Ideally, backends like FAISS have their own save methods
-        if hasattr(self.indexer, "save_index"):
-             self.indexer.save_index(os.path.join(path, "index.bin"))
-        
+        indexer = getattr(self, "indexer", None)
+        if indexer is not None and hasattr(indexer, "save_index"):
+            indexer.save_index(os.path.join(path, "index.bin"))
+        elif self._backend_store is not None and hasattr(self._backend_store, "save_index"):
+            self._backend_store.save_index(os.path.join(path, "index.bin"))
+
         # Save Python-level data
         data = {
             "vectors": getattr(self, "vectors", {}),
@@ -604,14 +607,21 @@ class VectorStore:
         self.dimension = data.get("dimension", 768)
         
         # Restore backend-specific index
-        if hasattr(self.indexer, "load_index"):
-            index_path = os.path.join(path, "index.bin")
+        indexer = getattr(self, "indexer", None)
+        index_path = os.path.join(path, "index.bin")
+        if indexer is not None and hasattr(indexer, "load_index"):
             if os.path.exists(index_path):
-                self.indexer.load_index(index_path)
+                indexer.load_index(index_path)
             else:
                 # Rebuild if index file missing but vectors present
-                self.indexer.create_index(list(self.vectors.values()), list(self.vectors.keys()))
-        
+                indexer.create_index(list(self.vectors.values()), list(self.vectors.keys()))
+        elif (
+            self._backend_store is not None
+            and hasattr(self._backend_store, "load_index")
+            and os.path.exists(index_path)
+        ):
+            self._backend_store.load_index(index_path)
+
         self.logger.info(f"Loaded vector store from {path}")
 
     def search(self, query: str, limit: int = 10, **options) -> List[Dict[str, Any]]:
