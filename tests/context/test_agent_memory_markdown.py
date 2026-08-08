@@ -55,6 +55,25 @@ def markdown_document(frontmatter, body=""):
     return f"---\n{yaml_text}---\n\n{body}"
 
 
+def _require_symlink_support(tmp_path):
+    """Skip the test if this environment cannot create symbolic links.
+
+    Symlink creation can be unavailable even on POSIX (e.g. restricted
+    containers) and commonly requires elevated privilege or Developer Mode
+    on Windows. Probe actual capability instead of assuming based on
+    platform, so these tests still run wherever symlinks genuinely work.
+    """
+    probe_target = tmp_path / ".symlink_probe_target"
+    probe_link = tmp_path / ".symlink_probe_link"
+    probe_target.write_text("", encoding="utf-8")
+    try:
+        probe_link.symlink_to(probe_target)
+    except OSError as exc:
+        pytest.skip(f"environment cannot create symbolic links: {exc}")
+    probe_link.unlink()
+    probe_target.unlink()
+
+
 def required_frontmatter(memory_id="mem_test", **overrides):
     frontmatter = {
         "id": memory_id,
@@ -702,6 +721,7 @@ def test_markdown_string_path_inspection_errors_are_actionable():
 
 @pytest.mark.parametrize("use_string_path", [False, True])
 def test_markdown_import_rejects_symlinked_file(tmp_path, use_string_path):
+    _require_symlink_support(tmp_path)
     outside = tmp_path / "outside.md"
     outside.write_text(
         markdown_document(required_frontmatter(), "Do not import"),
@@ -720,16 +740,21 @@ def test_markdown_import_rejects_symlinked_file(tmp_path, use_string_path):
 
 @pytest.mark.parametrize("use_string_path", [False, True])
 def test_markdown_import_rejects_broken_symlink(tmp_path, use_string_path):
+    _require_symlink_support(tmp_path)
     source = tmp_path / "missing-memory.md"
     source.symlink_to(tmp_path / "missing-target.md")
     payload = str(source) if use_string_path else source
+    memory = AgentMemory()
 
     with pytest.raises(ValueError, match="symbolic link"):
-        AgentMemory().import_data(payload, format="markdown")
+        memory.import_data(payload, format="markdown")
+
+    assert memory.count() == 0
 
 
 @pytest.mark.parametrize("use_string_path", [False, True])
 def test_markdown_import_rejects_symlinked_directory(tmp_path, use_string_path):
+    _require_symlink_support(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "memory.md").write_text(
@@ -748,6 +773,7 @@ def test_markdown_import_rejects_symlinked_directory(tmp_path, use_string_path):
 
 
 def test_markdown_import_rejects_symlinked_file_in_directory(tmp_path):
+    _require_symlink_support(tmp_path)
     outside = tmp_path / "outside.md"
     outside.write_text(
         markdown_document(required_frontmatter(), "Do not import"),
@@ -766,6 +792,7 @@ def test_markdown_import_rejects_symlinked_file_in_directory(tmp_path):
 
 @pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="requires O_NOFOLLOW")
 def test_markdown_import_does_not_follow_symlink_raced_before_open(tmp_path):
+    _require_symlink_support(tmp_path)
     outside = tmp_path / "outside.md"
     outside.write_text(
         markdown_document(required_frontmatter(), "Do not import"),

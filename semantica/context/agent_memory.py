@@ -1944,6 +1944,14 @@ class AgentMemory:
         if file_path.is_symlink():
             raise ValueError(f"Refusing to import Markdown symbolic link: {file_path}")
 
+        # Defend the open itself against a symlink introduced after the
+        # is_symlink() check above (TOCTOU). O_NOFOLLOW is used where the
+        # platform supports it, causing os.open() to fail with ELOOP if the
+        # target became a symlink in the meantime. On platforms without
+        # O_NOFOLLOW (e.g. Windows), os.open() follows symlinks and there is
+        # no kernel-level way to close this race; the preceding
+        # is_symlink() check is the only protection there, so the strength
+        # of the final-open race protection differs by platform.
         flags = os.O_RDONLY
         nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
         flags |= nofollow_flag
