@@ -1042,8 +1042,8 @@ class VectorStore:
             context["entities"] = decision_metadata["entities"]
         
         # Add related decisions based on similarity
-        if decision_id in self.vectors:
-            query_vector = self.vectors[decision_id]
+        query_vector = self.get_vector(decision_id)
+        if query_vector is not None:
             similar_decisions = self.search_vectors(query_vector, k=depth * 5)
             
             for result in similar_decisions:
@@ -1096,8 +1096,8 @@ class VectorStore:
         
         if include_paths:
             # Find similar decisions for reasoning paths
-            if decision_id in self.vectors:
-                query_vector = self.vectors[decision_id]
+            query_vector = self.get_vector(decision_id)
+            if query_vector is not None:
                 similar_decisions = self.search_vectors(query_vector, k=3)
                 explanation["similar_decisions"] = similar_decisions
         
@@ -1124,6 +1124,27 @@ class VectorStore:
 
     def _filter_by_metadata(self, filters: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
         """Filter decisions by metadata only."""
+        if self._backend_store is not None:
+            # No real backend wrapper implements filter_by_metadata; the only
+            # codebase hit is HybridSearch.filter_by_metadata which has a
+            # completely different signature (results, MetadataFilter) and is
+            # never stored in _backend_store.  Silently returning [] here would
+            # be wrong — the caller (filter_decisions) would report zero matches
+            # for a query that simply isn't supported, indistinguishable from a
+            # genuine empty result.  This is the same situation as get_vector()
+            # and get_metadata() (#843 fix): when a backend exists but cannot
+            # fulfil the request, raise NotImplementedError so the caller knows
+            # the backend lacks this capability rather than assuming no data.
+            if hasattr(self._backend_store, "filter_by_metadata"):
+                return self._backend_store.filter_by_metadata(filters, limit)
+            raise NotImplementedError(
+                f"Backend store {type(self._backend_store).__name__} does not "
+                "implement filter_by_metadata. Metadata-only filtering via "
+                "filter_decisions(query=None, ...) is only supported for the "
+                "inmemory backend. Pass a query string to use search_decisions() "
+                "instead, which is supported by all backends."
+            )
+
         results = []
         
         for vector_id, metadata in self.metadata.items():
@@ -1166,7 +1187,7 @@ class VectorStore:
                 results.append({
                     "id": vector_id,
                     "metadata": metadata,
-                    "vector": self.vectors.get(vector_id)
+                    "vector": self.get_vector(vector_id)
                 })
                 
                 if len(results) >= limit:
