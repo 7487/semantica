@@ -910,3 +910,83 @@ class TestFilterByMetadataBackendBehavior:
         )
         for r in results:
             assert r["metadata"]["category"] == "loan"
+
+
+class TestVectorRetrievalFailureBehavior:
+    """
+    Requirement: verify that when get_vector() returns None for an existing decision
+    (e.g., FAISS without reconstruct capability), we don't silently drop similarity
+    enrichment. We should get a warning log and an explicit marker in the output.
+    """
+
+    class _StubBackend:
+        def __init__(self):
+            self.metadata = {
+                "decision_1": {
+                    "scenario": "Stub Scenario",
+                    "reasoning": "Stub Reasoning",
+                    "outcome": "approved"
+                }
+            }
+
+        def get_metadata(self, vector_id: str):
+            return self.metadata.get(vector_id)
+
+        def get_vector(self, vector_id: str):
+            # Explicitly return None to simulate a backend that cannot reconstruct vectors
+            return None
+
+    def _make_stub_store(self):
+        vs = VectorStore(backend="inmemory", config={"dimension": 4})
+        vs.embedder = None
+        # Replace the backend store with our stub
+        vs._backend_store = self._StubBackend()
+        vs.backend = "stub"
+        return vs
+
+    def test_build_decision_context_warns_and_marks_on_missing_vector(self, caplog):
+        """
+        When get_vector() returns None for an existing decision, build_decision_context
+        should warn and add 'similarity_unavailable': True to the context.
+        """
+        import logging
+        vs = self._make_stub_store()
+
+        with caplog.at_level(logging.WARNING, logger="semantica.vector_store"):
+            ctx = vs.build_decision_context(decision_id="decision_1", depth=1)
+
+        assert ctx["decision_id"] == "decision_1"
+        assert ctx.get("similarity_unavailable") is True, "Expected similarity_unavailable marker"
+        assert isinstance(ctx["related_decisions"], list), "related_decisions must be a list for schema stability"
+        assert len(ctx["related_decisions"]) == 0
+
+        warning_logged = any(
+            "decision_1" in record.message and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+        assert warning_logged, f"Expected WARNING log mentioning decision_1; got: {caplog.records}"
+
+    def test_explain_decision_warns_and_marks_on_missing_vector(self, caplog):
+        """
+        When get_vector() returns None for an existing decision, explain_decision
+        with include_paths=True should warn and add 'similarity_unavailable': True.
+        """
+        import logging
+        vs = self._make_stub_store()
+
+        with caplog.at_level(logging.WARNING, logger="semantica.vector_store"):
+            explanation = vs.explain_decision(
+                decision_id="decision_1",
+                include_paths=True,
+            )
+
+        assert explanation["decision_id"] == "decision_1"
+        assert explanation.get("similarity_unavailable") is True, "Expected similarity_unavailable marker"
+        assert isinstance(explanation["similar_decisions"], list), "similar_decisions must be a list for schema stability"
+        assert len(explanation["similar_decisions"]) == 0
+
+        warning_logged = any(
+            "decision_1" in record.message and record.levelname == "WARNING"
+            for record in caplog.records
+        )
+        assert warning_logged, f"Expected WARNING log mentioning decision_1; got: {caplog.records}"

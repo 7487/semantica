@@ -1009,16 +1009,23 @@ class VectorStore:
     ) -> Dict[str, Any]:
         """
         Build decision context graph.
-        
+
         Args:
             decision_id: Decision vector ID
             depth: Context depth
             include_entities: Whether to include entities
             include_policies: Whether to include policies
             max_hops: Maximum hops for context expansion
-            
+
         Returns:
-            Decision context graph
+            Decision context graph dict with keys:
+              - decision_id, decision_metadata, entities, policies,
+                related_decisions, context_graph.
+            If the backend cannot retrieve the raw vector for *decision_id*
+            (e.g. a FAISS index built without ``make_direct_map``), similarity
+            enrichment is skipped, a WARNING is emitted, and the key
+            ``similarity_unavailable=True`` is added.  ``related_decisions``
+            remains an empty list for schema stability.
         """
         # Get decision metadata
         decision_metadata = self.get_metadata(decision_id)
@@ -1053,6 +1060,13 @@ class VectorStore:
                         "similarity": result["score"],
                         "metadata": result.get("metadata", {})
                     })
+        else:
+            self.logger.warning(
+                "Backend cannot retrieve vector for decision '%s' — "
+                "similarity enrichment skipped.",
+                decision_id,
+            )
+            context["similarity_unavailable"] = True
         
         return context
 
@@ -1065,15 +1079,20 @@ class VectorStore:
     ) -> Dict[str, Any]:
         """
         Generate explanation for a decision.
-        
+
         Args:
             decision_id: Decision vector ID
             include_paths: Whether to include reasoning paths
             include_confidence: Whether to include confidence scores
             include_weights: Whether to include similarity weights
-            
+
         Returns:
-            Decision explanation
+            Decision explanation dict.  When *include_paths* is True and the
+            backend can retrieve the raw vector, ``similar_decisions`` is
+            populated.  If the backend cannot retrieve the vector (e.g. a FAISS
+            index without ``make_direct_map``), a WARNING is emitted, the key
+            ``similarity_unavailable=True`` is added, and ``similar_decisions``
+            is set to ``[]`` for schema stability.
         """
         decision_metadata = self.get_metadata(decision_id)
         if not decision_metadata:
@@ -1100,6 +1119,14 @@ class VectorStore:
             if query_vector is not None:
                 similar_decisions = self.search_vectors(query_vector, k=3)
                 explanation["similar_decisions"] = similar_decisions
+            else:
+                self.logger.warning(
+                    "Backend cannot retrieve vector for decision '%s' — "
+                    "similarity enrichment skipped.",
+                    decision_id,
+                )
+                explanation["similarity_unavailable"] = True
+                explanation["similar_decisions"] = []
         
         return explanation
 
