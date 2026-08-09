@@ -65,7 +65,7 @@ Author: Semantica Contributors
 License: MIT
 """
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 import concurrent.futures
 import inspect
 
@@ -77,6 +77,24 @@ from ..utils.progress_tracker import get_progress_tracker
 from ..embeddings import EmbeddingGenerator
 from .hybrid_similarity import HybridSimilarityCalculator
 from .decision_embedding_pipeline import DecisionEmbeddingPipeline
+
+class SearchResult(TypedDict):
+    """Canonical schema returned by VectorStore.search_vectors().
+
+    Required fields (always present):
+        id       – string or integer identifier of the stored vector.
+        score    – float similarity score, higher is better (normalised to 0.0–1.0 across all backends).
+        metadata – dict of associated metadata; empty dict when none is stored.
+        vector   – np.ndarray when the backend returns the raw vector, otherwise None.
+        distance – raw native distance value preserved for backends that expose it
+                   (FAISS L2, Weaviate cosine), otherwise None.
+    """
+
+    id: Union[str, int]
+    score: float
+    metadata: Dict[str, Any]
+    vector: Optional[Any]          # np.ndarray | None
+    distance: Optional[float]
 
 
 class VectorStore:
@@ -644,7 +662,7 @@ class VectorStore:
 
     def search_vectors(
         self, query_vector: np.ndarray, k: int = 10, **options
-    ) -> List[Dict[str, Any]]:
+    ) -> List[SearchResult]:
         """
         Search for similar vectors.
 
@@ -697,11 +715,13 @@ class VectorStore:
                 **options,
             )
 
-            # Add metadata to results if available
+            # Add metadata to results; guarantee the key always exists.
             for result in results:
                 vector_id = result.get("id")
                 if vector_id and vector_id in self.metadata:
                     result["metadata"] = self.metadata[vector_id]
+                elif "metadata" not in result:
+                    result["metadata"] = {}
 
             self.progress_tracker.stop_tracking(
                 tracking_id,
@@ -1296,6 +1316,8 @@ class VectorRetriever:
                     "id": ids[idx],
                     "vector": vectors[idx],
                     "score": float(similarities[idx]),
+                    "metadata": {},
+                    "distance": None,
                 }
             )
 

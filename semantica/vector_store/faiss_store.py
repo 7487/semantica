@@ -167,7 +167,7 @@ class FAISSSearch:
                 
                 # Standardize score as similarity (0.0 to 1.0)
                 # while preserving original distance
-                similarity_score = 1.0 / (1.0 + dist_val)
+                similarity_score = 1.0 / (1.0 + max(0.0, dist_val))
                 
                 results.append(
                     {
@@ -175,6 +175,7 @@ class FAISSSearch:
                         "score": similarity_score,
                         "distance": dist_val,
                         "metadata": self.index.metadata.get(vector_id, {}),
+                        "vector": None,
                     }
                 )
 
