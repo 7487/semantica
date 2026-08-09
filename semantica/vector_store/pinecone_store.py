@@ -75,7 +75,7 @@ class PineconeClient:
 
         try:
             # Default to serverless spec if not provided
-            if spec is None:
+            if spec is None and ServerlessSpec is not None:
                 spec = ServerlessSpec(cloud="aws", region="us-east-1")
 
             # Map metric names
@@ -316,6 +316,7 @@ class PineconeStore:
 
         self.api_key = api_key or config.get("api_key")
         self.environment = environment or config.get("environment")
+        self.dimension: Optional[int] = config.get("dimension")
 
         self.client: Optional[PineconeClient] = None
         self.index: Optional[PineconeIndex] = None
@@ -384,7 +385,7 @@ class PineconeStore:
 
         try:
             # Create index spec if not provided
-            if spec is None:
+            if spec is None and ServerlessSpec is not None:
                 spec = ServerlessSpec(cloud="aws", region="us-east-1")
 
             self.client.create_index(index_name, dimension, metric, spec, **kwargs)
@@ -393,6 +394,7 @@ class PineconeStore:
             pinecone_index = self.client.get_index(index_name)
             self.index = PineconeIndex(pinecone_index)
             self.search_engine = PineconeSearch(self.index)
+            self.dimension = dimension
 
             self.logger.info(f"Created Pinecone index: {index_name}")
             return self.index
@@ -420,6 +422,13 @@ class PineconeStore:
             pinecone_index = self.client.get_index(index_name)
             self.index = PineconeIndex(pinecone_index)
             self.search_engine = PineconeSearch(self.index)
+            if self.dimension is None:
+                try:
+                    stats = self.describe_index_stats()
+                    if stats and isinstance(stats, dict) and stats.get("dimension"):
+                        self.dimension = int(stats["dimension"])
+                except Exception as e:
+                    self.logger.warning(f"Could not determine index dimension for '{index_name}': {e}")
             return self.index
         except Exception as e:
             raise ProcessingError(f"Failed to get index: {str(e)}")
@@ -505,6 +514,9 @@ class PineconeStore:
                 else:
                     vector_list.append(list(vector))
 
+            if self.dimension is None and vector_list:
+                self.dimension = len(vector_list[0])
+
             self.progress_tracker.update_tracking(
                 tracking_id, message="Upserting vectors to index..."
             )
@@ -570,6 +582,9 @@ class PineconeStore:
                 query_vector = query_vector.tolist()
             else:
                 query_vector = list(query_vector)
+
+            if self.dimension is None and query_vector:
+                self.dimension = len(query_vector)
 
             results = self.search_engine.similarity_search(
                 np.array(query_vector), k, filter, namespace, **options
@@ -647,6 +662,22 @@ class PineconeStore:
         if self.index is None or not PINECONE_AVAILABLE:
             return []
 
+        dimension = self.dimension
+        if dimension is None:
+            try:
+                stats = self.describe_index_stats()
+                if stats and isinstance(stats, dict) and stats.get("dimension"):
+                    dimension = int(stats["dimension"])
+                    self.dimension = dimension
+            except Exception:
+                pass
+
+        if not dimension:
+            raise ProcessingError(
+                "Index dimension is unknown. Please specify 'dimension' when initializing PineconeStore "
+                "or call create_index()/get_index() first."
+            )
+
         pinecone_filter = {}
         if filters:
             for key, value in filters.items():
@@ -663,7 +694,6 @@ class PineconeStore:
                 else:
                     pinecone_filter[key] = value
 
-        dimension = getattr(self, "dimension", 768)
         dummy_vector = [0.0] * dimension
 
         try:

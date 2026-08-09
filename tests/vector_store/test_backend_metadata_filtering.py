@@ -8,6 +8,7 @@ from semantica.vector_store.pinecone_store import PineconeStore
 from semantica.vector_store.milvus_store import MilvusStore
 from semantica.vector_store.pgvector_store import PgVectorStore
 from semantica.vector_store.weaviate_store import WeaviateStore
+from semantica.utils.exceptions import ProcessingError, ValidationError
 
 
 class TestBackendMetadataFiltering(unittest.TestCase):
@@ -52,7 +53,7 @@ class TestBackendMetadataFiltering(unittest.TestCase):
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_pinecone_store_filter_by_metadata(self):
-        store = PineconeStore()
+        store = PineconeStore(dimension=2)
         mock_index_wrapper = MagicMock()
         mock_inner_index = MagicMock()
 
@@ -71,6 +72,19 @@ class TestBackendMetadataFiltering(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["id"], "p1")
         self.assertEqual(results[0]["metadata"], {"status": "active"})
+        # Assert query vector dimension matches store.dimension (2)
+        mock_inner_index.query.assert_called_once()
+        query_kw = mock_inner_index.query.call_args[1]
+        self.assertEqual(len(query_kw["vector"]), 2)
+
+    @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
+    def test_pinecone_store_filter_by_metadata_unknown_dimension_raises(self):
+        store = PineconeStore()
+        mock_index_wrapper = MagicMock()
+        store.index = mock_index_wrapper
+        store.describe_index_stats = MagicMock(return_value={})
+        with self.assertRaises(ProcessingError):
+            store.filter_by_metadata({"status": "active"}, limit=5)
 
     @patch('semantica.vector_store.milvus_store.MILVUS_AVAILABLE', True)
     def test_milvus_store_filter_by_metadata(self):
@@ -87,6 +101,39 @@ class TestBackendMetadataFiltering(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["id"], "m1")
         self.assertEqual(results[0]["metadata"], {"lang": "py"})
+
+    @patch('semantica.vector_store.milvus_store.MILVUS_AVAILABLE', True)
+    def test_milvus_store_filter_by_metadata_escaping(self):
+        store = MilvusStore()
+        mock_coll_wrapper = MagicMock()
+        mock_inner_coll = MagicMock()
+        mock_inner_coll.query.return_value = []
+        mock_coll_wrapper.collection = mock_inner_coll
+        store.collection = mock_coll_wrapper
+
+        store.filter_by_metadata(
+            {
+                "title": 'John "Jack" Doe',
+                "active": True,
+                "tags": ['python', 'c++ "v"'],
+            },
+            limit=5,
+        )
+
+        mock_inner_coll.query.assert_called_once()
+        expr = mock_inner_coll.query.call_args[1]["expr"]
+        self.assertIn('metadata["title"] == "John \\"Jack\\" Doe"', expr)
+        self.assertIn('metadata["active"] == true', expr)
+        self.assertIn('metadata["tags"] in ["python", "c++ \\"v\\""]', expr)
+
+    @patch('semantica.vector_store.milvus_store.MILVUS_AVAILABLE', True)
+    def test_milvus_store_filter_by_metadata_invalid_key_raises(self):
+        store = MilvusStore()
+        mock_coll_wrapper = MagicMock()
+        store.collection = mock_coll_wrapper
+
+        with self.assertRaises(ValidationError):
+            store.filter_by_metadata({'dept" || 1==1 || "': "val"}, limit=5)
 
     @patch('semantica.vector_store.pgvector_store.PSYCOPG3_AVAILABLE', True)
     @patch('semantica.vector_store.pgvector_store.psycopg_sql')
@@ -126,6 +173,85 @@ class TestBackendMetadataFiltering(unittest.TestCase):
             self.assertEqual(results[0]["id"], "w-uuid-1")
             self.assertEqual(results[0]["metadata"], {"dept": "eng"})
 
+    def test_weaviate_store_filter_by_metadata_pagination(self):
+        """Test that WeaviateStore.filter_by_metadata paginates beyond page 1 to find matching items."""
+        store = WeaviateStore()
+        mock_coll = MagicMock()
+
+        # Batch 1: 100 non-matching objects
+        batch1_objs = []
+        for i in range(100):
+            obj = MagicMock()
+            obj.uuid = f"batch1-uuid-{i}"
+            obj.properties = {"dept": "hr"}
+            obj.vector = [0.1, 0.1]
+            batch1_objs.append(obj)
+
+        res1 = MagicMock()
+        res1.objects = batch1_objs
+
+        # Batch 2: 2 matching objects
+        obj_match1 = MagicMock()
+        obj_match1.uuid = "match-uuid-1"
+        obj_match1.properties = {"dept": "eng"}
+        obj_match1.vector = [0.5, 0.5]
+
+        obj_match2 = MagicMock()
+        obj_match2.uuid = "match-uuid-2"
+        obj_match2.properties = {"dept": "eng"}
+        obj_match2.vector = [0.6, 0.6]
+
+        res2 = MagicMock()
+        res2.objects = [obj_match1, obj_match2]
+
+        def side_effect(**kwargs):
+            if kwargs.get("after") == "batch1-uuid-99":
+                return res2
+            return res1
+
+        mock_coll.query.fetch_objects.side_effect = side_effect
+        store.collection = mock_coll
+
+        with patch('semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE', True):
+            results = store.filter_by_metadata({"dept": "eng"}, limit=5)
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0]["id"], "match-uuid-1")
+            self.assertEqual(results[1]["id"], "match-uuid-2")
+
+    def test_weaviate_store_filter_by_metadata_native_filter(self):
+        """Test building native Weaviate filters for exact, range, and list criteria."""
+        store = WeaviateStore()
+        mock_filter_cls = MagicMock()
+        mock_filter_prop = MagicMock()
+        mock_filter_cls.by_property.return_value = mock_filter_prop
+
+        mock_module = MagicMock()
+        mock_module.classes.query.Filter = mock_filter_cls
+
+        with patch('semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE', True), \
+             patch('semantica.vector_store.weaviate_store.weaviate', mock_module):
+
+            # Test exact match
+            res = store._build_weaviate_filter({"dept": "eng"})
+            mock_filter_cls.by_property.assert_called_with("dept")
+            mock_filter_prop.equal.assert_called_with("eng")
+
+            # Test range filter
+            mock_filter_cls.reset_mock()
+            mock_filter_prop.reset_mock()
+            res = store._build_weaviate_filter({"age": {"min": 20, "max": 50}})
+            mock_filter_cls.by_property.assert_called_with("age")
+            mock_filter_prop.greater_or_equal.assert_called_with(20)
+            mock_filter_prop.less_or_equal.assert_called_with(50)
+
+            # Test list filter
+            mock_filter_cls.reset_mock()
+            mock_filter_prop.reset_mock()
+            res = store._build_weaviate_filter({"tags": ["a", "b"]})
+            mock_filter_cls.by_property.assert_called_with("tags")
+            mock_filter_prop.contains_any.assert_called_with(["a", "b"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

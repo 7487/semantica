@@ -35,6 +35,7 @@ Author: Semantica Contributors
 License: MIT
 """
 
+import re
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -42,6 +43,40 @@ import numpy as np
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
+
+
+def _validate_milvus_key(key: str) -> str:
+    """Validate and escape a metadata filter key for Milvus queries."""
+    if not key or not isinstance(key, str) or not re.match(r"^[a-zA-Z0-9_.-]+$", key):
+        raise ValidationError(f"Invalid metadata filter key: '{key}'")
+    return key.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _format_milvus_value(val: Any) -> str:
+    """Format and escape a filter value for Milvus expression syntax."""
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    elif isinstance(val, (int, float)):
+        return str(val)
+    elif isinstance(val, str):
+        escaped = (
+            val.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        )
+        return f'"{escaped}"'
+    elif val is None:
+        return "null"
+    else:
+        escaped = (
+            str(val)
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        )
+        return f'"{escaped}"'
 
 # Optional Milvus import
 try:
@@ -546,11 +581,11 @@ class MilvusStore:
         """Get vector by ID."""
         if not MILVUS_AVAILABLE or not self.collection:
             return None
-            
+
         try:
-            safe_id = vector_id.replace('"', '\\"')
+            safe_id = vector_id.replace("\\", "\\\\").replace('"', '\\"')
             res = self.collection.collection.query(
-                expr=f'id == "{safe_id}"', 
+                expr=f'id == "{safe_id}"',
                 output_fields=["vector"]
             )
             if res and len(res) > 0:
@@ -563,11 +598,11 @@ class MilvusStore:
         """Get metadata by ID."""
         if not MILVUS_AVAILABLE or not self.collection:
             return None
-            
+
         try:
-            safe_id = vector_id.replace('"', '\\"')
+            safe_id = vector_id.replace("\\", "\\\\").replace('"', '\\"')
             res = self.collection.collection.query(
-                expr=f'id == "{safe_id}"', 
+                expr=f'id == "{safe_id}"',
                 output_fields=["metadata"]
             )
             if res and len(res) > 0:
@@ -595,18 +630,22 @@ class MilvusStore:
         expr_parts = []
         if filters:
             for key, value in filters.items():
+                safe_key = _validate_milvus_key(key)
                 if isinstance(value, dict):
                     if "min" in value and value["min"] is not None:
-                        expr_parts.append(f'metadata["{key}"] >= {value["min"]}')
+                        min_val = _format_milvus_value(value["min"])
+                        expr_parts.append(f'metadata["{safe_key}"] >= {min_val}')
                     if "max" in value and value["max"] is not None:
-                        expr_parts.append(f'metadata["{key}"] <= {value["max"]}')
+                        max_val = _format_milvus_value(value["max"])
+                        expr_parts.append(f'metadata["{safe_key}"] <= {max_val}')
                 elif isinstance(value, list):
-                    formatted_vals = [f'"{v}"' if isinstance(v, str) else str(v) for v in value]
-                    expr_parts.append(f'metadata["{key}"] in [{", ".join(formatted_vals)}]')
-                elif isinstance(value, str):
-                    expr_parts.append(f'metadata["{key}"] == "{value}"')
+                    formatted_vals = [_format_milvus_value(v) for v in value]
+                    expr_parts.append(
+                        f'metadata["{safe_key}"] in [{", ".join(formatted_vals)}]'
+                    )
                 else:
-                    expr_parts.append(f'metadata["{key}"] == {value}')
+                    formatted_val = _format_milvus_value(value)
+                    expr_parts.append(f'metadata["{safe_key}"] == {formatted_val}')
 
         expr = " and ".join(expr_parts) if expr_parts else "id != ''"
 
