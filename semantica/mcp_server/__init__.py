@@ -45,7 +45,14 @@ import json
 import logging
 import os
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
+
+try:
+    _SEMANTICA_VERSION = version("semantica")
+except PackageNotFoundError:
+    # Preserve direct source-tree execution when distribution metadata is absent.
+    from semantica import __version__ as _SEMANTICA_VERSION
 
 # ── logging ────────────────────────────────────────────────────────────────
 _log_level = getattr(logging, os.environ.get("SEMANTICA_LOG_LEVEL", "WARNING").upper(), logging.WARNING)
@@ -477,7 +484,7 @@ def _read_resource(uri: str) -> dict:
     if uri == "semantica://schema/info":
         return {
             "name": "Semantica",
-            "version": "0.4.0",
+            "version": _SEMANTICA_VERSION,
             "tools": [t["name"] for t in TOOLS],
             "resources": [r["uri"] for r in RESOURCES],
         }
@@ -490,7 +497,7 @@ def _read_resource(uri: str) -> dict:
 
 SERVER_INFO = {
     "name": "semantica",
-    "version": "0.4.0",
+    "version": _SEMANTICA_VERSION,
 }
 
 CAPABILITIES = {
