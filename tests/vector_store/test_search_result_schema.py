@@ -121,6 +121,29 @@ class TestQdrantSearchSchema(unittest.TestCase):
         self.assertIsNone(results[0]["vector"])
         self.assertEqual(results[0]["metadata"], {"category": "x"})
 
+    @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
+    def test_qdrant_unbounded_dot_product_scores_preserve_ranking(self):
+        """Qdrant's Dot distance metric is unbounded; normalized scores must
+        stay strictly ordered instead of collapsing once raw score >= 1.0
+        (regression for #845 follow-up)."""
+        from semantica.vector_store.qdrant_store import QdrantCollection
+
+        mock_client = MagicMock()
+        mock_hit_high = MagicMock(id="q_hi", score=50.0, payload={})
+        mock_hit_mid = MagicMock(id="q_mid", score=2.0, payload={})
+        mock_hit_low = MagicMock(id="q_lo", score=1.0, payload={})
+        mock_client.search.return_value = [mock_hit_high, mock_hit_mid, mock_hit_low]
+
+        coll = QdrantCollection(mock_client, "test_col")
+        results = coll.search_points(np.array([0.1, 0.2]), limit=3)
+
+        _assert_canonical_schema(self, results)
+        scores = [r["score"] for r in results]
+        self.assertEqual(len(set(scores)), 3, "scores >= 1.0 must not collapse")
+        self.assertGreater(scores[0], scores[1])
+        self.assertGreater(scores[1], scores[2])
+        self.assertTrue(all(0.0 < s < 1.0 for s in scores))
+
 
 # ---------------------------------------------------------------------------
 # Pinecone
@@ -162,6 +185,31 @@ class TestPineconeSearchSchema(unittest.TestCase):
 
         _assert_canonical_schema(self, results)
         self.assertEqual(results[0]["metadata"], {})
+
+    @patch("semantica.vector_store.pinecone_store.PINECONE_AVAILABLE", True)
+    def test_pinecone_unbounded_dotproduct_scores_preserve_ranking(self):
+        """Pinecone's dotproduct metric is unbounded; normalized scores must
+        stay strictly ordered instead of collapsing once raw score >= 1.0
+        (regression for #845 follow-up)."""
+        from semantica.vector_store.pinecone_store import PineconeIndex
+
+        mock_index = MagicMock()
+        mock_match_high = MagicMock(id="p_hi", score=50.0, metadata={})
+        mock_match_mid = MagicMock(id="p_mid", score=2.0, metadata={})
+        mock_match_low = MagicMock(id="p_lo", score=1.0, metadata={})
+        mock_index.query.return_value = MagicMock(
+            matches=[mock_match_high, mock_match_mid, mock_match_low]
+        )
+
+        pi = PineconeIndex(mock_index)
+        results = pi.search_vectors([0.1, 0.2], k=3)
+
+        _assert_canonical_schema(self, results)
+        scores = [r["score"] for r in results]
+        self.assertEqual(len(set(scores)), 3, "scores >= 1.0 must not collapse")
+        self.assertGreater(scores[0], scores[1])
+        self.assertGreater(scores[1], scores[2])
+        self.assertTrue(all(0.0 < s < 1.0 for s in scores))
 
 
 # ---------------------------------------------------------------------------
