@@ -701,6 +701,14 @@ class PgVectorStore:
                         psycopg_sql.Literal(key)
                     ))
                     filter_values.append([str(v) for v in value])
+                elif isinstance(value, bool):
+                    # PostgreSQL JSONB ->> returns lowercase 'true'/'false' for JSON booleans.
+                    # str(True)='True' and str(False)='False' would never match; use the
+                    # correct lowercase text that ->> actually produces.
+                    filter_conditions.append(psycopg_sql.SQL("metadata->>{} = %s").format(
+                        psycopg_sql.Literal(key)
+                    ))
+                    filter_values.append('true' if value else 'false')
                 else:
                     filter_conditions.append(psycopg_sql.SQL("metadata->>{} = %s").format(
                         psycopg_sql.Literal(key)

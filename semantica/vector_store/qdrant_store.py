@@ -49,8 +49,10 @@ try:
         Distance,
         FieldCondition,
         Filter,
+        MatchAny,
         MatchValue,
         PointStruct,
+        Range,
         VectorParams,
     )
 
@@ -63,7 +65,9 @@ except (ImportError, OSError):
     PointStruct = None
     Filter = None
     FieldCondition = None
+    MatchAny = None
     MatchValue = None
+    Range = None
     CollectionStatus = None
 
 

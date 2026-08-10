@@ -51,6 +51,81 @@ class TestBackendMetadataFiltering(unittest.TestCase):
         self.assertEqual(results[0]["metadata"], {"env": "prod"})
         mock_client.scroll.assert_called_once()
 
+    @patch('semantica.vector_store.qdrant_store.Range', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.FieldCondition', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.Filter', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.QDRANT_AVAILABLE', True)
+    def test_qdrant_store_filter_by_metadata_range(self):
+        """Range filters must construct Range objects and not raise NameError."""
+        store = QdrantStore()
+        mock_collection = MagicMock()
+        mock_collection.collection_name = "test_coll"
+        store.collection = mock_collection
+        mock_client = MagicMock()
+        rec = MagicMock()
+        rec.id = "r1"
+        rec.payload = {"score": 8}
+        rec.vector = [0.3, 0.4]
+        mock_client.scroll.return_value = ([rec], None)
+        store.client = mock_client
+
+        # min-only range
+        results = store.filter_by_metadata({"score": {"min": 5}}, limit=10)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], "r1")
+        mock_client.scroll.assert_called()
+
+        # Verify Range was actually called to build the condition (not skipped)
+        import semantica.vector_store.qdrant_store as qs_mod
+        qs_mod.Range.assert_called()
+
+    @patch('semantica.vector_store.qdrant_store.Range', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.FieldCondition', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.Filter', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.QDRANT_AVAILABLE', True)
+    def test_qdrant_store_filter_by_metadata_range_min_and_max(self):
+        """Range filters with both min and max must construct Range with both gte and lte."""
+        store = QdrantStore()
+        mock_collection = MagicMock()
+        mock_collection.collection_name = "test_coll"
+        store.collection = mock_collection
+        mock_client = MagicMock()
+        mock_client.scroll.return_value = ([], None)
+        store.client = mock_client
+
+        store.filter_by_metadata({"score": {"min": 5, "max": 10}}, limit=10)
+
+        import semantica.vector_store.qdrant_store as qs_mod
+        # Range must have been called with gte and lte
+        qs_mod.Range.assert_called_with(gte=5, lte=10)
+
+    @patch('semantica.vector_store.qdrant_store.MatchAny', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.FieldCondition', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.Filter', MagicMock())
+    @patch('semantica.vector_store.qdrant_store.QDRANT_AVAILABLE', True)
+    def test_qdrant_store_filter_by_metadata_list(self):
+        """List filters must construct MatchAny objects and not raise NameError."""
+        store = QdrantStore()
+        mock_collection = MagicMock()
+        mock_collection.collection_name = "test_coll"
+        store.collection = mock_collection
+        mock_client = MagicMock()
+        rec = MagicMock()
+        rec.id = "l1"
+        rec.payload = {"tags": "python"}
+        rec.vector = [0.5, 0.6]
+        mock_client.scroll.return_value = ([rec], None)
+        store.client = mock_client
+
+        results = store.filter_by_metadata({"tags": ["python", "ml"]}, limit=10)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], "l1")
+        mock_client.scroll.assert_called()
+
+        # Verify MatchAny was actually called with the filter list
+        import semantica.vector_store.qdrant_store as qs_mod
+        qs_mod.MatchAny.assert_called_with(any=["python", "ml"])
+
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_pinecone_store_filter_by_metadata(self):
         store = PineconeStore(dimension=2)
@@ -154,6 +229,90 @@ class TestBackendMetadataFiltering(unittest.TestCase):
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0]["id"], "pg1")
             self.assertEqual(results[0]["metadata"], {"org": "acme"})
+
+    @patch('semantica.vector_store.pgvector_store.PSYCOPG3_AVAILABLE', True)
+    @patch('semantica.vector_store.pgvector_store.psycopg_sql')
+    def test_pgvector_store_filter_by_metadata_bool_true(self, mock_sql):
+        """Boolean True must become the string 'true' (lowercase) in the SQL parameter.
+
+        PostgreSQL JSONB ->> returns 'true' for a JSON boolean true.
+        str(True) == 'True' would never match; this test guards against regression.
+        """
+        store = object.__new__(PgVectorStore)
+        store.table_name = "test_vectors"
+        store._is_safe_identifier = lambda k: True
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_cur.fetchall.return_value = [
+            ("pg2", [0.3, 0.4], {"active": True})
+        ]
+        mock_conn.cursor.return_value = mock_cur
+
+        with patch.object(
+            PgVectorStore,
+            '_get_connection',
+            return_value=MagicMock(
+                __enter__=MagicMock(return_value=mock_conn),
+                __exit__=MagicMock(),
+            ),
+        ):
+            results = store.filter_by_metadata({"active": True}, limit=10)
+
+        # Result is returned correctly
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], "pg2")
+
+        # The critical assertion: 'true' (not 'True') was passed to execute()
+        execute_call_args = mock_cur.execute.call_args
+        self.assertIsNotNone(execute_call_args, "cursor.execute was not called")
+        params_passed = execute_call_args[0][1]  # positional arg 1 is the params list/tuple
+        self.assertIn('true', params_passed,
+                      "Expected lowercase 'true' in SQL params, got: {}".format(params_passed))
+        self.assertNotIn('True', params_passed,
+                         "str(True)='True' must NOT appear in SQL params")
+
+    @patch('semantica.vector_store.pgvector_store.PSYCOPG3_AVAILABLE', True)
+    @patch('semantica.vector_store.pgvector_store.psycopg_sql')
+    def test_pgvector_store_filter_by_metadata_bool_false(self, mock_sql):
+        """Boolean False must become the string 'false' (lowercase) in the SQL parameter.
+
+        PostgreSQL JSONB ->> returns 'false' for a JSON boolean false.
+        str(False) == 'False' would never match; this test guards against regression.
+        """
+        store = object.__new__(PgVectorStore)
+        store.table_name = "test_vectors"
+        store._is_safe_identifier = lambda k: True
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_cur.fetchall.return_value = [
+            ("pg3", [0.5, 0.6], {"active": False})
+        ]
+        mock_conn.cursor.return_value = mock_cur
+
+        with patch.object(
+            PgVectorStore,
+            '_get_connection',
+            return_value=MagicMock(
+                __enter__=MagicMock(return_value=mock_conn),
+                __exit__=MagicMock(),
+            ),
+        ):
+            results = store.filter_by_metadata({"active": False}, limit=10)
+
+        # Result is returned correctly
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], "pg3")
+
+        # The critical assertion: 'false' (not 'False') was passed to execute()
+        execute_call_args = mock_cur.execute.call_args
+        self.assertIsNotNone(execute_call_args, "cursor.execute was not called")
+        params_passed = execute_call_args[0][1]  # positional arg 1 is the params list/tuple
+        self.assertIn('false', params_passed,
+                      "Expected lowercase 'false' in SQL params, got: {}".format(params_passed))
+        self.assertNotIn('False', params_passed,
+                         "str(False)='False' must NOT appear in SQL params")
 
     def test_weaviate_store_filter_by_metadata(self):
         store = WeaviateStore()
