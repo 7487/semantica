@@ -372,10 +372,12 @@ def find_best_match_index(text: str, candidates: List[str]) -> Tuple[int, float]
         vector_idx = -1
         
         if nlp and nlp.vocab.vectors.shape[0] > 0:
+            failing_candidate_idx = -1
             try:
                 doc = nlp(text)
                 if doc.vector_norm:
                     for i, candidate in enumerate(candidates):
+                        failing_candidate_idx = i
                         if not candidate: continue
                         cand_doc = nlp(candidate)
                         if cand_doc.vector_norm:
@@ -383,8 +385,12 @@ def find_best_match_index(text: str, candidates: List[str]) -> Tuple[int, float]
                             if score > vector_score:
                                 vector_score = score
                                 vector_idx = i
-            except Exception as e:
-                logger.debug(f"Vector similarity calculation failed: {e}")
+            except Exception:
+                logger.debug(
+                    "Vector similarity calculation failed at candidate index %s; continuing with fallback scoring.",
+                    failing_candidate_idx if failing_candidate_idx >= 0 else "N/A",
+                    exc_info=True,
+                )
                 vector_score = 0.0
                 vector_idx = -1
         
