@@ -238,6 +238,197 @@ class TestConflictsModule(unittest.TestCase):
         checklist = generator.export_investigation_checklist(guide, format="text")
         self.assertIn("INVESTIGATION GUIDE: c1", checklist)
 
+    def test_conflict_resolver_credibility_weighted(self):
+        """Test credibility-weighted resolution strategy (#865)."""
+        resolver = ConflictResolver()
+
+        # Boost the credibility of "doc_trusted" so its value should win
+        # even though it only has one vote, vs. two lower-credibility votes.
+        resolver.source_tracker.source_credibility["doc_trusted"] = 1.0
+        resolver.source_tracker.source_credibility["doc_flaky"] = 0.1
+
+        conflict = Conflict(
+            conflict_id="c_cred",
+            conflict_type=ConflictType.VALUE_CONFLICT,
+            entity_id="e1",
+            property_name="age",
+            conflicting_values=[30, 30, 40],
+            sources=[
+                {"document": "doc_flaky", "confidence": 0.9},
+                {"document": "doc_flaky", "confidence": 0.9},
+                {"document": "doc_trusted", "confidence": 0.9},
+            ],
+        )
+
+        result = resolver.resolve_conflict(conflict, strategy="credibility_weighted")
+        self.assertTrue(result.resolved)
+        self.assertEqual(result.resolved_value, 40)
+        self.assertEqual(result.resolution_strategy, "credibility_weighted")
+        self.assertGreater(result.confidence, 0.0)
+
+    def test_conflict_resolver_first_seen(self):
+        """Test first-seen resolution strategy (#865)."""
+        resolver = ConflictResolver()
+
+        conflict = Conflict(
+            conflict_id="c_first",
+            conflict_type=ConflictType.VALUE_CONFLICT,
+            entity_id="e1",
+            property_name="age",
+            conflicting_values=[30, 32],
+            sources=[
+                {"document": "doc1", "confidence": 0.9},
+                {"document": "doc2", "confidence": 0.9},
+            ],
+        )
+
+        result = resolver.resolve_conflict(conflict, strategy="first_seen")
+        self.assertTrue(result.resolved)
+        self.assertEqual(result.resolved_value, 30)  # first value in the list
+        self.assertEqual(result.resolution_strategy, "first_seen")
+        self.assertEqual(result.sources_used, ["doc1"])
+
+    def test_conflict_resolver_manual_review(self):
+        """Test manual-review resolution strategy flags without resolving (#865)."""
+        resolver = ConflictResolver()
+
+        conflict = Conflict(
+            conflict_id="c_manual",
+            conflict_type=ConflictType.VALUE_CONFLICT,
+            entity_id="e1",
+            property_name="age",
+            conflicting_values=[30, 32],
+            sources=[{"document": "doc1"}, {"document": "doc2"}],
+            severity="high",
+        )
+
+        result = resolver.resolve_conflict(conflict, strategy="manual_review")
+        self.assertFalse(result.resolved)
+        self.assertEqual(result.resolution_strategy, "manual_review")
+        self.assertTrue(result.metadata.get("requires_manual_review"))
+        self.assertEqual(result.metadata.get("severity"), "high")
+
+    def test_conflict_resolver_expert_review(self):
+        """Test expert-review resolution strategy flags without resolving (#865)."""
+        resolver = ConflictResolver()
+
+        conflict = Conflict(
+            conflict_id="c_expert",
+            conflict_type=ConflictType.VALUE_CONFLICT,
+            entity_id="e1",
+            property_name="age",
+            conflicting_values=[30, 32],
+            sources=[{"document": "doc1"}, {"document": "doc2"}],
+            severity="critical",
+        )
+
+        result = resolver.resolve_conflict(conflict, strategy="expert_review")
+        self.assertFalse(result.resolved)
+        self.assertEqual(result.resolution_strategy, "expert_review")
+        self.assertTrue(result.metadata.get("requires_expert_review"))
+        self.assertEqual(result.metadata.get("severity"), "critical")
+
+    def test_conflict_detector_relationship_conflicts(self):
+        """Test relationship conflict detection (#865)."""
+        detector = ConflictDetector()
+
+        relationships = [
+            {
+                "id": "r1",
+                "source_id": "e1",
+                "target_id": "e2",
+                "type": "works_at",
+                "source": "doc1",
+            },
+            {
+                "id": "r1",
+                "source_id": "e1",
+                "target_id": "e2",
+                "type": "founded",
+                "source": "doc2",
+            },
+        ]
+
+        conflicts = detector.detect_relationship_conflicts(relationships)
+        self.assertEqual(len(conflicts), 1)
+        conflict = conflicts[0]
+        self.assertEqual(conflict.conflict_type, ConflictType.RELATIONSHIP_CONFLICT)
+        self.assertEqual(conflict.relationship_id, "r1")
+        self.assertEqual(conflict.property_name, "type")
+        self.assertIn("works_at", conflict.conflicting_values)
+        self.assertIn("founded", conflict.conflicting_values)
+
+    def test_conflict_detector_relationship_conflicts_no_conflict(self):
+        """Relationships with a single occurrence should not raise conflicts (#865)."""
+        detector = ConflictDetector()
+
+        relationships = [
+            {"id": "r1", "source_id": "e1", "target_id": "e2", "type": "works_at"},
+        ]
+
+        conflicts = detector.detect_relationship_conflicts(relationships)
+        self.assertEqual(len(conflicts), 0)
+
+    def test_conflict_detector_temporal_conflicts(self):
+        """Test temporal conflict detection (#865)."""
+        detector = ConflictDetector()
+
+        entities = [
+            {"id": "e1", "founded": "1998", "source": "doc1", "confidence": 0.9},
+            {"id": "e1", "founded": "2004", "source": "doc2", "confidence": 0.8},
+        ]
+
+        conflicts = detector.detect_temporal_conflicts(entities)
+        self.assertEqual(len(conflicts), 1)
+        conflict = conflicts[0]
+        self.assertEqual(conflict.conflict_type, ConflictType.TEMPORAL_CONFLICT)
+        self.assertEqual(conflict.entity_id, "e1")
+        self.assertEqual(conflict.property_name, "founded")
+        self.assertIn("1998", conflict.conflicting_values)
+        self.assertIn("2004", conflict.conflicting_values)
+
+    def test_conflict_detector_temporal_conflicts_no_conflict(self):
+        """Matching temporal values across sources should not raise conflicts (#865)."""
+        detector = ConflictDetector()
+
+        entities = [
+            {"id": "e1", "founded": "1998", "source": "doc1"},
+            {"id": "e1", "founded": "1998", "source": "doc2"},
+        ]
+
+        conflicts = detector.detect_temporal_conflicts(entities)
+        self.assertEqual(len(conflicts), 0)
+
+    def test_conflict_detector_logical_conflicts(self):
+        """Test logical conflict detection for incompatible entity types (#865)."""
+        detector = ConflictDetector()
+
+        entities = [
+            {"id": "e1", "type": "Person", "source": "doc1"},
+            {"id": "e1", "type": "Organization", "source": "doc2"},
+        ]
+
+        conflicts = detector.detect_logical_conflicts(entities)
+        self.assertEqual(len(conflicts), 1)
+        conflict = conflicts[0]
+        self.assertEqual(conflict.conflict_type, ConflictType.LOGICAL_CONFLICT)
+        self.assertEqual(conflict.entity_id, "e1")
+        self.assertEqual(conflict.severity, "critical")
+        self.assertIn("Person", conflict.conflicting_values)
+        self.assertIn("Organization", conflict.conflicting_values)
+
+    def test_conflict_detector_logical_conflicts_compatible_types(self):
+        """Compatible/unrelated types should not raise logical conflicts (#865)."""
+        detector = ConflictDetector()
+
+        entities = [
+            {"id": "e1", "type": "Person", "source": "doc1"},
+            {"id": "e1", "type": "Employee", "source": "doc2"},
+        ]
+
+        conflicts = detector.detect_logical_conflicts(entities)
+        self.assertEqual(len(conflicts), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
