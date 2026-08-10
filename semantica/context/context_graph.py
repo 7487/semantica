@@ -1214,10 +1214,30 @@ class ContextGraph:
             try:
                 os.replace(staging_path, destination)
                 staging_path = None
-            except BaseException:
+            except BaseException as publish_error:
                 if backup_path is not None and not destination.exists():
-                    os.replace(backup_path, destination)
-                    backup_path = None
+                    try:
+                        os.replace(backup_path, destination)
+                    except BaseException as restore_error:
+                        self.logger.error(
+                            "Failed to restore previous ContextGraph Markdown "
+                            "export from %s after publish failure; preserving "
+                            "the original publish error",
+                            backup_path,
+                            exc_info=(
+                                type(restore_error),
+                                restore_error,
+                                restore_error.__traceback__,
+                            ),
+                        )
+                        add_note = getattr(publish_error, "add_note", None)
+                        if add_note is not None:
+                            add_note(
+                                "Restoring the previous ContextGraph Markdown "
+                                f"export also failed: {restore_error}"
+                            )
+                    else:
+                        backup_path = None
                 raise
 
             if backup_path is not None:

@@ -421,6 +421,41 @@ def test_markdown_export_restores_previous_directory_when_publish_fails(
     assert not list(tmp_path.glob(".graph.backup-*"))
 
 
+def test_markdown_export_preserves_publish_error_when_restore_fails(
+    tmp_path, monkeypatch, caplog
+):
+    graph = ContextGraph(advanced_analytics=False)
+    graph.add_node("original", "Note", "Original")
+    destination = tmp_path / "graph"
+    graph.save_to_file(destination, format="markdown")
+    original_contents = _directory_contents(destination)
+    graph.add_node("new", "Note", "New")
+
+    real_replace = context_graph_module.os.replace
+
+    def fail_publish_and_restore(source, target):
+        source_path = Path(source)
+        if ".staging-" in source_path.name and Path(target) == destination:
+            raise OSError("simulated publish failure")
+        if ".backup-" in source_path.name and Path(target) == destination:
+            raise PermissionError("simulated restore failure")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(context_graph_module.os, "replace", fail_publish_and_restore)
+    caplog.set_level("ERROR")
+
+    with pytest.raises(OSError, match="simulated publish failure"):
+        graph.save_to_file(destination, format="markdown")
+
+    assert "preserving the original publish error" in caplog.text
+    assert "simulated restore failure" in caplog.text
+    assert not destination.exists()
+    backup_paths = list(tmp_path.glob(".graph.backup-*"))
+    assert len(backup_paths) == 1
+    assert _directory_contents(backup_paths[0]) == original_contents
+    assert not list(tmp_path.glob(".graph.staging-*"))
+
+
 def test_markdown_load_rebuilds_indexes_and_emits_one_reload_event(tmp_path):
     source, _, _ = _sample_graph()
     destination = tmp_path / "graph"
