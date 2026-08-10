@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "semantica"
 version = "0.6.0"
-description = "Accountability and context layer for AI agents. Context graphs, decision intelligence, full provenance tracking, and explainable reasoning engines — every AI decision traceable, every output auditable."
+description = "Accountability and context layer for AI agents. Context graphs, decision intelligence, full provenance tracking, and explainable reasoning engines â€” every AI decision traceable, every output auditable."
 readme = "README.md"
 license = { text = "MIT" }
 
@@ -233,14 +233,15 @@ explorer = [
   "fastapi>=0.100.0",
   "uvicorn[standard]>=0.22.0",
   "websockets>=15.0.1",
-  "python-multipart>=0.0.6"
+  "python-multipart>=0.0.6",
+  "defusedxml>=0.7.1"
 ]
 explorer-lite = [
   "streamlit>=1.25.0",
   "streamlit-agraph>=0.0.45"
 ]
 
-# Everything (cross-platform — gpu excluded; install semantica[gpu] separately on Linux)
+# Everything (cross-platform â€” gpu excluded; install semantica[gpu] separately on Linux)
 all = [
   "semantica[dev,viz,infra,cloud,monitoring,watch,llm-all,models-huggingface,split-all,graph-all,tripletstore-oxigraph,vectorstore-all,parse-docling,ingest-parquet,ingest-arrow,shacl,explorer]",
   "semantica[dev,viz,infra,cloud,monitoring,watch,llm-all,models-huggingface,split-all,graph-all,tripletstore-oxigraph,vectorstore-all,parse-docling,ingest-parquet,ingest-arrow,shacl,agno]"
