@@ -244,8 +244,10 @@ class TestConflictsModule(unittest.TestCase):
 
         # Boost the credibility of "doc_trusted" so its value should win
         # even though it only has one vote, vs. two lower-credibility votes.
-        resolver.source_tracker.source_credibility["doc_trusted"] = 1.0
-        resolver.source_tracker.source_credibility["doc_flaky"] = 0.1
+        # Use the validated setter rather than mutating the internal dict
+        # directly, so the test stays coupled to the public API surface.
+        resolver.source_tracker.set_source_credibility("doc_trusted", 1.0)
+        resolver.source_tracker.set_source_credibility("doc_flaky", 0.1)
 
         conflict = Conflict(
             conflict_id="c_cred",
@@ -428,6 +430,104 @@ class TestConflictsModule(unittest.TestCase):
 
         conflicts = detector.detect_logical_conflicts(entities)
         self.assertEqual(len(conflicts), 0)
+
+    def test_conflict_analyzer_by_source_breakdown(self):
+        """Test the by_source breakdown of analyze_conflicts (#902)."""
+        analyzer = ConflictAnalyzer()
+
+        conflicts = [
+            Conflict(
+                conflict_id="c1",
+                conflict_type=ConflictType.VALUE_CONFLICT,
+                entity_id="e1",
+                property_name="age",
+                conflicting_values=[30, 32],
+                sources=[{"document": "doc1"}, {"document": "doc2"}],
+                severity="medium",
+            ),
+            Conflict(
+                conflict_id="c2",
+                conflict_type=ConflictType.TYPE_CONFLICT,
+                entity_id="e2",
+                property_name="type",
+                conflicting_values=["Person", "Org"],
+                sources=[{"document": "doc1"}, {"document": "doc3"}],
+                severity="critical",
+            ),
+        ]
+
+        analysis = analyzer.analyze_conflicts(conflicts)
+
+        self.assertIn("by_source", analysis)
+        by_source = analysis["by_source"]
+
+        # doc1 appears in both conflicts, doc2 and doc3 in one each.
+        self.assertEqual(by_source["counts"]["doc1"], 2)
+        self.assertEqual(by_source["counts"]["doc2"], 1)
+        self.assertEqual(by_source["counts"]["doc3"], 1)
+
+        top_sources = {
+            s["source"]: s["conflict_count"] for s in by_source["top_sources"]
+        }
+        self.assertEqual(top_sources["doc1"], 2)
+
+        self.assertIn("doc1", by_source["details"])
+        doc1_entries = by_source["details"]["doc1"]
+        self.assertEqual(len(doc1_entries), 2)
+        self.assertEqual({e["conflict_id"] for e in doc1_entries}, {"c1", "c2"})
+
+    def test_conflict_analyzer_analyze_trends(self):
+        """Test analyze_trends over deterministic, time-ordered data (#902)."""
+        analyzer = ConflictAnalyzer()
+
+        def make_conflict(conflict_id, timestamp):
+            return Conflict(
+                conflict_id=conflict_id,
+                conflict_type=ConflictType.VALUE_CONFLICT,
+                entity_id="e1",
+                property_name="age",
+                conflicting_values=[30, 32],
+                sources=[{"document": "doc1", "metadata": {"timestamp": timestamp}}],
+            )
+
+        # January: 1 conflict. February: 3 conflicts (>10% increase -> "increasing").
+        conflicts = [
+            make_conflict("c1", "2023-01-05T00:00:00"),
+            make_conflict("c2", "2023-02-01T00:00:00"),
+            make_conflict("c3", "2023-02-10T00:00:00"),
+            make_conflict("c4", "2023-02-20T00:00:00"),
+        ]
+
+        trends = analyzer.analyze_trends(conflicts)
+
+        self.assertEqual(len(trends), 2)
+        self.assertEqual(trends[0]["period"], "2023-01")
+        self.assertEqual(trends[0]["conflict_count"], 1)
+        self.assertEqual(trends[1]["period"], "2023-02")
+        self.assertEqual(trends[1]["conflict_count"], 3)
+        self.assertEqual(trends[1]["trend"], "increasing")
+        self.assertEqual(trends[1]["trend_direction"], "up")
+
+    def test_conflict_analyzer_analyze_trends_insufficient_data(self):
+        """Single-period data should report insufficient_data, not crash (#902)."""
+        analyzer = ConflictAnalyzer()
+
+        conflict = Conflict(
+            conflict_id="c1",
+            conflict_type=ConflictType.VALUE_CONFLICT,
+            entity_id="e1",
+            property_name="age",
+            conflicting_values=[30, 32],
+            sources=[
+                {"document": "doc1", "metadata": {"timestamp": "2023-01-05T00:00:00"}}
+            ],
+        )
+
+        trends = analyzer.analyze_trends([conflict])
+
+        self.assertEqual(len(trends), 1)
+        self.assertEqual(trends[0]["trend"], "insufficient_data")
+        self.assertEqual(trends[0]["conflict_count"], 1)
 
 
 if __name__ == "__main__":
