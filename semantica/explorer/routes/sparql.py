@@ -8,7 +8,7 @@ Security contract
 * Multi-statement injections that start with an allowed keyword (e.g.
   ``SELECT ... ; DROP ALL``) pass the prefix check and reach rdflib, which
   rejects non-SELECT/ASK/CONSTRUCT/DESCRIBE update syntax in the parser.
-* The in-memory rdflib graph is a read-only projection — the live
+* The in-memory rdflib graph is a read-only projection â€” the live
   ``GraphSession`` is never mutated by this route.
 """
 
@@ -59,8 +59,27 @@ def _build_rdflib_graph(session: GraphSession) -> rdflib.Graph:
     graph.bind("ent", NS)
     graph.bind("prop", PROP)
 
-    nodes, _ = session.get_nodes(skip=0, limit=999_999)
-    edges, _ = session.get_edges(skip=0, limit=999_999)
+    # SECURITY: Cap the number of entities materialized into memory to
+    # prevent denial-of-service via memory exhaustion.  Without this guard
+    # an attacker can send concurrent SPARQL queries that each load ~1M
+    # nodes/edges into rdflib Graph objects, consuming gigabytes of RAM.
+    nodes, total_nodes = session.get_nodes(skip=0, limit=_SPARQL_MAX_GRAPH_NODES + 1)
+    if len(nodes) > _SPARQL_MAX_GRAPH_NODES:
+        raise ValueError(
+            f"Graph has more than {_SPARQL_MAX_GRAPH_NODES:,} nodes. "
+            f"SPARQL queries are limited to graphs with at most "
+            f"{_SPARQL_MAX_GRAPH_NODES:,} nodes to prevent excessive "
+            f"memory usage. Use the REST API for large graph operations."
+        )
+
+    edges, _ = session.get_edges(skip=0, limit=_SPARQL_MAX_GRAPH_NODES + 1)
+    if len(edges) > _SPARQL_MAX_GRAPH_NODES:
+        raise ValueError(
+            f"Graph has more than {_SPARQL_MAX_GRAPH_NODES:,} edges. "
+            f"SPARQL queries are limited to graphs with at most "
+            f"{_SPARQL_MAX_GRAPH_NODES:,} edges to prevent excessive "
+            f"memory usage. Use the REST API for large graph operations."
+        )
 
     for node in nodes:
         subject = NS[str(node.get("id", ""))]
@@ -91,6 +110,7 @@ def _build_rdflib_graph(session: GraphSession) -> rdflib.Graph:
 _SPARQL_MAX_ROWS = 5_000     # hard cap on returned rows
 _SPARQL_TIMEOUT_S = 30       # seconds before abandoning the await
 _SPARQL_MAX_CONCURRENT = 4   # semaphore: max simultaneous executions
+_SPARQL_MAX_GRAPH_NODES = 50_000  # cap on graph nodes/edges to prevent OOM
 
 # Semaphore caps how many graph.query calls run concurrently so that
 # timed-out threads (which keep running in the pool) cannot crowd out
@@ -157,9 +177,9 @@ async def execute_sparql(
 
     # ---------------------------------------------------------------------------
     # Serialize results into a type-aware tabular representation.
-    # ASK      → single row: {"result": "true"|"false"}
-    # CONSTRUCT/DESCRIBE → rows of {"subject", "predicate", "object"} triples
-    # SELECT   → rows keyed by projected variable names
+    # ASK      â†’ single row: {"result": "true"|"false"}
+    # CONSTRUCT/DESCRIBE â†’ rows of {"subject", "predicate", "object"} triples
+    # SELECT   â†’ rows keyed by projected variable names
     # ---------------------------------------------------------------------------
     query_type: str = query_results.type  # always set by rdflib
 
