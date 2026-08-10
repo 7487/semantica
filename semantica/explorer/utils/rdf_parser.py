@@ -22,13 +22,34 @@ def _safe_parse_rdf(g: rdflib.Graph, data: bytes, rdf_format: str) -> None:
             import defusedxml
             defusedxml.defuse_stdlib()
         else:
-            # Warn once; best-effort protection via rdflib's own parser
+            # SECURITY: Strip DOCTYPE declarations and entity definitions from
+            # the raw XML to prevent XXE attacks (file disclosure, SSRF, DoS
+            # via entity expansion).  This is a best-effort defence when
+            # defusedxml is not installed.
+            import re
             import warnings
             warnings.warn(
                 "defusedxml is not installed. Install it (`pip install defusedxml`) "
-                "to protect RDF/XML parsing against XXE attacks.",
+                "for robust XXE protection.  Applying basic DOCTYPE stripping as "
+                "a fallback.",
                 stacklevel=4,
             )
+            text = data.decode("utf-8", errors="replace")
+            # Remove <!DOCTYPE ...> blocks (including internal subsets)
+            text = re.sub(
+                r"<!DOCTYPE\s[^>\[]*(\[[^\]]*\])?\s*>",
+                "",
+                text,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            # Remove any remaining <!ENTITY ...> declarations
+            text = re.sub(
+                r"<!ENTITY\s[^>]*>",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            )
+            data = text.encode("utf-8")
     g.parse(data=data, format=rdf_format)
 
 def _get_best_label(graph: rdflib.Graph, subject: rdflib.URIRef, predicate: rdflib.URIRef) -> str:
