@@ -8,7 +8,7 @@ Security contract
 * Multi-statement injections that start with an allowed keyword (e.g.
   ``SELECT ... ; DROP ALL``) pass the prefix check and reach rdflib, which
   rejects non-SELECT/ASK/CONSTRUCT/DESCRIBE update syntax in the parser.
-* The in-memory rdflib graph is a read-only projection â€” the live
+* The in-memory rdflib graph is a read-only projection — the live
   ``GraphSession`` is never mutated by this route.
 """
 
@@ -177,9 +177,9 @@ async def execute_sparql(
 
     # ---------------------------------------------------------------------------
     # Serialize results into a type-aware tabular representation.
-    # ASK      â†’ single row: {"result": "true"|"false"}
-    # CONSTRUCT/DESCRIBE â†’ rows of {"subject", "predicate", "object"} triples
-    # SELECT   â†’ rows keyed by projected variable names
+    # ASK      → single row: {"result": "true"|"false"}
+    # CONSTRUCT/DESCRIBE → rows of {"subject", "predicate", "object"} triples
+    # SELECT   → rows keyed by projected variable names
     # ---------------------------------------------------------------------------
     query_type: str = query_results.type  # always set by rdflib
 
