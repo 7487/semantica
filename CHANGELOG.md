@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Markdown import followed symbolic links even though Markdown export already refused to overwrite them** (#851, follow-up to #765, #786) by @SaurabhScripts
+  - `AgentMemory._read_markdown_path()` now rejects a symlink file, a broken symlink, or a symlinked directory supplied directly as an import path, and rejects any symlinked Markdown entry discovered while walking an import directory - before any parsing happens, so an import can no longer read a different file or directory than the path presented to the caller
+  - New `_read_markdown_file()` re-checks `is_symlink()` immediately before opening (closing the window between directory-scan validation and the actual read), opens with `O_NOFOLLOW` on platforms that support it, and verifies the resulting descriptor is a regular file via `fstat`/`S_ISREG` before reading, so a symlink swapped in after validation is still rejected rather than silently followed
+  - Documented the import restriction in `docs/reference/context.md`; added 8 tests to `tests/context/test_agent_memory_markdown.py` covering file/directory/broken-symlink rejection for both `str` and `Path` inputs, plus a simulated-race test proving the `O_NOFOLLOW` open still catches a symlink when the pre-open `is_symlink()` check is bypassed
+  - Disclosed limitation: `O_NOFOLLOW` isn't available on Windows, so the final open there relies solely on the pre-open `is_symlink()` check rather than a kernel-enforced guarantee against a race
+  - Any additional review follow-up commits land in this same PR/entry rather than as a separate changelog item
+
 - **`DecisionEmbeddingPipeline.find_similar_decisions()` crashed with `AttributeError` for any `VectorStore` backend other than `inmemory`** (#842, closes #839) by @Sameer6305
   - `_get_candidate_embeddings()` iterated `VectorStore.vectors`/`VectorStore.metadata` directly, internal dicts only populated for `backend="inmemory"`; every persistent backend (FAISS, Pinecone, Qdrant, Milvus, ...) raised `AttributeError`. It now fetches candidates via the backend-agnostic `VectorStore.search_vectors()`, reading metadata via a `res.get("metadata") or res.get("payload")` fallback for backends that key it differently
   - Backends such as FAISS don't return the raw vector for each hit; `find_similar_decisions()` and `_find_semantic_similar()` now fall back to the search-provided score (normalized from `distance` when present) as the semantic similarity for those candidates instead of computing cosine similarity against a zero placeholder vector
