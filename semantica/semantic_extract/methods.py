@@ -247,6 +247,8 @@ def find_best_match_index(text: str, candidates: List[str]) -> Tuple[int, float]
     Find the best matching candidate index and score.
     Uses hybrid similarity approach: Exact -> Synonym -> Substring -> Embeddings -> Vector -> Fuzzy.
     Optimized for batch processing to avoid redundant embedding calculations.
+    Embedding/vector similarity stages are best-effort; if they fail, matching falls back
+    to remaining strategies instead of raising.
     
     Returns:
         Tuple[int, float]: (best_candidate_index, best_score). Index is -1 if no candidates.
@@ -381,8 +383,10 @@ def find_best_match_index(text: str, candidates: List[str]) -> Tuple[int, float]
                             if score > vector_score:
                                 vector_score = score
                                 vector_idx = i
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Vector similarity calculation failed: {e}")
+                vector_score = 0.0
+                vector_idx = -1
         
         if vector_score > best_score:
             best_score = vector_score
