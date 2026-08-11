@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, UTC
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from typing_extensions import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -1017,23 +1017,30 @@ def _fetch_url_sync(url: str) -> bytes:
                 allow_redirects=False,  # SECURITY: follow redirects manually
             )
             if resp.is_redirect or resp.is_permanent_redirect:
-                redirect_url = resp.headers.get("Location")
-                if not redirect_url:
+                location = resp.headers.get("Location")
+                resp.close()
+                if not location:
                     raise HTTPException(status_code=502, detail="Redirect without Location header.")
+                # Location may be relative (e.g. "/ontology.ttl"); resolve it
+                # against the current URL before validating.
+                redirect_url = urljoin(current_url, location)
                 # Re-validate the redirect target to prevent SSRF via
                 # open-redirect to internal/cloud-metadata endpoints.
                 _validate_fetch_url(redirect_url)
                 current_url = redirect_url
                 continue
-            resp.raise_for_status()
-            chunks: List[bytes] = []
-            total = 0
-            for chunk in resp.iter_content(65536):
-                total += len(chunk)
-                if total > _MAX_FETCH_BYTES:
-                    raise HTTPException(status_code=413, detail="Remote resource exceeds 20 MB limit.")
-                chunks.append(chunk)
-            return b"".join(chunks)
+            try:
+                resp.raise_for_status()
+                chunks: List[bytes] = []
+                total = 0
+                for chunk in resp.iter_content(65536):
+                    total += len(chunk)
+                    if total > _MAX_FETCH_BYTES:
+                        raise HTTPException(status_code=413, detail="Remote resource exceeds 20 MB limit.")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+            finally:
+                resp.close()
         raise HTTPException(status_code=502, detail=f"Too many redirects (max {_MAX_REDIRECTS}).")
     except HTTPException:
         raise

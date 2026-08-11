@@ -147,7 +147,15 @@ async def execute_sparql(
             error="Only SELECT, ASK, CONSTRUCT, and DESCRIBE queries are permitted.",
         )
 
-    graph = await asyncio.to_thread(_build_rdflib_graph, session)
+    try:
+        graph = await asyncio.to_thread(_build_rdflib_graph, session)
+    except ValueError as exc:
+        return SparqlResponse(
+            columns=[],
+            rows=[],
+            total=0,
+            error=str(exc),
+        )
 
     async with _sparql_semaphore:
         try:

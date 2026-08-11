@@ -290,6 +290,20 @@ def test_query_timeout_returns_clean_error_not_a_crash(client):
     assert payload["rows"] == []
 
 
+def test_oversized_graph_returns_clean_error_not_a_crash(client):
+    """The DoS-prevention node cap (GHSA-8c7v-adjacent hardening) must return
+    a normal SparqlResponse error, not an unhandled 500. Regression test for
+    a bug where _build_rdflib_graph's ValueError was raised outside of
+    execute_sparql's try/except, before the semaphore block."""
+    with patch.object(sparql_mod, "_SPARQL_MAX_GRAPH_NODES", 1):
+        resp = _post(client, "SELECT ?s WHERE { ?s a <http://semantica.local/entity/language> }")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["error"] is not None
+    assert "more than" in payload["error"].lower()
+    assert payload["rows"] == []
+
+
 # ---------------------------------------------------------------------------
 # Data-mapping fidelity: does the graph->RDF projection reflect session state?
 # ---------------------------------------------------------------------------
