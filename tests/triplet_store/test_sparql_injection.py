@@ -17,7 +17,7 @@ before any query/update text is built.
 """
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from semantica.semantic_extract.triplet_extractor import Triplet
 from semantica.triplet_store.blazegraph_store import BlazegraphStore
@@ -84,7 +84,8 @@ class TestBlazegraphSparqlInjection(unittest.TestCase):
 
 
 class TestRDF4JSparqlInjection(unittest.TestCase):
-    def _make_store(self):
+    @patch.object(RDF4JStore, "_connect", autospec=True)
+    def _make_store(self, _mock_connect):
         return RDF4JStore(endpoint="http://localhost:9999/rdf4j", repository_id="mem")
 
     def test_triplets_to_ntriples_rejects_malicious_subject(self):

@@ -536,7 +536,8 @@ class RDF4JStore:
                 if " " in inner or ">" in inner:
                     raise ValueError(f"IRI contains invalid characters: {obj!r}")
                 return obj
-            return f"<{obj}>"
+            validated_obj = sparql_escaping.validate_uri(obj)
+            return f"<{validated_obj}>"
 
         escaped = sparql_escaping.escape_literal(obj)
         datatype = metadata.get("datatype") or metadata.get("literal_datatype")

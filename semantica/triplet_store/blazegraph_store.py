@@ -395,7 +395,8 @@ class BlazegraphStore:
                 if " " in inner or ">" in inner:
                     raise ValueError(f"IRI contains invalid characters: {obj!r}")
                 return obj
-            return f"<{obj}>"
+            validated_obj = sparql_escaping.validate_uri(obj)
+            return f"<{validated_obj}>"
 
         escaped = self._escape_literal(obj)
         datatype = metadata.get("datatype") or metadata.get("literal_datatype")
