@@ -590,8 +590,8 @@ class VectorStore:
         # pickle is intentionally avoided to prevent arbitrary code execution
         # if a malicious .pkl file is placed in the store directory.
         data = {
-            "vectors": {k: v.tolist() if hasattr(v, "tolist") else v
-                        for k, v in getattr(self, "vectors", {}).items()},
+            "vectors": {k: v.tolist() if hasattr(v, "tolist") else list(v)
+                    for k, v in getattr(self, "vectors", {}).items()},
             "metadata": getattr(self, "metadata", {}),
             "config": self.config,
             "backend": self.backend,
