@@ -3,11 +3,16 @@ SPARQL routes backed by an in-memory rdflib projection of the current graph.
 
 Security contract
 -----------------
-* Only SELECT, ASK, CONSTRUCT, and DESCRIBE are accepted (allowlist enforced
-  before graph construction so rejected queries never touch the session).
-* Multi-statement injections that start with an allowed keyword (e.g.
-  ``SELECT ... ; DROP ALL``) pass the prefix check and reach rdflib, which
-  rejects non-SELECT/ASK/CONSTRUCT/DESCRIBE update syntax in the parser.
+* Only SELECT, ASK, CONSTRUCT, and DESCRIBE are accepted, and the query
+  body is scanned for SPARQL Update keywords (INSERT/DELETE/DROP/LOAD/
+  CLEAR/CREATE/COPY/MOVE/ADD) after stripping comments and PREFIX/BASE
+  declarations — both enforced before graph construction, so rejected
+  queries never touch the session. A multi-statement injection appended
+  after an allowed keyword (e.g. ``SELECT ... ; DROP ALL``) is caught by
+  the keyword scan itself, not left to rdflib's parser.
+* rdflib's parser remains a second line of defense for malformed multi-
+  statement syntax that doesn't contain any forbidden keyword (e.g.
+  ``SELECT ... ; ASK ...``), which SPARQL 1.1 Query doesn't permit.
 * The in-memory rdflib graph is a read-only projection — the live
   ``GraphSession`` is never mutated by this route.
 """
@@ -38,9 +43,16 @@ _FORBIDDEN_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-# Matches SPARQL single-line comments (# ...) and PREFIX declarations
-_COMMENT_LINE = re.compile(r"#[^\n]*", re.MULTILINE)
-_PREFIX_DECL = re.compile(r"^\s*(?:PREFIX|BASE)\s+\S+\s*<[^>]*>\s*", re.IGNORECASE | re.MULTILINE)
+# Matches SPARQL single-line comments (# ...) and PREFIX/BASE declarations.
+# The comment regex only treats '#' as a comment-starter at line-start or
+# after whitespace — not mid-token — since RDF namespace IRIs commonly
+# contain a literal '#' (e.g. ".../1999/02/22-rdf-syntax-ns#"), and a naive
+# `#[^\n]*` would truncate every such PREFIX declaration's IRI, corrupting
+# the query. BASE declarations have no prefix name between the keyword and
+# the IRI (`BASE <...>`, vs. `PREFIX ex: <...>`), so the prefix-name token
+# is optional.
+_COMMENT_LINE = re.compile(r"(?:^|(?<=\s))#[^\n]*", re.MULTILINE)
+_PREFIX_DECL = re.compile(r"^\s*(?:PREFIX\s+\S+|BASE)\s*<[^>]*>\s*", re.IGNORECASE | re.MULTILINE)
 
 
 def _is_read_only_query(query: str) -> bool:

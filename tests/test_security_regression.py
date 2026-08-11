@@ -2,48 +2,29 @@
 Regression tests for security fixes in PR #898.
 
 Covers:
-  1. API Key Authentication (Explorer)
-  2. Cypher Injection Prevention (AGE Store)
-  3. SPARQL Injection Prevention (read-only query validation)
-  4. XXE Protection (rdf_parser fail-closed)
-  5. Vector save numpy serialization
-  6. SPARQL graph cap error handling
-  7. SSRF redirect handling (relative URLs, resp.close)
+  1. Cypher Injection Prevention (AGE Store)
+  2. SPARQL Injection Prevention (read-only query validation)
+  3. XXE Protection (rdf_parser fail-closed)
+  4. Vector save numpy serialization
+  5. SPARQL graph cap error handling
+  6. SSRF redirect handling (relative URLs, resp.close)
+
+Explorer API-key authentication (GHSA-j4mq-hprp-987v) has its own, more
+thorough test suite at tests/explorer/test_explorer_auth.py — it isn't
+duplicated here.
 """
 
-import re
 import pytest
 
-
-# ===================================================================
-# 1. SPARQL read-only query validation (injection prevention)
-# ===================================================================
-
-# Inline the validation logic so tests don't require full app context
-_ALLOWED_QUERY_TYPES = re.compile(
-    r"^(SELECT|ASK|CONSTRUCT|DESCRIBE)\b",
-    re.IGNORECASE,
-)
-_FORBIDDEN_KEYWORDS = re.compile(
-    r"\b(INSERT|DELETE|DROP|LOAD|CLEAR|CREATE|COPY|MOVE|ADD)\b",
-    re.IGNORECASE,
-)
-_COMMENT_LINE = re.compile(r"#[^\n]*", re.MULTILINE)
-_PREFIX_DECL = re.compile(
-    r"^\s*(?:PREFIX|BASE)\s+\S+\s*<[^>]*>\s*",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def _is_read_only_query(query: str) -> bool:
-    cleaned = _COMMENT_LINE.sub("", query)
-    cleaned = _PREFIX_DECL.sub("", cleaned)
-    cleaned = cleaned.strip()
-    if not _ALLOWED_QUERY_TYPES.match(cleaned):
-        return False
-    if _FORBIDDEN_KEYWORDS.search(cleaned):
-        return False
-    return True
+# Import the real implementation rather than re-declaring the regexes here:
+# an earlier version of this file inlined a copy that silently drifted from
+# semantica/explorer/routes/sparql.py's actual behavior (the inlined
+# _COMMENT_LINE regex stripped '#' mid-token, corrupting any PREFIX
+# declaration using a namespace IRI with a literal '#', e.g. the standard
+# rdf:/rdfs: namespaces) and neither the code nor this test caught it,
+# since both had the same bug. Importing the real function makes that class
+# of drift impossible.
+from semantica.explorer.routes.sparql import _is_read_only_query
 
 
 class TestSparqlReadOnlyValidation:
@@ -120,6 +101,26 @@ class TestSparqlReadOnlyValidation:
 
     def test_base_before_select(self):
         query = "BASE <http://example.org/>\nSELECT ?s WHERE { ?s ?p ?o }"
+        assert _is_read_only_query(query)
+
+    def test_namespace_iri_with_hash_fragment_not_treated_as_comment(self):
+        """A '#' inside a PREFIX declaration's IRI (standard for RDF/RDFS/OWL
+        namespaces) must not be mistaken for a comment-start — a naive
+        `#[^\\n]*` strip corrupts the IRI and truncates the rest of the
+        query with it."""
+        query = (
+            "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n"
+            "SELECT ?s WHERE { ?s rdf:type ?o }"
+        )
+        assert _is_read_only_query(query)
+
+    def test_real_comment_after_namespace_iri_still_stripped(self):
+        """A genuine trailing comment must still be recognized even on a
+        line that also contains a '#'-bearing IRI earlier in the query."""
+        query = (
+            "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n"
+            "SELECT ?s WHERE { ?s rdf:type ?o } # trailing comment INSERT DATA"
+        )
         assert _is_read_only_query(query)
 
 
@@ -268,39 +269,6 @@ class TestSSRFRedirectHandling:
         relative = "../data.ttl"
         result = urljoin(base, relative)
         assert result == "https://example.com/api/data.ttl"
-
-
-# ===================================================================
-# 6. API Key Auth
-# ===================================================================
-
-class TestAPIKeyAuth:
-    """Regression tests for API key authentication."""
-
-    def test_auth_module_importable(self):
-        from semantica.explorer.auth import APIKeyAuthMiddleware
-        assert APIKeyAuthMiddleware is not None
-
-    def test_extract_bearer_token(self):
-        from semantica.explorer.auth import _extract_token
-        from unittest.mock import MagicMock
-        req = MagicMock()
-        req.headers = {"Authorization": "Bearer test-key-123"}
-        assert _extract_token(req) == "test-key-123"
-
-    def test_extract_api_key_header(self):
-        from semantica.explorer.auth import _extract_token
-        from unittest.mock import MagicMock
-        req = MagicMock()
-        req.headers = {"X-API-Key": "my-secret-key", "Authorization": ""}
-        assert _extract_token(req) == "my-secret-key"
-
-    def test_extract_no_token(self):
-        from semantica.explorer.auth import _extract_token
-        from unittest.mock import MagicMock
-        req = MagicMock()
-        req.headers = {}
-        assert _extract_token(req) is None
 
 
 if __name__ == "__main__":
