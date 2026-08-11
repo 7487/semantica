@@ -978,7 +978,27 @@ def _normalize_format(fmt: Optional[str]) -> str:
     return _FORMAT_ALIASES.get(lower, lower)
 
 
-def _validate_fetch_url(url: str) -> None:
+import threading
+import urllib3.util.connection
+
+if not hasattr(urllib3.util.connection, "_orig_create_connection"):
+    urllib3.util.connection._orig_create_connection = urllib3.util.connection.create_connection
+
+_dns_pin_tls = threading.local()
+
+def _patched_create_connection(address, *args, **kwargs):
+    host, port = address
+    pinned_host = getattr(_dns_pin_tls, 'pinned_host', None)
+    pinned_ip = getattr(_dns_pin_tls, 'pinned_ip', None)
+    
+    if pinned_host and pinned_ip and host == pinned_host:
+        return urllib3.util.connection._orig_create_connection((pinned_ip, port), *args, **kwargs)
+    return urllib3.util.connection._orig_create_connection(address, *args, **kwargs)
+
+urllib3.util.connection.create_connection = _patched_create_connection
+
+
+def _validate_fetch_url(url: str) -> str:
     """Reject non-HTTP(S) schemes and private/loopback/link-local targets."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -990,6 +1010,7 @@ def _validate_fetch_url(url: str) -> None:
         addrinfos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
         raise HTTPException(status_code=422, detail=f"Cannot resolve hostname '{hostname}': {exc}") from exc
+    safe_ips = []
     for _family, _type, _proto, _canonname, sockaddr in addrinfos:
         try:
             ip = ipaddress.ip_address(sockaddr[0])
@@ -1000,22 +1021,32 @@ def _validate_fetch_url(url: str) -> None:
                 status_code=422,
                 detail="Fetching from private, loopback, or reserved network addresses is not allowed.",
             )
+        safe_ips.append(str(ip))
+    if not safe_ips:
+        raise HTTPException(status_code=422, detail="Could not resolve to a valid IP address.")
+    return safe_ips[0]
 
 
 def _fetch_url_sync(url: str) -> bytes:
-    _validate_fetch_url(url)
     import requests as _req
     _MAX_REDIRECTS = 5
     current_url = url
     try:
         for _ in range(_MAX_REDIRECTS + 1):
-            resp = _req.get(
-                current_url,
-                headers={"Accept": "text/turtle, application/rdf+xml, application/ld+json, */*;q=0.1"},
-                timeout=30,
-                stream=True,
-                allow_redirects=False,  # SECURITY: follow redirects manually
-            )
+            safe_ip = _validate_fetch_url(current_url)
+            _dns_pin_tls.pinned_host = urlparse(current_url).hostname
+            _dns_pin_tls.pinned_ip = safe_ip
+            try:
+                resp = _req.get(
+                    current_url,
+                    headers={"Accept": "text/turtle, application/rdf+xml, application/ld+json, */*;q=0.1"},
+                    timeout=30,
+                    stream=True,
+                    allow_redirects=False,  # SECURITY: follow redirects manually
+                )
+            finally:
+                _dns_pin_tls.pinned_host = None
+                _dns_pin_tls.pinned_ip = None
             if resp.is_redirect or resp.is_permanent_redirect:
                 redirect_url = resp.headers.get("Location")
                 resp.close()  # Release the streamed connection before following the redirect

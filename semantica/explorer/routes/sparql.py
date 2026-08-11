@@ -40,7 +40,7 @@ _FORBIDDEN_KEYWORDS = re.compile(
 
 # Matches SPARQL single-line comments (# ...) and PREFIX declarations
 _COMMENT_LINE = re.compile(r"#[^\n]*", re.MULTILINE)
-_PREFIX_DECL = re.compile(r"^\s*(?:PREFIX|BASE)\s+\S+\s*<[^>]*>\s*", re.IGNORECASE | re.MULTILINE)
+_PREFIX_DECL = re.compile(r"^\s*(?:PREFIX|BASE)\s+(?:\S+\s+)?<[^>]*>\s*", re.IGNORECASE | re.MULTILINE)
 
 
 def _is_read_only_query(query: str) -> bool:
@@ -51,10 +51,10 @@ def _is_read_only_query(query: str) -> bool:
     keywords anywhere in the body, preventing injection via embedded strings
     or multi-statement tricks.
     """
-    # 1. Remove single-line comments that could hide the real query type
-    cleaned = _COMMENT_LINE.sub("", query)
-    # 2. Remove PREFIX/BASE declarations
-    cleaned = _PREFIX_DECL.sub("", cleaned)
+    # 1. Remove PREFIX/BASE declarations (do this first so # in URIs aren't mangled by comment stripping)
+    cleaned = _PREFIX_DECL.sub("", query)
+    # 2. Remove single-line comments that could hide the real query type
+    cleaned = _COMMENT_LINE.sub("", cleaned)
     # 3. Strip remaining whitespace
     cleaned = cleaned.strip()
 

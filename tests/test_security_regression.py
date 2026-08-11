@@ -30,14 +30,14 @@ _FORBIDDEN_KEYWORDS = re.compile(
 )
 _COMMENT_LINE = re.compile(r"#[^\n]*", re.MULTILINE)
 _PREFIX_DECL = re.compile(
-    r"^\s*(?:PREFIX|BASE)\s+\S+\s*<[^>]*>\s*",
+    r"^\s*(?:PREFIX|BASE)\s+(?:\S+\s+)?<[^>]*>\s*",
     re.IGNORECASE | re.MULTILINE,
 )
 
 
 def _is_read_only_query(query: str) -> bool:
-    cleaned = _COMMENT_LINE.sub("", query)
-    cleaned = _PREFIX_DECL.sub("", cleaned)
+    cleaned = _PREFIX_DECL.sub("", query)
+    cleaned = _COMMENT_LINE.sub("", cleaned)
     cleaned = cleaned.strip()
     if not _ALLOWED_QUERY_TYPES.match(cleaned):
         return False
