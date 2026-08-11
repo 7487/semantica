@@ -1,0 +1,281 @@
+"""Regression tests for DNS check-then-use (TOCTOU) hardening in the
+ontology URL fetcher (GHSA-8c7v-62gr-hj6g's secondary "smaller" gap).
+
+`_validate_fetch_url` resolves and validates a hostname once; if the actual
+HTTP client resolved it again independently at connect time, a low-TTL or
+rebinding DNS answer could differ between the two lookups, reopening the
+SSRF window the validation exists to close. `_make_pinned_session` closes
+this by pinning the connection pool's `host` directly to the already-
+validated IP (bypassing DNS resolution for the connection entirely), while
+explicitly restoring the real hostname as the outgoing HTTP `Host` header
+and, for HTTPS, the TLS SNI `server_hostname` / `assert_hostname` — so the
+connection reaches the pinned IP but still presents (and verifies against)
+the original hostname's identity.
+
+test_ontology_ssrf.py covers the redirect-handling logic around this with
+mocks; this file proves the pinning mechanism itself works end-to-end
+against real local servers, with no DNS mocking at all — the test hostname
+is never resolved, which is exactly the property being verified. It also
+includes a negative control (mismatched cert hostname) proving TLS
+verification is genuinely enforced against the real hostname, not silently
+bypassed or checked against the pinned IP instead.
+"""
+
+import http.server
+import socket
+import threading
+
+import pytest
+
+from semantica.explorer.routes import ontology as ontology_mod
+
+
+def _start_local_server():
+    captured = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            captured["host_header"] = self.headers.get("Host")
+            body = b"pinned response"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, captured
+
+
+def test_pinned_session_connects_to_pinned_ip_without_resolving_hostname():
+    """A session built by _make_pinned_session must reach the pinned IP
+    directly. The request URL uses a hostname that cannot be resolved via
+    real DNS ('.invalid' is reserved by RFC 2606) — if pinning weren't
+    working, this request would fail with a name-resolution error instead
+    of reaching the local server, since nothing else could route it there.
+    """
+    server, thread, captured = _start_local_server()
+    port = server.server_address[1]
+    url = f"http://pinned-test.invalid:{port}/resource"
+    try:
+        session = ontology_mod._make_pinned_session("127.0.0.1", url)
+        try:
+            resp = session.get(url, timeout=5)
+            assert resp.status_code == 200
+            assert resp.content == b"pinned response"
+        finally:
+            session.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+    # Host header must still be the original hostname, not the pinned IP —
+    # proving connection target and presented identity are decoupled
+    # correctly (this is what keeps virtual hosting / TLS SNI correct).
+    assert captured["host_header"] == f"pinned-test.invalid:{port}"
+
+
+def test_pinned_session_ignores_a_different_real_resolution():
+    """Even if the hostname *does* resolve to something else via real DNS,
+    the pinned session must still go to the pinned IP — this is the actual
+    TOCTOU property: the connection uses what was validated, not whatever
+    a fresh lookup returns. 'localhost' reliably resolves to a loopback
+    address, which is deliberately NOT where our test server listens on
+    (127.0.0.1 specifically) — but since Windows/most stacks map
+    'localhost' to 127.0.0.1 too, use a distinct high loopback address
+    (127.0.0.2) for the server so a real 'localhost' resolution (127.0.0.1)
+    provably would NOT reach it, isolating the assertion to pinning alone.
+    """
+    captured = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            captured["host_header"] = self.headers.get("Host")
+            body = b"pinned via explicit ip"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    try:
+        server = http.server.HTTPServer(("127.0.0.2", 0), Handler)
+    except OSError:
+        # 127.0.0.2 isn't bindable in this environment (uncommon, but
+        # possible in some sandboxes) — skip rather than false-fail.
+        import pytest
+        pytest.skip("127.0.0.2 is not bindable in this environment")
+
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://localhost:{port}/resource"
+    try:
+        session = ontology_mod._make_pinned_session("127.0.0.2", url)
+        try:
+            resp = session.get(url, timeout=5)
+            assert resp.status_code == 200
+            assert resp.content == b"pinned via explicit ip"
+        finally:
+            session.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+    assert captured["host_header"] == f"localhost:{port}"
+
+
+def test_validate_fetch_url_returns_the_resolved_ip():
+    """_validate_fetch_url must return the IP it validated, so callers can
+    pin the connection to it."""
+    def fake_getaddrinfo(host, *_a, **_k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    import unittest.mock as mock
+    with mock.patch.object(ontology_mod.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+        resolved_ip = ontology_mod._validate_fetch_url("http://example.org/ontology.ttl")
+
+    assert resolved_ip == "93.184.216.34"
+
+
+def test_validate_fetch_url_still_rejects_private_ip():
+    """Confirm the pinning refactor didn't loosen the original address
+    classification — a hostname resolving to a private/internal address
+    must still be rejected before any IP is returned."""
+    import ipaddress
+    import unittest.mock as mock
+
+    import pytest
+    from fastapi import HTTPException
+
+    def fake_getaddrinfo(host, *_a, **_k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+
+    with mock.patch.object(ontology_mod.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+        with pytest.raises(HTTPException) as exc_info:
+            ontology_mod._validate_fetch_url("http://attacker.example/ontology.ttl")
+
+    assert exc_info.value.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# HTTPS: SNI + certificate hostname verification must use the real hostname,
+# not the pinned IP — this is the highest-risk part of pinning to get wrong,
+# since a mistake here could silently weaken TLS verification rather than
+# just breaking connectivity. Requires the optional `cryptography` package
+# to mint a throwaway self-signed cert; skipped gracefully without it.
+# ---------------------------------------------------------------------------
+
+def _make_self_signed_cert(hostname: str, tmp_path):
+    import datetime
+
+    cryptography = pytest.importorskip("cryptography")
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(days=1))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    return str(cert_path), str(key_path)
+
+
+def _start_local_https_server(cert_path, key_path):
+    import ssl
+
+    captured = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            captured["host_header"] = self.headers.get("Host")
+            body = b"tls pinned response"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain(cert_path, key_path)
+    server.socket = ssl_ctx.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread, captured
+
+
+def test_pinned_https_session_verifies_against_real_hostname_not_pinned_ip(tmp_path):
+    """A pinned HTTPS connection must present + verify SNI/cert against the
+    real hostname, even though the socket connects to the pinned IP. The
+    cert's SAN is the hostname, never '127.0.0.1' — if pinning verified
+    against the IP instead (or against nothing), this would either fail
+    for the wrong reason or silently succeed with no real verification."""
+    cert_path, key_path = _make_self_signed_cert("pinned-tls-test.invalid", tmp_path)
+    server, thread, captured = _start_local_https_server(cert_path, key_path)
+    port = server.server_address[1]
+    url = f"https://pinned-tls-test.invalid:{port}/resource"
+    try:
+        session = ontology_mod._make_pinned_session("127.0.0.1", url)
+        try:
+            resp = session.get(url, timeout=5, verify=cert_path)
+        finally:
+            session.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+    assert resp.status_code == 200
+    assert resp.content == b"tls pinned response"
+    assert captured["host_header"] == f"pinned-tls-test.invalid:{port}"
+
+
+def test_pinned_https_session_rejects_hostname_mismatch(tmp_path):
+    """Negative control: requesting a hostname that does NOT match the
+    cert's SAN must still fail verification — proving pinning doesn't
+    silently bypass or misdirect certificate hostname checking."""
+    cert_path, key_path = _make_self_signed_cert("pinned-tls-test.invalid", tmp_path)
+    server, thread, _captured = _start_local_https_server(cert_path, key_path)
+    port = server.server_address[1]
+    url = f"https://wrong-name.invalid:{port}/resource"
+    try:
+        session = ontology_mod._make_pinned_session("127.0.0.1", url)
+        try:
+            import requests
+            with pytest.raises(requests.exceptions.SSLError):
+                session.get(url, timeout=5, verify=cert_path)
+        finally:
+            session.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)

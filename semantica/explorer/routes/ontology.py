@@ -978,8 +978,15 @@ def _normalize_format(fmt: Optional[str]) -> str:
     return _FORMAT_ALIASES.get(lower, lower)
 
 
-def _validate_fetch_url(url: str) -> None:
-    """Reject non-HTTP(S) schemes and private/loopback/link-local targets."""
+def _validate_fetch_url(url: str) -> str:
+    """Reject non-HTTP(S) schemes and private/loopback/link-local targets.
+
+    Returns the first resolved, validated IP address so the caller can pin
+    the actual connection to it (see _PinnedIPHTTPAdapter) — resolving the
+    hostname again at connect time would open a DNS check-then-use window
+    (a low-TTL or rebinding DNS answer could differ between this check and
+    the client's own lookup).
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=422, detail="Only http and https URLs are allowed.")
@@ -990,6 +997,7 @@ def _validate_fetch_url(url: str) -> None:
         addrinfos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
         raise HTTPException(status_code=422, detail=f"Cannot resolve hostname '{hostname}': {exc}") from exc
+    validated_ip: Optional[str] = None
     for _family, _type, _proto, _canonname, sockaddr in addrinfos:
         try:
             ip = ipaddress.ip_address(sockaddr[0])
@@ -1000,46 +1008,115 @@ def _validate_fetch_url(url: str) -> None:
                 status_code=422,
                 detail="Fetching from private, loopback, or reserved network addresses is not allowed.",
             )
+        if validated_ip is None:
+            validated_ip = sockaddr[0]
+    if validated_ip is None:
+        raise HTTPException(status_code=422, detail=f"Cannot resolve hostname '{hostname}' to a usable address.")
+    return validated_ip
+
+
+def _make_pinned_session(pinned_ip: str, url: str):
+    """Build a requests.Session whose connection is pinned to pinned_ip,
+    regardless of what url's hostname resolves to at connect time.
+
+    _validate_fetch_url() resolves and validates the hostname once; letting
+    the HTTP client resolve it again independently at connect time reopens
+    the exact gap that validation exists to close — a low-TTL or rebinding
+    DNS answer can differ between the two lookups. This pins the pool's
+    connect target to the already-validated IP directly (bypassing DNS
+    resolution for the connection entirely), while keeping the original
+    hostname as the outgoing HTTP Host header and, for HTTPS, the TLS SNI
+    server_hostname / assert_hostname — otherwise the connection would
+    reach the right IP but present the wrong identity, breaking name-based
+    virtual hosting and (for HTTPS) certificate hostname verification.
+
+    Note: urllib3's Connection.host is a property that reads/writes the
+    same underlying value as `_dns_host` in this version — it is NOT the
+    separate "presented identity" field it is in some older releases, so
+    overriding just `_dns_host` post-construction (as an earlier version of
+    this fix did) actually changes the Host header too. Pinning the pool's
+    `host` directly and restoring the real hostname via an explicit Host
+    header (+ SNI params for HTTPS) is the correct mechanism here.
+    """
+    import requests as _req
+
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    port = parsed.port
+    default_port = 443 if parsed.scheme == "https" else 80
+    host_header = hostname if port in (None, default_port) else f"{hostname}:{port}"
+
+    class _PinnedIPHTTPAdapter(_req.adapters.HTTPAdapter):
+        def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+            # If an HTTP(S) proxy applies (env-configured or per-request),
+            # the actual TCP connection target is the proxy, not the
+            # resolved IP, and proxy tunneling changes the connection model
+            # enough that pinning doesn't apply cleanly. Fall back to the
+            # normal (unpinned) path rather than silently bypassing the
+            # proxy — _validate_fetch_url's destination check still applies
+            # either way; only this secondary DNS-pinning hardening is
+            # skipped.
+            if _req.utils.select_proxy(request.url, proxies):
+                return super().get_connection_with_tls_context(
+                    request, verify, proxies=proxies, cert=cert
+                )
+            host_params, pool_kwargs = self.build_connection_pool_key_attributes(request, verify, cert)
+            if host_params.get("scheme") == "https":
+                pool_kwargs.setdefault("assert_hostname", hostname)
+                pool_kwargs.setdefault("server_hostname", hostname)
+            host_params["host"] = pinned_ip
+            return self.poolmanager.connection_from_host(**host_params, pool_kwargs=pool_kwargs)
+
+    session = _req.Session()
+    session.headers["Host"] = host_header
+    adapter = _PinnedIPHTTPAdapter()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 
 def _fetch_url_sync(url: str) -> bytes:
-    _validate_fetch_url(url)
-    import requests as _req
+    pinned_ip = _validate_fetch_url(url)
     _MAX_REDIRECTS = 5
     current_url = url
     try:
         for _ in range(_MAX_REDIRECTS + 1):
-            resp = _req.get(
-                current_url,
-                headers={"Accept": "text/turtle, application/rdf+xml, application/ld+json, */*;q=0.1"},
-                timeout=30,
-                stream=True,
-                allow_redirects=False,  # SECURITY: follow redirects manually
-            )
-            if resp.is_redirect or resp.is_permanent_redirect:
-                redirect_url = resp.headers.get("Location")
-                resp.close()  # Release the streamed connection before following the redirect
-                if not redirect_url:
-                    raise HTTPException(status_code=502, detail="Redirect without Location header.")
-                # Resolve relative redirects (e.g. /ontology.ttl) against the current URL
-                redirect_url = urljoin(current_url, redirect_url)
-                # Re-validate the redirect target to prevent SSRF via
-                # open-redirect to internal/cloud-metadata endpoints.
-                _validate_fetch_url(redirect_url)
-                current_url = redirect_url
-                continue
+            session = _make_pinned_session(pinned_ip, current_url)
             try:
-                resp.raise_for_status()
-                chunks: List[bytes] = []
-                total = 0
-                for chunk in resp.iter_content(65536):
-                    total += len(chunk)
-                    if total > _MAX_FETCH_BYTES:
-                        raise HTTPException(status_code=413, detail="Remote resource exceeds 20 MB limit.")
-                    chunks.append(chunk)
-                return b"".join(chunks)
+                resp = session.get(
+                    current_url,
+                    headers={"Accept": "text/turtle, application/rdf+xml, application/ld+json, */*;q=0.1"},
+                    timeout=30,
+                    stream=True,
+                    allow_redirects=False,  # SECURITY: follow redirects manually
+                )
+                if resp.is_redirect or resp.is_permanent_redirect:
+                    redirect_url = resp.headers.get("Location")
+                    resp.close()  # Release the streamed connection before following the redirect
+                    if not redirect_url:
+                        raise HTTPException(status_code=502, detail="Redirect without Location header.")
+                    # Resolve relative redirects (e.g. /ontology.ttl) against the current URL
+                    redirect_url = urljoin(current_url, redirect_url)
+                    # Re-validate the redirect target to prevent SSRF via
+                    # open-redirect to internal/cloud-metadata endpoints, and
+                    # get a fresh pin for the new host.
+                    pinned_ip = _validate_fetch_url(redirect_url)
+                    current_url = redirect_url
+                    continue
+                try:
+                    resp.raise_for_status()
+                    chunks: List[bytes] = []
+                    total = 0
+                    for chunk in resp.iter_content(65536):
+                        total += len(chunk)
+                        if total > _MAX_FETCH_BYTES:
+                            raise HTTPException(status_code=413, detail="Remote resource exceeds 20 MB limit.")
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+                finally:
+                    resp.close()  # Release the streamed connection once fully read (or on error)
             finally:
-                resp.close()  # Release the streamed connection once fully read (or on error)
+                session.close()
         raise HTTPException(status_code=502, detail=f"Too many redirects (max {_MAX_REDIRECTS}).")
     except HTTPException:
         raise
