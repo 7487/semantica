@@ -484,11 +484,18 @@ class RDF4JStore:
 
         update_endpoint = self._get_update_endpoint()
 
-        # Use SPARQL DELETE
+        # Use SPARQL DELETE.
+        # subject/predicate must be IRIs — validate_uri enforces that and
+        # blocks injection through '>' or other SPARQL metacharacters.
+        # object can be an IRI *or* a literal, so it is routed through
+        # _format_object_for_ntriples (which internally calls validate_uri
+        # for URI-shaped values and escape_literal for strings), matching
+        # the same object-handling semantics used by the add path and by
+        # BlazegraphStore.delete_triplet (GHSA-8vgg-8mr4-r236 regression fix).
         subject = sparql_escaping.validate_uri(triplet.subject)
         predicate = sparql_escaping.validate_uri(triplet.predicate)
-        object_ = sparql_escaping.validate_uri(triplet.object)
-        query = f"DELETE DATA {{ <{subject}> <{predicate}> <{object_}> }}"
+        obj_str = self._format_object_for_ntriples(triplet)
+        query = f"DELETE DATA {{ <{subject}> <{predicate}> {obj_str} }}"
 
         try:
             response = requests.post(

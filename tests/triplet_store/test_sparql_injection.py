@@ -101,6 +101,100 @@ class TestRDF4JSparqlInjection(unittest.TestCase):
         with self.assertRaises(ValidationError):
             store.delete_triplet(triplet)
 
+    # ------------------------------------------------------------------
+    # Regression tests for the literal-object bug fixed after the
+    # adversarial review of PR #911: delete_triplet() previously called
+    # validate_uri(triplet.object) unconditionally, which rejected every
+    # non-URI object with ValidationError even though literal objects are
+    # perfectly legal in RDF.  The fix routes the object through
+    # _format_object_for_ntriples so URI-valued objects are still validated
+    # while literal objects go through escape_literal unchanged.
+    # ------------------------------------------------------------------
+
+    def _make_connected_store_with_captured_query(self):
+        """Return (store, captured_dict) where captured['update'] is the
+        SPARQL update string passed to requests.post once delete_triplet
+        succeeds."""
+        import requests as req_mod
+        from unittest.mock import MagicMock
+
+        store = self._make_store()
+        store.connected = True
+        captured = {}
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+
+        def fake_post(url, **kwargs):
+            captured["update"] = kwargs.get("data", {}).get("update", "")
+            return mock_resp
+
+        store._post = fake_post  # not used directly; patch requests.post below
+        store._captured = captured
+        return store, captured
+
+    def test_delete_triplet_literal_object_succeeds(self):
+        """A triplet with a plain-string literal object must delete without
+        raising ValidationError — the regression that prompted this fix."""
+        store, captured = self._make_connected_store_with_captured_query()
+
+        with patch("requests.post") as mock_post:
+            mock_post.return_value.__enter__ = lambda s: s
+            mock_post.return_value.raise_for_status = lambda: None
+
+            result = store.delete_triplet(
+                Triplet(subject="http://s", predicate="http://p", object="Paris")
+            )
+
+        self.assertEqual(result, {"success": True})
+        # Confirm query shape: object must be a quoted literal, not <Paris>
+        query_sent = mock_post.call_args[1]["data"]["update"]
+        self.assertIn("<http://s> <http://p>", query_sent)
+        self.assertIn('"Paris"', query_sent)
+        self.assertNotIn("<Paris>", query_sent)
+        self.assertNotIn("CLEAR ALL", query_sent)
+
+    def test_delete_triplet_uri_object_still_works(self):
+        """A triplet whose object is a URI must still delete correctly."""
+        store, _ = self._make_connected_store_with_captured_query()
+
+        with patch("requests.post") as mock_post:
+            mock_post.return_value.raise_for_status = lambda: None
+
+            result = store.delete_triplet(
+                Triplet(subject="http://s", predicate="http://p", object="http://o")
+            )
+
+        self.assertEqual(result, {"success": True})
+        query_sent = mock_post.call_args[1]["data"]["update"]
+        self.assertIn("<http://s> <http://p> <http://o>", query_sent)
+        self.assertNotIn("CLEAR ALL", query_sent)
+
+    def test_delete_triplet_malicious_uri_object_rejected_before_post(self):
+        """A URI-shaped object containing '>' must be rejected by
+        _format_object_for_ntriples → validate_uri before requests.post
+        is ever called."""
+        evil_obj = "http://evil.com/a>;CLEARALL"
+        store, _ = self._make_connected_store_with_captured_query()
+
+        with patch("requests.post") as mock_post:
+            with self.assertRaises(ValidationError):
+                store.delete_triplet(
+                    Triplet(subject="http://s", predicate="http://p", object=evil_obj)
+                )
+        mock_post.assert_not_called()
+
+    def test_delete_triplet_malicious_subject_still_rejected(self):
+        """Subject injection protection must remain intact after the fix."""
+        store, _ = self._make_connected_store_with_captured_query()
+
+        with patch("requests.post") as mock_post:
+            with self.assertRaises(ValidationError):
+                store.delete_triplet(
+                    Triplet(subject=EVIL_SUBJECT, predicate="http://p", object="http://o")
+                )
+        mock_post.assert_not_called()
+
     def test_get_triplets_rejects_malicious_subject_filter(self):
         store = self._make_store()
         with self.assertRaises(ValidationError):
