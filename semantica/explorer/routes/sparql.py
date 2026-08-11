@@ -26,14 +26,47 @@ from ..session import GraphSession
 router = APIRouter(prefix="/api/sparql", tags=["Power User Tools"])
 
 _ALLOWED_QUERY_TYPES = re.compile(
-    r"^\s*(SELECT|ASK|CONSTRUCT|DESCRIBE)\b",
+    r"^(SELECT|ASK|CONSTRUCT|DESCRIBE)\b",
     re.IGNORECASE,
 )
 
+# SPARQL Update keywords that must never appear in read-only queries.
+# These are checked AFTER comment/prefix stripping to prevent bypass via
+# comments like: # INSERT DATA { ... }\nSELECT ...
+_FORBIDDEN_KEYWORDS = re.compile(
+    r"\b(INSERT|DELETE|DROP|LOAD|CLEAR|CREATE|COPY|MOVE|ADD)\b",
+    re.IGNORECASE,
+)
+
+# Matches SPARQL single-line comments (# ...) and PREFIX declarations
+_COMMENT_LINE = re.compile(r"#[^\n]*", re.MULTILINE)
+_PREFIX_DECL = re.compile(r"^\s*(?:PREFIX|BASE)\s+\S+\s*<[^>]*>\s*", re.IGNORECASE | re.MULTILINE)
+
 
 def _is_read_only_query(query: str) -> bool:
-    """Return True only for SELECT / ASK / CONSTRUCT / DESCRIBE queries."""
-    return bool(_ALLOWED_QUERY_TYPES.match(query))
+    """Return True only for genuine read-only SPARQL queries.
+
+    Strips comments, PREFIX/BASE declarations, and leading whitespace before
+    checking the first keyword. Also rejects queries containing SPARQL Update
+    keywords anywhere in the body, preventing injection via embedded strings
+    or multi-statement tricks.
+    """
+    # 1. Remove single-line comments that could hide the real query type
+    cleaned = _COMMENT_LINE.sub("", query)
+    # 2. Remove PREFIX/BASE declarations
+    cleaned = _PREFIX_DECL.sub("", cleaned)
+    # 3. Strip remaining whitespace
+    cleaned = cleaned.strip()
+
+    # 4. Check that the first keyword is a read-only query type
+    if not _ALLOWED_QUERY_TYPES.match(cleaned):
+        return False
+
+    # 5. Block any forbidden (mutating) keywords anywhere in the query
+    if _FORBIDDEN_KEYWORDS.search(cleaned):
+        return False
+
+    return True
 
 
 class SparqlRequest(BaseModel):
