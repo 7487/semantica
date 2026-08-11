@@ -1028,15 +1028,18 @@ def _fetch_url_sync(url: str) -> bytes:
                 _validate_fetch_url(redirect_url)
                 current_url = redirect_url
                 continue
-            resp.raise_for_status()
-            chunks: List[bytes] = []
-            total = 0
-            for chunk in resp.iter_content(65536):
-                total += len(chunk)
-                if total > _MAX_FETCH_BYTES:
-                    raise HTTPException(status_code=413, detail="Remote resource exceeds 20 MB limit.")
-                chunks.append(chunk)
-            return b"".join(chunks)
+            try:
+                resp.raise_for_status()
+                chunks: List[bytes] = []
+                total = 0
+                for chunk in resp.iter_content(65536):
+                    total += len(chunk)
+                    if total > _MAX_FETCH_BYTES:
+                        raise HTTPException(status_code=413, detail="Remote resource exceeds 20 MB limit.")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+            finally:
+                resp.close()  # Release the streamed connection once fully read (or on error)
         raise HTTPException(status_code=502, detail=f"Too many redirects (max {_MAX_REDIRECTS}).")
     except HTTPException:
         raise
