@@ -312,7 +312,7 @@ class BlazegraphStore:
         try:
             # Use SPARQL INSERT for bulk loading
             graph = options.get("graph", "")
-            graph_clause = f"GRAPH <{graph}>" if graph else ""
+            graph_clause = f"GRAPH <{sparql_escaping.validate_uri(graph)}>" if graph else ""
 
             # Build INSERT query
             insert_data = self._build_insert_data(triplets)
@@ -344,8 +344,10 @@ class BlazegraphStore:
         if format == "turtle":
             lines = []
             for triplet in triplets:
+                subject = sparql_escaping.validate_uri(triplet.subject)
+                predicate = sparql_escaping.validate_uri(triplet.predicate)
                 lines.append(
-                    f"<{triplet.subject}> <{triplet.predicate}> {self._format_object_for_sparql(triplet)} ."
+                    f"<{subject}> <{predicate}> {self._format_object_for_sparql(triplet)} ."
                 )
             return "\n".join(lines)
         else:
@@ -353,11 +355,20 @@ class BlazegraphStore:
             return self._triplets_to_rdf(triplets, "turtle")
 
     def _build_insert_data(self, triplets: List[Triplet]) -> str:
-        """Build SPARQL INSERT DATA clause."""
+        """Build SPARQL INSERT DATA clause.
+
+        Validates subject/predicate as safe IRIs via
+        sparql_escaping.validate_uri before interpolation — unlike the
+        object (handled by _format_object_for_sparql), subject/predicate
+        can't be parameterized in a raw HTTP SPARQL Update POST, so an
+        unvalidated value is a direct injection point (GHSA-8vgg-8mr4-r236).
+        """
         lines = []
         for triplet in triplets:
+            subject = sparql_escaping.validate_uri(triplet.subject)
+            predicate = sparql_escaping.validate_uri(triplet.predicate)
             lines.append(
-                f"<{triplet.subject}> <{triplet.predicate}> {self._format_object_for_sparql(triplet)} ."
+                f"<{subject}> <{predicate}> {self._format_object_for_sparql(triplet)} ."
             )
         return " ".join(lines)
 
@@ -460,9 +471,9 @@ class BlazegraphStore:
         # Build SPARQL query
         where_clauses = []
         if subject:
-            where_clauses.append(f"?s = <{subject}>")
+            where_clauses.append(f"?s = <{sparql_escaping.validate_uri(subject)}>")
         if predicate:
-            where_clauses.append(f"?p = <{predicate}>")
+            where_clauses.append(f"?p = <{sparql_escaping.validate_uri(predicate)}>")
         if object:
             where_clauses.append(
                 f"?o = {self._format_object_for_sparql(Triplet(subject='', predicate='', object=object))}"
@@ -494,8 +505,10 @@ class BlazegraphStore:
 
         update_endpoint = self._get_update_endpoint()
 
+        subject = sparql_escaping.validate_uri(triplet.subject)
+        predicate = sparql_escaping.validate_uri(triplet.predicate)
         query = (
-            f"DELETE DATA {{ <{triplet.subject}> <{triplet.predicate}> "
+            f"DELETE DATA {{ <{subject}> <{predicate}> "
             f"{self._format_object_for_sparql(triplet)} }}"
         )
 

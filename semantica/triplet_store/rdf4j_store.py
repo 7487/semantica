@@ -452,11 +452,11 @@ class RDF4JStore:
         # Build SPARQL query
         where_clauses = []
         if subject:
-            where_clauses.append(f"?s = <{subject}>")
+            where_clauses.append(f"?s = <{sparql_escaping.validate_uri(subject)}>")
         if predicate:
-            where_clauses.append(f"?p = <{predicate}>")
+            where_clauses.append(f"?p = <{sparql_escaping.validate_uri(predicate)}>")
         if object:
-            where_clauses.append(f"?o = <{object}>")
+            where_clauses.append(f"?o = <{sparql_escaping.validate_uri(object)}>")
 
         where_clause = " ".join(where_clauses) if where_clauses else ""
         query = f"SELECT ?s ?p ?o WHERE {{ ?s ?p ?o {where_clause} }}"
@@ -485,7 +485,10 @@ class RDF4JStore:
         update_endpoint = self._get_update_endpoint()
 
         # Use SPARQL DELETE
-        query = f"DELETE DATA {{ <{triplet.subject}> <{triplet.predicate}> <{triplet.object}> }}"
+        subject = sparql_escaping.validate_uri(triplet.subject)
+        predicate = sparql_escaping.validate_uri(triplet.predicate)
+        object_ = sparql_escaping.validate_uri(triplet.object)
+        query = f"DELETE DATA {{ <{subject}> <{predicate}> <{object_}> }}"
 
         try:
             response = requests.post(
@@ -550,9 +553,17 @@ class RDF4JStore:
         return f'"{escaped}"'
 
     def _triplets_to_ntriples(self, triplets: List[Triplet]) -> str:
-        """Convert triplets to N-Triples format."""
+        """Convert triplets to N-Triples format.
+
+        Validates subject/predicate via sparql_escaping.validate_uri: an
+        unvalidated value containing '>' or a newline could terminate the
+        current triple line early and splice extra triples into the
+        upload stream (GHSA-8vgg-8mr4-r236).
+        """
         lines = []
         for triplet in triplets:
+            subject = sparql_escaping.validate_uri(triplet.subject)
+            predicate = sparql_escaping.validate_uri(triplet.predicate)
             obj_str = self._format_object_for_ntriples(triplet)
-            lines.append(f"<{triplet.subject}> <{triplet.predicate}> {obj_str} .")
+            lines.append(f"<{subject}> <{predicate}> {obj_str} .")
         return "\n".join(lines)
