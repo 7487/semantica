@@ -62,7 +62,7 @@ def test_pinned_session_connects_to_pinned_ip_without_resolving_hostname():
     port = server.server_address[1]
     url = f"http://pinned-test.invalid:{port}/resource"
     try:
-        session = ontology_mod._make_pinned_session("127.0.0.1", url)
+        session = ontology_mod._make_pinned_session(["127.0.0.1"], url)
         try:
             resp = session.get(url, timeout=5)
             assert resp.status_code == 200
@@ -117,7 +117,7 @@ def test_pinned_session_ignores_a_different_real_resolution():
     thread.start()
     url = f"http://localhost:{port}/resource"
     try:
-        session = ontology_mod._make_pinned_session("127.0.0.2", url)
+        session = ontology_mod._make_pinned_session(["127.0.0.2"], url)
         try:
             resp = session.get(url, timeout=5)
             assert resp.status_code == 200
@@ -131,17 +131,76 @@ def test_pinned_session_ignores_a_different_real_resolution():
     assert captured["host_header"] == f"localhost:{port}"
 
 
+def test_pinned_session_falls_back_across_multiple_pinned_ips():
+    """A hostname can have multiple A/AAAA records; pinning to only the
+    first-returned address means a fetch fails outright if that specific
+    address happens to be unreachable even though a later one would work.
+    _make_pinned_session must fall back through every pinned IP in order.
+    """
+    server, thread, captured = _start_local_server()
+    port = server.server_address[1]
+    url = f"http://pinned-test.invalid:{port}/resource"
+    # 127.0.0.3 has nothing listening on this port — connection refused,
+    # forcing a fallback to the second (real) address.
+    unreachable_ip = "127.0.0.3"
+    try:
+        session = ontology_mod._make_pinned_session([unreachable_ip, "127.0.0.1"], url)
+        try:
+            resp = session.get(url, timeout=5)
+            assert resp.status_code == 200
+            assert resp.content == b"pinned response"
+        finally:
+            session.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_pinned_session_raises_when_every_pinned_ip_is_unreachable():
+    """If none of the pinned IPs are reachable, the session must raise
+    rather than silently falling back to resolving the hostname itself
+    (which would reopen the exact TOCTOU window pinning exists to close)."""
+    import requests
+
+    url = "http://pinned-test.invalid:9/resource"  # port 9 (discard) — nothing listens
+    session = ontology_mod._make_pinned_session(["127.0.0.3", "127.0.0.4"], url)
+    try:
+        with pytest.raises(requests.exceptions.ConnectionError):
+            session.get(url, timeout=5)
+    finally:
+        session.close()
+
+
 def test_validate_fetch_url_returns_the_resolved_ip():
-    """_validate_fetch_url must return the IP it validated, so callers can
-    pin the connection to it."""
+    """_validate_fetch_url must return every IP it validated, so callers can
+    pin the connection to them (with fallback across all of them)."""
     def fake_getaddrinfo(host, *_a, **_k):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
 
     import unittest.mock as mock
     with mock.patch.object(ontology_mod.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
-        resolved_ip = ontology_mod._validate_fetch_url("http://example.org/ontology.ttl")
+        resolved_ips = ontology_mod._validate_fetch_url("http://example.org/ontology.ttl")
 
-    assert resolved_ip == "93.184.216.34"
+    assert resolved_ips == ["93.184.216.34"]
+
+
+def test_validate_fetch_url_returns_all_validated_ips_deduplicated():
+    """A hostname with multiple A/AAAA records must return every distinct
+    validated address, in resolution order, so the caller can fall back
+    across all of them rather than failing if only the first is
+    unreachable."""
+    def fake_getaddrinfo(host, *_a, **_k):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+            (socket.AF_INET, socket.SOCK_DGRAM, 17, "", ("93.184.216.34", 0)),  # duplicate, different socktype
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.35", 0)),
+        ]
+
+    import unittest.mock as mock
+    with mock.patch.object(ontology_mod.socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+        resolved_ips = ontology_mod._validate_fetch_url("http://example.org/ontology.ttl")
+
+    assert resolved_ips == ["93.184.216.34", "93.184.216.35"]
 
 
 def test_validate_fetch_url_still_rejects_private_ip():
@@ -175,7 +234,7 @@ def test_validate_fetch_url_still_rejects_private_ip():
 def _make_self_signed_cert(hostname: str, tmp_path):
     import datetime
 
-    cryptography = pytest.importorskip("cryptography")
+    pytest.importorskip("cryptography")
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -228,6 +287,7 @@ def _start_local_https_server(cert_path, key_path):
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ssl_ctx.load_cert_chain(cert_path, key_path)
     server.socket = ssl_ctx.wrap_socket(server.socket, server_side=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -246,7 +306,7 @@ def test_pinned_https_session_verifies_against_real_hostname_not_pinned_ip(tmp_p
     port = server.server_address[1]
     url = f"https://pinned-tls-test.invalid:{port}/resource"
     try:
-        session = ontology_mod._make_pinned_session("127.0.0.1", url)
+        session = ontology_mod._make_pinned_session(["127.0.0.1"], url)
         try:
             resp = session.get(url, timeout=5, verify=cert_path)
         finally:
@@ -269,7 +329,7 @@ def test_pinned_https_session_rejects_hostname_mismatch(tmp_path):
     port = server.server_address[1]
     url = f"https://wrong-name.invalid:{port}/resource"
     try:
-        session = ontology_mod._make_pinned_session("127.0.0.1", url)
+        session = ontology_mod._make_pinned_session(["127.0.0.1"], url)
         try:
             import requests
             with pytest.raises(requests.exceptions.SSLError):
