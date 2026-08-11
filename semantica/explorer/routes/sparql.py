@@ -51,8 +51,22 @@ _FORBIDDEN_KEYWORDS = re.compile(
 # the query. BASE declarations have no prefix name between the keyword and
 # the IRI (`BASE <...>`, vs. `PREFIX ex: <...>`), so the prefix-name token
 # is optional.
+#
+# ReDoS note: the original pattern ended with `<[^>]*>\s*` where the
+# trailing `\s*` could overlap with the `[^>]*` character class on inputs
+# that contain no closing `>`, causing polynomial backtracking (CodeQL
+# py/polynomial-redos, issue #1897).  The fix replaces the ambiguous `\s*`
+# suffix with `[ \t]*(?:\n|$)` which matches only horizontal whitespace
+# followed by a hard line boundary, so there is no character-class overlap
+# and the engine cannot split the match in multiple ways.
 _COMMENT_LINE = re.compile(r"(?:^|(?<=\s))#[^\n]*", re.MULTILINE)
-_PREFIX_DECL = re.compile(r"^\s*(?:PREFIX\s+\S+|BASE)\s*<[^>]*>\s*", re.IGNORECASE | re.MULTILINE)
+_PREFIX_DECL = re.compile(
+    r"^[ \t]*(?:PREFIX[ \t]+\S+|BASE)[ \t]*<[^>]*>[ \t]*(?:\n|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+_SPARQL_MAX_QUERY_LEN = 10_000  # chars; guards regex cost on uncontrolled input
 
 
 def _is_read_only_query(query: str) -> bool:
@@ -63,6 +77,11 @@ def _is_read_only_query(query: str) -> bool:
     keywords anywhere in the body, preventing injection via embedded strings
     or multi-statement tricks.
     """
+    # 0. Reject excessively long inputs before any regex work (defense-in-depth
+    #    against ReDoS even if a future regex change reintroduces ambiguity).
+    if len(query) > _SPARQL_MAX_QUERY_LEN:
+        return False
+
     # 1. Remove single-line comments that could hide the real query type
     cleaned = _COMMENT_LINE.sub("", query)
     # 2. Remove PREFIX/BASE declarations
