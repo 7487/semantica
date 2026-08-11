@@ -130,10 +130,10 @@ def create_app(
     app.state.explorer_settings = settings
 
     # allow_credentials lets browsers send cookies/auth headers cross-origin.
-    # The Explorer has no authentication, so credentials serve no purpose and
-    # enabling them when origins are broadened creates cross-site request risk.
-    # Set EXPLORER_CORS_CREDENTIALS=true explicitly to opt in (e.g. for a
-    # reverse-proxy setup that injects its own auth layer).
+    # Credentials aren't needed for the X-API-Key auth scheme below, and
+    # enabling them when origins are broadened creates cross-site request
+    # risk. Set EXPLORER_CORS_CREDENTIALS=true explicitly to opt in (e.g.
+    # for a reverse-proxy setup that injects its own cookie-based auth).
     _allow_credentials = os.environ.get("EXPLORER_CORS_CREDENTIALS", "false").lower() == "true"
     app.add_middleware(
         CORSMiddleware,
