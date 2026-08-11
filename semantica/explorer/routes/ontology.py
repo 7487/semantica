@@ -1046,7 +1046,6 @@ def _make_pinned_session(pinned_ips: List[str], url: str):
     `host` directly and restoring the real hostname via an explicit Host
     header (+ SNI params for HTTPS) is the correct mechanism here.
     """
-    import logging as _pin_logging
     import requests as _req
     import urllib3.util.connection as _u3_connection
     from urllib3.exceptions import NewConnectionError
@@ -1080,26 +1079,21 @@ def _make_pinned_session(pinned_ips: List[str], url: str):
 
     class _PinnedIPHTTPAdapter(_req.adapters.HTTPAdapter):
         def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
-            # If an HTTP(S) proxy applies (env-configured or per-request),
-            # pinning can't meaningfully apply: the actual TCP connection
-            # target is the proxy, and for a forward proxy the *proxy*
-            # performs its own DNS resolution of the target host on our
-            # behalf — a resolution this process has no visibility into or
-            # control over, so there is no client-side fix for that
-            # specific race. Fall back to the normal (unpinned) path rather
-            # than silently bypassing the configured proxy.
-            # _validate_fetch_url's destination classification still fully
-            # applies either way; only this secondary DNS-pinning hardening
-            # is inherently out of scope when a proxy is in the path.
+            # A proxy would perform its own DNS resolution of the target
+            # host on this process's behalf — a resolution outside this
+            # process's visibility or control, so there is no client-side
+            # pin that closes that race. Proxies are disabled outright for
+            # this SSRF-sensitive fetcher (session.trust_env=False below),
+            # so this should be unreachable via environment proxies; fail
+            # closed rather than silently skip pinning if a proxy is
+            # somehow still configured (e.g. passed explicitly in the
+            # future). _validate_fetch_url's destination classification is
+            # a separate, always-enforced check — this only guards the
+            # secondary DNS-pinning hardening.
             if _req.utils.select_proxy(request.url, proxies):
-                _pin_logging.getLogger(__name__).info(
-                    "DNS pinning skipped for %s: a proxy is configured for this "
-                    "request, and proxy-side DNS resolution is outside this "
-                    "process's control.",
-                    request.url,
-                )
-                return super().get_connection_with_tls_context(
-                    request, verify, proxies=proxies, cert=cert
+                raise HTTPException(
+                    status_code=502,
+                    detail="Proxied requests are not supported for ontology URL fetching.",
                 )
             host_params, pool_kwargs = self.build_connection_pool_key_attributes(request, verify, cert)
             if host_params.get("scheme") == "https":
@@ -1115,6 +1109,13 @@ def _make_pinned_session(pinned_ips: List[str], url: str):
             return pool
 
     session = _req.Session()
+    # Never honor HTTP_PROXY/HTTPS_PROXY/NO_PROXY env vars for this
+    # SSRF-sensitive fetcher: a configured proxy would perform its own DNS
+    # resolution of the target host outside this process's control,
+    # silently reopening the DNS check-then-use race pinning exists to
+    # close. See _PinnedIPHTTPAdapter.get_connection_with_tls_context for
+    # the fail-closed backstop if a proxy is somehow still configured.
+    session.trust_env = False
     session.headers["Host"] = host_header
     adapter = _PinnedIPHTTPAdapter()
     session.mount("http://", adapter)

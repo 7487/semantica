@@ -171,6 +171,57 @@ def test_pinned_session_raises_when_every_pinned_ip_is_unreachable():
         session.close()
 
 
+def test_pinned_session_disables_environment_proxy_trust():
+    """A pinned session must never honor HTTP_PROXY/HTTPS_PROXY env vars —
+    a proxy would perform its own DNS resolution of the target host outside
+    this process's control, reopening the exact TOCTOU window pinning
+    exists to close."""
+    session = ontology_mod._make_pinned_session(["127.0.0.1"], "http://example.org/")
+    try:
+        assert session.trust_env is False
+    finally:
+        session.close()
+
+
+def test_pinned_session_ignores_env_proxy_and_connects_directly(monkeypatch):
+    """End-to-end: even with HTTP_PROXY pointed at an address that would
+    fail if contacted, a pinned session must reach the real local server
+    directly — proving the env var is genuinely not consulted, not just
+    that the trust_env flag is set."""
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.5:1/")  # would fail if ever used
+    server, thread, _captured = _start_local_server()
+    port = server.server_address[1]
+    url = f"http://pinned-test.invalid:{port}/resource"
+    try:
+        session = ontology_mod._make_pinned_session(["127.0.0.1"], url)
+        try:
+            resp = session.get(url, timeout=5)
+            assert resp.status_code == 200
+            assert resp.content == b"pinned response"
+        finally:
+            session.close()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_pinned_session_fails_closed_if_a_proxy_is_explicitly_forced():
+    """Backstop: if a proxy is somehow still configured on the session
+    despite trust_env=False (e.g. set explicitly, as a future code path
+    might), the adapter must fail closed with a clear error rather than
+    silently connecting through the proxy unpinned."""
+    from fastapi import HTTPException
+
+    session = ontology_mod._make_pinned_session(["127.0.0.1"], "http://example.org/")
+    session.proxies = {"http": "http://127.0.0.5:1"}
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            session.get("http://example.org/", timeout=5)
+        assert exc_info.value.status_code == 502
+    finally:
+        session.close()
+
+
 def test_validate_fetch_url_returns_the_resolved_ip():
     """_validate_fetch_url must return every IP it validated, so callers can
     pin the connection to them (with fallback across all of them)."""
