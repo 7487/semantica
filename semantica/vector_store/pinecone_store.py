@@ -435,7 +435,7 @@ class PineconeStore:
             self.search_engine = PineconeSearch(self.index)
             if self.dimension is None:
                 try:
-                    stats = self.describe_index_stats()
+                    stats = self.index.describe_index_stats()
                     if stats and isinstance(stats, dict) and stats.get("dimension"):
                         self.dimension = int(stats["dimension"])
                 except Exception as e:
@@ -676,7 +676,7 @@ class PineconeStore:
         dimension = self.dimension
         if dimension is None:
             try:
-                stats = self.describe_index_stats()
+                stats = self.index.describe_index_stats()
                 if stats and isinstance(stats, dict) and stats.get("dimension"):
                     dimension = int(stats["dimension"])
                     self.dimension = dimension
@@ -705,7 +705,12 @@ class PineconeStore:
                 else:
                     pinecone_filter[key] = value
 
-        dummy_vector = [0.0] * dimension
+        # A literal zero vector is rejected by Pinecone for cosine-metric indexes
+        # ("Query vector must not be the zero vector"). Use a unit vector instead so
+        # this works regardless of the index's distance metric; since this call only
+        # cares about which vectors match `filter`, not similarity ranking, any
+        # fixed non-zero query vector is an equally valid probe.
+        dummy_vector = [1.0 / (dimension ** 0.5)] * dimension
 
         try:
             response = self.index.index.query(

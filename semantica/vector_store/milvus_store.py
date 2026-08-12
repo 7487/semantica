@@ -35,6 +35,7 @@ Author: Semantica Contributors
 License: MIT
 """
 
+import math
 import re
 from typing import Any, Dict, List, Optional, Union
 
@@ -57,6 +58,11 @@ def _format_milvus_value(val: Any) -> str:
     if isinstance(val, bool):
         return "true" if val else "false"
     elif isinstance(val, (int, float)):
+        if isinstance(val, float) and not math.isfinite(val):
+            raise ValidationError(
+                f"Invalid metadata filter value: {val!r}. NaN/Infinity are not "
+                "valid Milvus expression literals."
+            )
         return str(val)
     elif isinstance(val, str):
         escaped = (

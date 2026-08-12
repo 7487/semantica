@@ -648,8 +648,21 @@ class SQLiteVecStore:
                         filter_conditions.append(f"CAST(json_extract(metadata, '$.{key}') AS NUMERIC) <= ?")
                         filter_params.append(value["max"])
                 elif isinstance(value, list):
+                    # If the metadata value at this key is itself a JSON array, match on
+                    # intersection (mirrors the in-memory backend's set-intersection
+                    # semantics); otherwise fall back to plain scalar membership. Both
+                    # cases are handled uniformly via json_each: a non-array value is
+                    # wrapped in a one-element array first so json_each always sees a
+                    # valid JSON array to iterate.
                     placeholders = ", ".join(["?"] * len(value))
-                    filter_conditions.append(f"json_extract(metadata, '$.{key}') IN ({placeholders})")
+                    filter_conditions.append(
+                        f"EXISTS (SELECT 1 FROM json_each("
+                        f"  CASE WHEN json_type(metadata, '$.{key}') = 'array'"
+                        f"       THEN json_extract(metadata, '$.{key}')"
+                        f"       ELSE json_array(json_extract(metadata, '$.{key}'))"
+                        f"  END"
+                        f") je WHERE je.value IN ({placeholders}))"
+                    )
                     filter_params.extend([str(v) if not isinstance(v, (int, float, bool)) else v for v in value])
                 else:
                     filter_conditions.append(f"json_extract(metadata, '$.{key}') = ?")

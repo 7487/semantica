@@ -508,6 +508,9 @@ class FAISSStore:
 
         from .vector_store import _matches_filter
 
+        if limit <= 0:
+            return []
+
         results = []
         for vector_id, metadata in self.index.metadata.items():
             if _matches_filter(metadata, filters):

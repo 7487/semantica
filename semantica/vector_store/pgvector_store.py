@@ -697,10 +697,25 @@ class PgVectorStore:
                         ))
                         filter_values.append(value["max"])
                 elif isinstance(value, list):
-                    filter_conditions.append(psycopg_sql.SQL("metadata->>{} = ANY(%s)").format(
-                        psycopg_sql.Literal(key)
-                    ))
-                    filter_values.append([str(v) for v in value])
+                    # Same lowercase-bool rule as the scalar branch below: ->> renders
+                    # JSON booleans as 'true'/'false', not str()'s 'True'/'False'.
+                    str_values = [
+                        ('true' if v else 'false') if isinstance(v, bool) else str(v)
+                        for v in value
+                    ]
+                    # If the metadata value at this key is itself a JSON array, match on
+                    # intersection (mirrors the in-memory backend's set-intersection
+                    # semantics) via the jsonb `?|` "any array element matches" operator;
+                    # otherwise fall back to plain scalar membership. `->>` renders an
+                    # array as its whole text representation, so it cannot be reused for
+                    # the array case.
+                    filter_conditions.append(psycopg_sql.SQL(
+                        "(CASE WHEN jsonb_typeof(metadata->{0}) = 'array' "
+                        "THEN metadata->{0} ?| %s "
+                        "ELSE metadata->>{0} = ANY(%s) END)"
+                    ).format(psycopg_sql.Literal(key)))
+                    filter_values.append(str_values)
+                    filter_values.append(str_values)
                 elif isinstance(value, bool):
                     # PostgreSQL JSONB ->> returns lowercase 'true'/'false' for JSON booleans.
                     # str(True)='True' and str(False)='False' would never match; use the

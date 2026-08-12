@@ -156,8 +156,8 @@ class TestBackendMetadataFiltering(unittest.TestCase):
     def test_pinecone_store_filter_by_metadata_unknown_dimension_raises(self):
         store = PineconeStore()
         mock_index_wrapper = MagicMock()
+        mock_index_wrapper.describe_index_stats = MagicMock(return_value={})
         store.index = mock_index_wrapper
-        store.describe_index_stats = MagicMock(return_value={})
         with self.assertRaises(ProcessingError):
             store.filter_by_metadata({"status": "active"}, limit=5)
 
@@ -313,6 +313,90 @@ class TestBackendMetadataFiltering(unittest.TestCase):
                       "Expected lowercase 'false' in SQL params, got: {}".format(params_passed))
         self.assertNotIn('False', params_passed,
                          "str(False)='False' must NOT appear in SQL params")
+
+    @patch('semantica.vector_store.pgvector_store.PSYCOPG3_AVAILABLE', True)
+    @patch('semantica.vector_store.pgvector_store.psycopg_sql')
+    def test_pgvector_store_filter_by_metadata_bool_list(self, mock_sql):
+        """List-valued boolean filters must use lowercase 'true'/'false', not
+        str(True)/str(False), matching the scalar branch's handling.
+        """
+        store = object.__new__(PgVectorStore)
+        store.table_name = "test_vectors"
+        store._is_safe_identifier = lambda k: True
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_cur.fetchall.return_value = [
+            ("pg4", [0.7, 0.8], {"active": True})
+        ]
+        mock_conn.cursor.return_value = mock_cur
+
+        with patch.object(
+            PgVectorStore,
+            '_get_connection',
+            return_value=MagicMock(
+                __enter__=MagicMock(return_value=mock_conn),
+                __exit__=MagicMock(),
+            ),
+        ):
+            results = store.filter_by_metadata({"active": [True, False]}, limit=10)
+
+        self.assertEqual(len(results), 1)
+        execute_call_args = mock_cur.execute.call_args
+        params_passed = execute_call_args[0][1]
+        flat_params = [v for p in params_passed for v in (p if isinstance(p, list) else [p])]
+        self.assertIn('true', flat_params)
+        self.assertIn('false', flat_params)
+        self.assertNotIn('True', flat_params)
+        self.assertNotIn('False', flat_params)
+
+    def test_faiss_store_filter_by_metadata_limit_zero(self):
+        """limit=0 must return no results, not the first match."""
+        store = FAISSStore(dimension=2)
+        mock_index = MagicMock()
+        mock_index.metadata = {
+            "v1": {"category": "finance", "score": 10},
+        }
+        mock_index.get_vector.return_value = np.array([1.0, 0.0])
+        store.index = mock_index
+
+        results = store.filter_by_metadata({"category": "finance"}, limit=0)
+        self.assertEqual(results, [])
+
+    @patch('semantica.vector_store.milvus_store.MILVUS_AVAILABLE', True)
+    def test_milvus_store_filter_by_metadata_nan_raises(self):
+        """NaN/Infinity are not valid Milvus expression literals and must be
+        rejected up front rather than silently producing an invalid expression
+        that gets swallowed by the broad except around the query() call.
+        """
+        store = MilvusStore()
+        mock_coll_wrapper = MagicMock()
+        store.collection = mock_coll_wrapper
+
+        with self.assertRaises(ValidationError):
+            store.filter_by_metadata({"score": {"min": float("nan")}}, limit=5)
+
+    @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
+    def test_pinecone_store_get_index_sets_dimension_from_stats(self):
+        """get_index() must read stats from the returned PineconeIndex wrapper
+        (self.index), not from a nonexistent method on the store itself.
+        """
+        store = PineconeStore()
+        mock_client = MagicMock()
+        mock_pinecone_index = MagicMock()
+        mock_client.get_index.return_value = mock_pinecone_index
+        store.client = mock_client
+
+        with patch(
+            'semantica.vector_store.pinecone_store.PineconeIndex'
+        ) as mock_index_cls:
+            mock_index_instance = MagicMock()
+            mock_index_instance.describe_index_stats.return_value = {"dimension": 42}
+            mock_index_cls.return_value = mock_index_instance
+
+            store.get_index("my-index")
+
+        self.assertEqual(store.dimension, 42)
 
     def test_weaviate_store_filter_by_metadata(self):
         store = WeaviateStore()
