@@ -45,14 +45,16 @@ import json
 import logging
 import os
 import sys
-from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-try:
-    _SEMANTICA_VERSION = version("semantica")
-except PackageNotFoundError:
-    # Preserve direct source-tree execution when distribution metadata is absent.
-    from semantica import __version__ as _SEMANTICA_VERSION
+# `semantica.__version__` is the authoritative package version — it is kept in
+# sync with pyproject.toml's static `version` field by the release process and
+# is always present whenever this submodule is importable.  Using it directly
+# is simpler and more reliable than `importlib.metadata.version("semantica")`,
+# which reads dist-info written at install time and can lag the source in
+# editable installs (egg-info / dist-info is not regenerated on every version
+# bump, so it can reflect a stale value).
+from semantica import __version__ as _SEMANTICA_VERSION
 
 # ── logging ────────────────────────────────────────────────────────────────
 _log_level = getattr(logging, os.environ.get("SEMANTICA_LOG_LEVEL", "WARNING").upper(), logging.WARNING)
