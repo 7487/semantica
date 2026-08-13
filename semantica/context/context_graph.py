@@ -1077,6 +1077,44 @@ class ContextGraph:
                 if link_id:
                     self._unresolved_links[link_id] = link_meta
 
+            # Rebuild decision indexes from persisted decision nodes so that
+            # find_precedents_by_scenario / decision counts work after a reload
+            decision_nodes = [
+                n for n in self.nodes.values()
+                if (getattr(n, "node_type", None) or "").lower() == "decision"
+            ]
+            if decision_nodes:
+                if not hasattr(self, "_decisions"):
+                    self._decisions = {}
+                    self._decision_index = defaultdict(set)
+                    self._entity_index = defaultdict(set)
+                    self._temporal_index = []
+                for node in decision_nodes:
+                    meta = dict(getattr(node, "metadata", {}) or {})
+                    meta.update(getattr(node, "properties", {}) or {})
+                    decision = {
+                        "id": node.node_id,
+                        "category": meta.get("category", ""),
+                        "scenario": meta.get("scenario", getattr(node, "content", "") or ""),
+                        "reasoning": meta.get("reasoning", ""),
+                        "outcome": meta.get("outcome", ""),
+                        "confidence": meta.get("confidence", 0.0),
+                        "entities": meta.get("entities", []),
+                        "decision_maker": meta.get("decision_maker"),
+                        "timestamp": meta.get("timestamp", 0.0),
+                        "recorded_at": meta.get("recorded_at", ""),
+                        "valid_from": getattr(node, "valid_from", None),
+                        "valid_until": getattr(node, "valid_until", None),
+                        "metadata": {},
+                    }
+                    self._decisions[node.node_id] = decision
+                    if decision["category"]:
+                        self._decision_index[decision["category"]].add(node.node_id)
+                    for entity in decision["entities"]:
+                        self._entity_index[entity].add(node.node_id)
+                    self._temporal_index.append((node.node_id, decision["timestamp"]))
+                self._temporal_index.sort(key=lambda x: x[1], reverse=True)
+
         self.logger.info(f"Loaded context graph from {path}")
 
     def find_node(self, node_id: str) -> Optional[Dict[str, Any]]:
@@ -3051,19 +3089,38 @@ class ContextGraph:
             return False
         return True
     
+    @staticmethod
+    def _char_bigrams(text: str) -> set:
+        """Character bigrams over whitespace-stripped text (CJK fallback)."""
+        chars = "".join(text.lower().split())
+        return {chars[i:i + 2] for i in range(len(chars) - 1)}
+
     def _calculate_decision_content_similarity(self, scenario: str, decision: Dict[str, Any]) -> float:
-        """Calculate content similarity between scenario and decision."""
+        """Calculate content similarity between scenario and decision.
+
+        Combines word-level Jaccard (works for space-separated languages)
+        with character-bigram signals (fallback for CJK text without spaces).
+        For the bigram side we use the overlap coefficient |A∩B| / min(|A|,|B|)
+        instead of Jaccard, so that a short query against a long decision
+        document is not penalised for length mismatch.
+        """
         try:
-            # Simple word-based similarity
-            scenario_words = set(scenario.lower().split())
             decision_text = f"{decision['scenario']} {decision['reasoning']} {' '.join(decision['entities'])}"
+
+            # Word-based similarity
+            scenario_words = set(scenario.lower().split())
             decision_words = set(decision_text.lower().split())
-            
-            intersection = scenario_words.intersection(decision_words)
-            union = scenario_words.union(decision_words)
-            
-            return len(intersection) / len(union) if union else 0.0
-            
+            word_union = scenario_words | decision_words
+            word_sim = len(scenario_words & decision_words) / len(word_union) if word_union else 0.0
+
+            # Character-bigram similarity (CJK texts tokenize poorly on whitespace)
+            scenario_bigrams = self._char_bigrams(scenario)
+            decision_bigrams = self._char_bigrams(decision_text)
+            smaller = min(len(scenario_bigrams), len(decision_bigrams))
+            bigram_sim = len(scenario_bigrams & decision_bigrams) / smaller if smaller else 0.0
+
+            return max(word_sim, bigram_sim)
+
         except Exception as e:
             self.logger.exception("Content similarity calculation failed")
             return 0.0
