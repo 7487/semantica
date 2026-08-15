@@ -162,7 +162,11 @@ const SIGMA_SETTINGS = {
   hideLabelsOnMove: true,
   hideEdgesOnMove: true,
   enableEdgeEvents: true,
-  renderEdgeLabels: false,
+  // #1009: edge labels (the edge `type` — "works_for", "leads", ...) were
+  // hardcoded off, so edge text never rendered regardless of data. The
+  // labelDensity / labelGridCellSize / labelRenderedSizeThreshold settings
+  // below already throttle label density for both nodes and edges.
+  renderEdgeLabels: true,
   labelDensity: 0.7,
   labelGridCellSize: 140,
   zIndex: true,
