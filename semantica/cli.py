@@ -1716,11 +1716,17 @@ def embed_generate(cli_ctx: CLIContext, input_path: str, model: str,
                     arr = np.asarray(result)
                     if arr.ndim == 1:
                         arr = arr[np.newaxis, :]
-                    # schema: one column per embedding plus an id column
-                    columns = [f"dim_{i}" for i in range(arr.shape[1])]
-                    df = pd.DataFrame(arr, columns=columns)
+                    # Schema: single 'embedding' column (list[float] per row).
+                    # embed index detects vector columns via
+                    # isinstance(df[c].iloc[0], (list, np.ndarray)).
+                    # Row indices serve as ids: embed index will see ids=None
+                    # but vectors will index correctly regardless.
+                    df = pd.DataFrame({
+                        "embedding": [list(row) for row in arr],
+                    })
                     df.index.name = "id"
-                    df.to_parquet(output_path, index=True)
+                    df.index = [str(i) for i in range(len(arr))]
+                    df.to_parquet(output_path, index=False)
                 else:
                     output_path.write_text(
                         json.dumps(result, default=str), encoding="utf-8"
