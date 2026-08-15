@@ -1708,7 +1708,28 @@ def embed_generate(cli_ctx: CLIContext, input_path: str, model: str,
         except ImportError as exc:
             raise click.ClickException(f"Embeddings module not available: {exc}") from exc
         if output:
-            Path(output).write_text(json.dumps(result, default=str), encoding="utf-8")
+            output_path = Path(output)
+            try:
+                import numpy as np
+                import pandas as pd
+                if output_path.suffix.lower() == ".parquet":
+                    arr = np.asarray(result)
+                    if arr.ndim == 1:
+                        arr = arr[np.newaxis, :]
+                    # schema: one column per embedding plus an id column
+                    columns = [f"dim_{i}" for i in range(arr.shape[1])]
+                    df = pd.DataFrame(arr, columns=columns)
+                    df.index.name = "id"
+                    df.to_parquet(output_path, index=True)
+                else:
+                    output_path.write_text(
+                        json.dumps(result, default=str), encoding="utf-8"
+                    )
+            except ImportError as exc:
+                raise click.ClickException(
+                    f"Missing dependency for --output: {exc}. "
+                    f"Install pyarrow/pandas with: pip install semantica[ingest-parquet]"
+                ) from exc
             _ok(cli_ctx, f"Wrote {output}")
         elif _is_json(cli_ctx, local_json):
             _jecho(result if isinstance(result, dict) else {"status": "ok"})
