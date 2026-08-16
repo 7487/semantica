@@ -1498,6 +1498,8 @@ Semantica is designed for environments where AI outputs must be explainable, aud
 - **Cybersecurity:** Threat attribution, incident response timelines, and IOC provenance tracking
 - **Autonomous Systems:** Decision logs, safety validation, and explainable AI for certification
 
+> ⚠️ **This is system-level explainability, not foundation-model explainability.** Semantica does not expose, reconstruct, or explain what happens *inside* the LLM/foundation model — its internal reasoning or chain-of-thought stays opaque, as it does for any external system. What Semantica explains is *outside* the model: the context and data fed in, the decision produced, its provenance, the relevant relationships, the policies applied, and the full execution trail. In short, Semantica explains and audits what the AI system did, not the LLM's private internal reasoning.
+
 ---
 
 ## Installation
