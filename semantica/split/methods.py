@@ -93,6 +93,7 @@ from ..utils.exceptions import ProcessingError
 from ..utils.helpers import safe_import
 from ..utils.logging import get_logger
 from .semantic_chunker import Chunk
+from ..semantic_extract.methods import load_spacy_model
 
 logger = get_logger("split_methods")
 
@@ -336,7 +337,7 @@ def split_by_sentences(
     # Try spaCy first
     if SPACY_AVAILABLE and kwargs.get("use_spacy", True):
         try:
-            nlp = spacy.load("en_core_web_sm")
+            nlp = load_spacy_model("en_core_web_sm")
             doc = nlp(text)
             sentences = [sent.text for sent in doc.sents]
         except Exception:
