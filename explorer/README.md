@@ -63,7 +63,9 @@ semantica-explorer --graph my_graph.json --no-browser
 python -m semantica.explorer --graph my_graph.json
 ```
 
-> **Security note:** The Explorer API has no built-in authentication. The default `--host 127.0.0.1` binds to localhost only, so it is not reachable from other machines on your network. If you bind to `0.0.0.0`, all graph data is readable and writable by any host that can reach the port. The CLI will print a warning in that case.
+> **Security note:** Since v0.6.5 the Explorer API requires an API key. Set the `SEMANTICA_API_KEY` environment variable and send it as the `X-API-Key` header on every request; without a configured key, protected routes fail closed with `503` rather than serving anonymously. To opt into unauthenticated access for local development only, set `SEMANTICA_ALLOW_ANONYMOUS=true` explicitly.
+>
+> The default `--host 127.0.0.1` binds to localhost only, so it is not reachable from other machines on your network. If you bind to `0.0.0.0`, all graph data is readable and writable by any host that can reach the port (subject to API-key auth); the CLI will print a warning in that case.
 
 ---
 
