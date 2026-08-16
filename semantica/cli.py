@@ -1709,32 +1709,41 @@ def embed_generate(cli_ctx: CLIContext, input_path: str, model: str,
             raise click.ClickException(f"Embeddings module not available: {exc}") from exc
         if output:
             output_path = Path(output)
+            suffix = output_path.suffix.lower()
             try:
                 import numpy as np
                 import pandas as pd
-                if output_path.suffix.lower() == ".parquet":
-                    arr = np.asarray(result)
-                    if arr.ndim == 1:
-                        arr = arr[np.newaxis, :]
+                arr = np.asarray(result)
+                if arr.ndim == 1:
+                    arr = arr[np.newaxis, :]
+                if arr.ndim != 2:
+                    raise click.ClickException(
+                        f"embed generate --output expects a 1-D or 2-D array, "
+                        f"got {arr.ndim}-D (shape {arr.shape})"
+                    )
+                rows = [list(row) for row in arr]
+                if suffix == ".parquet":
                     # Schema: single 'embedding' column (list[float] per row).
                     # embed index detects vector columns via
                     # isinstance(df[c].iloc[0], (list, np.ndarray)).
-                    # Row indices serve as ids: embed index will see ids=None
-                    # but vectors will index correctly regardless.
-                    df = pd.DataFrame({
-                        "embedding": [list(row) for row in arr],
-                    })
-                    df.index.name = "id"
-                    df.index = [str(i) for i in range(len(arr))]
+                    df = pd.DataFrame({"embedding": rows})
                     df.to_parquet(output_path, index=False)
+                elif suffix in (".json", ".jsonl"):
+                    df = pd.DataFrame({"embedding": rows})
+                    df.to_json(
+                        output_path,
+                        orient="records",
+                        lines=(suffix == ".jsonl"),
+                    )
                 else:
-                    output_path.write_text(
-                        json.dumps(result, default=str), encoding="utf-8"
+                    raise click.ClickException(
+                        f"Unsupported output format '{suffix}'. "
+                        "Use .parquet, .json, or .jsonl"
                     )
             except ImportError as exc:
                 raise click.ClickException(
                     f"Missing dependency for --output: {exc}. "
-                    f"Install pyarrow/pandas with: pip install semantica[ingest-parquet]"
+                    "Install pyarrow with: pip install pyarrow"
                 ) from exc
             _ok(cli_ctx, f"Wrote {output}")
         elif _is_json(cli_ctx, local_json):
