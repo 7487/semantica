@@ -81,7 +81,6 @@ class SemanticChunker:
         if SPACY_AVAILABLE:
             model_name = config.get("model", "en_core_web_sm")
             try:
-                # self.nlp = spacy.load(model_name)
                 self.nlp = load_spacy_model(model_name)
             except OSError:
                 self.logger.warning(
