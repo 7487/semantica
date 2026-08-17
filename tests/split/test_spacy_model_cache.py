@@ -26,7 +26,10 @@ def force_spacy_available(monkeypatch):
 
 
 def _fake_spacy(load):
-    return SimpleNamespace(load=load, util=SimpleNamespace(is_package=lambda _name: True))
+    return SimpleNamespace(
+        load=load,
+        util=SimpleNamespace(is_package=lambda _name: True),
+    )
 
 
 def _nlp_mock(sentences=("Hello world.",)):
