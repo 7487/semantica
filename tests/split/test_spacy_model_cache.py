@@ -177,6 +177,24 @@ class TestSpacyModelCache:
         )
         assert chunker2.nlp is not None
 
+    def test_semantic_chunker_falls_back_when_spacy_runtime_is_broken(
+        self, monkeypatch
+    ):
+        """A spaCy model that is installed but unusable at runtime (e.g. a
+        config incompatible with the installed spaCy version) must degrade
+        SemanticChunker to fallback chunking, not crash __init__ -- mirrors
+        TestNERExtractorSpacyModelCache's equivalent broken-runtime test.
+        """
+
+        def broken_load(name, **_kwargs):
+            raise RuntimeError("ConfigSchemaNlp is not fully defined")
+
+        monkeypatch.setattr(se_methods, "spacy", _fake_spacy(broken_load))
+
+        chunker = semantic_chunker.SemanticChunker()
+
+        assert chunker.nlp is None
+
 
 class TestNERExtractorSpacyModelCache:
     """NERExtractor(method="ml") must reuse the centralized cache in

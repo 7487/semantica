@@ -86,6 +86,13 @@ class SemanticChunker:
                 self.logger.warning(
                     f"spaCy model {model_name} not found. Using fallback chunking."
                 )
+            except Exception:
+                self.logger.warning(
+                    "spaCy model %s failed to initialize and will be disabled "
+                    "for this chunker instance. Using fallback chunking.",
+                    model_name,
+                    exc_info=True,
+                )
 
     def chunk(self, text: str, **options) -> List[Chunk]:
         """
