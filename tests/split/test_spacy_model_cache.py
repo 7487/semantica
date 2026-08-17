@@ -27,10 +27,8 @@ def force_spacy_available(monkeypatch):
 
 def _fake_spacy(load):
     return SimpleNamespace(
-        load=load, 
-        util=SimpleNamespace(
-        is_package=lambda _name: True
-        ),
+        load=load,
+        util=SimpleNamespace(is_package=lambda _name: True),
     )
 
 
