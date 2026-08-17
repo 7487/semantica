@@ -31,6 +31,11 @@ const EFFECT_ROWS: EffectRowConfig[] = [
     description: "Local emphasis around the hovered or selected node.",
   },
   {
+    key: "edgeLabelsEnabled",
+    label: "Edge Labels",
+    description: "Draw the relationship type on graph edges. Off restores label-free edges on dense graphs.",
+  },
+  {
     key: "legendEnabled",
     label: "Semantic Legend",
     description: "Compact semantic group legend for graph orientation.",

@@ -103,6 +103,7 @@ export type GraphEffectToggle =
   | "communitiesEnabled"
   | "centralityEnabled"
   | "legendEnabled"
+  | "edgeLabelsEnabled"
   | "diagnosticsEnabled";
 
 export interface GraphEffectsState {
@@ -113,6 +114,7 @@ export interface GraphEffectsState {
   semanticRegionsEnabled: boolean;
   contoursEnabled: boolean;
   pathfindingEnabled: boolean;
+  edgeLabelsEnabled: boolean;
   communitiesEnabled: boolean;
   centralityEnabled: boolean;
   legendEnabled: boolean;

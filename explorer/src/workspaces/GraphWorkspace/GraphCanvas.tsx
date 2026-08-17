@@ -1215,6 +1215,10 @@ function applySceneState(
       size: resolvedStyle.size,
       zIndex: resolvedStyle.zIndex,
       curvature: resolvedStyle.curvature,
+      // #1009: Sigma's edge label renderer draws data.label — the graph
+      // stores the relationship type in edgeType, which the renderer never
+      // saw, so enabling renderEdgeLabels alone left edges blank.
+      label: resolvedStyle.hidden ? undefined : String(attrs.edgeType ?? data.label ?? ""),
     };
   });
 
@@ -1940,6 +1944,17 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         syncCameraState(sigma);
       });
     }, [behaviors, dispatchToBehaviors, getBehaviorContext, graphReady, syncCameraState]);
+
+    // #1009: renderEdgeLabels follows the Effects-panel toggle instead of
+    // staying hardcoded — dense graphs get their label-free edges back.
+    useEffect(() => {
+      const sigma = sigmaRef.current;
+      if (!sigma) {
+        return;
+      }
+      sigma.setSetting("renderEdgeLabels", effectsState.edgeLabelsEnabled);
+      sigma.scheduleRefresh();
+    }, [effectsState.edgeLabelsEnabled]);
 
     useEffect(() => {
       return () => {
