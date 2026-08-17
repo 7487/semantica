@@ -93,12 +93,11 @@ from ..utils.exceptions import ProcessingError
 from ..utils.helpers import safe_import
 from ..utils.logging import get_logger
 from .semantic_chunker import Chunk
-from ..semantic_extract.methods import load_spacy_model
 
 logger = get_logger("split_methods")
 
 # Try to import optional dependencies
-spacy, SPACY_AVAILABLE = safe_import("spacy")
+_, SPACY_AVAILABLE = safe_import("spacy")
 
 nltk, NLTK_AVAILABLE = safe_import("nltk")
 tiktoken, TIKTOKEN_AVAILABLE = safe_import("tiktoken")
@@ -337,6 +336,7 @@ def split_by_sentences(
     # Try spaCy first
     if SPACY_AVAILABLE and kwargs.get("use_spacy", True):
         try:
+            from ..semantic_extract.methods import load_spacy_model
             nlp = load_spacy_model("en_core_web_sm")
             doc = nlp(text)
             sentences = [sent.text for sent in doc.sents]

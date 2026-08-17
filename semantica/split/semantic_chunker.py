@@ -35,10 +35,9 @@ from ..utils.exceptions import ProcessingError
 from ..utils.helpers import safe_import
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
-from ..semantic_extract.methods import load_spacy_model
 
 
-spacy, SPACY_AVAILABLE = safe_import("spacy")
+_, SPACY_AVAILABLE = safe_import("spacy")
 
 
 @dataclass
@@ -81,6 +80,7 @@ class SemanticChunker:
         if SPACY_AVAILABLE:
             model_name = config.get("model", "en_core_web_sm")
             try:
+                from ..semantic_extract.methods import load_spacy_model
                 self.nlp = load_spacy_model(model_name)
             except OSError:
                 self.logger.warning(

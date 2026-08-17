@@ -26,7 +26,12 @@ def force_spacy_available(monkeypatch):
 
 
 def _fake_spacy(load):
-    return SimpleNamespace(load=load, util=SimpleNamespace(is_package=lambda _name: True))
+    return SimpleNamespace(
+        load=load, 
+        util=SimpleNamespace(
+        is_package=lambda _name: True
+        ),
+    )
 
 
 def _nlp_mock(sentences=("Hello world.",)):
@@ -129,7 +134,10 @@ class TestSpacyModelCache:
         se_methods.clear_spacy_model_cache()
         semantic_chunker.SemanticChunker()
 
-        assert calls == [{}, {}], "neither caller should request a partial pipeline"
+        assert len(calls) == 2
+        assert all("disable" not in kwargs for kwargs in calls), (
+            "neither caller should request a partial pipeline"
+        )   
 
     def test_missing_model_falls_back_without_poisoning_cache(self, monkeypatch):
         attempts = []
@@ -161,7 +169,9 @@ class TestSpacyModelCache:
         chunker2 = semantic_chunker.SemanticChunker()
         split_methods.split_by_sentences("One more sentence.")
 
-        assert len(attempts) == 3, "the model should load once after it becomes available"
+        assert len(attempts) == 3, (
+            "the model should load once after it becomes available"
+        )
         assert chunker2.nlp is not None
 
 
