@@ -1213,3 +1213,46 @@ test("resolveEdgeElementStyle hidden class produces hidden:true for suppressed e
   );
   assert.equal(style.hidden, true);
 });
+
+// ── #1009 maintainer-blocking regression: single-edge empty edgeType ─────────
+
+test("resolveDisplayGraph single-edge normalizes empty-string edgeType to related_to", () => {
+  addNode("a");
+  addNode("b");
+  // One edge only — exercises the entries.length === 1 path in aggregateDisplayGraph.
+  batchMergeEdges([{
+    id: "e-single-empty",
+    source: "a",
+    target: "b",
+    attributes: { edgeType: "", weight: 1, properties: {} },
+  }]);
+
+  const { graph: displayGraph } = resolveDisplayGraph("", [], [], "full", { aggregationEnabled: true });
+  assert.equal(displayGraph.size, 1);
+
+  const edgeId = displayGraph.edges()[0];
+  const attrs = displayGraph.getEdgeAttributes(edgeId) as { edgeType?: string; dominantEdgeType?: string };
+  assert.equal(attrs.edgeType, "related_to",
+    "single-edge path must normalize empty edgeType to the canonical fallback");
+  assert.equal(attrs.dominantEdgeType, "related_to",
+    "single-edge dominantEdgeType must also be normalized");
+});
+
+test("resolveDisplayGraph single-edge preserves a valid non-empty edgeType unchanged", () => {
+  addNode("a");
+  addNode("b");
+  batchMergeEdges([{
+    id: "e-single-valid",
+    source: "a",
+    target: "b",
+    attributes: { edgeType: "works_for", weight: 1, properties: {} },
+  }]);
+
+  const { graph: displayGraph } = resolveDisplayGraph("", [], [], "full", { aggregationEnabled: true });
+  assert.equal(displayGraph.size, 1);
+
+  const edgeId = displayGraph.edges()[0];
+  const attrs = displayGraph.getEdgeAttributes(edgeId) as { edgeType?: string };
+  assert.equal(attrs.edgeType, "works_for",
+    "single-edge path must not alter a valid relationship type");
+});

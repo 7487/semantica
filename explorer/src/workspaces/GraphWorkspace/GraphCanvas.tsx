@@ -1312,6 +1312,9 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     const onEdgeClickRef = useRef(onEdgeClick);
     const onSceneRuntimeChangeRef = useRef(onSceneRuntimeChange);
     const onCameraStateChangeRef = useRef(onCameraStateChange);
+    // #1009: tracked as a ref so the Sigma creation effect always reads the
+    // current value without needing effectsState in its dependency array.
+    const effectsStateRef = useRef(effectsState);
     const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
     const [zoomTier, setZoomTier] = useState<GraphZoomTier>("overview");
     const [analyticsSnapshot, setAnalyticsSnapshot] = useState<GraphAnalyticsSnapshot | null>(null);
@@ -1340,6 +1343,7 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
     onEdgeClickRef.current = onEdgeClick;
     onSceneRuntimeChangeRef.current = onSceneRuntimeChange;
     onCameraStateChangeRef.current = onCameraStateChange;
+    effectsStateRef.current = effectsState;
 
     const behaviors = useMemo<GraphBehavior[]>(
       () => [
@@ -1852,7 +1856,13 @@ export const GraphCanvas = forwardRef<GraphCanvasHandle, GraphCanvasProps>(
         return;
       }
 
-      const sigma = new Sigma(displayGraphRef.current, containerRef.current, SIGMA_SETTINGS);
+      const sigma = new Sigma(displayGraphRef.current, containerRef.current, {
+        ...SIGMA_SETTINGS,
+        // #1009: initialize with the current toggle value rather than the
+        // static default so that a user who disabled Edge Labels before
+        // graph/Sigma initialization sees the correct state after mount.
+        renderEdgeLabels: effectsStateRef.current.edgeLabelsEnabled,
+      });
       sigmaRef.current = sigma;
       appliedGraphVersionRef.current = graphVersionRef.current;
 
