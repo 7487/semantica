@@ -88,7 +88,7 @@ const AVAILABILITY_KEYS: Record<GraphEffectToggle, keyof GraphDiagnosticsSnapsho
   communitiesEnabled: "communities",
   centralityEnabled: "centrality",
   legendEnabled: "legend",
-  edgeLabelsEnabled: "edge-labels",
+  edgeLabelsEnabled: "edgeLabels",
   diagnosticsEnabled: "diagnostics",
 };
 

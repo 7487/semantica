@@ -2150,7 +2150,7 @@ function aggregateDisplayGraph(graphRef: GraphRef): Graph<NodeAttributes, EdgeAt
     const rawEdgeIds = entries.flatMap(({ edgeId, attrs }) => collectRawEdgeIds(attrs, edgeId));
     const typeCounts = new Map<string, number>();
     entries.forEach(({ attrs }) => {
-      const edgeType = String(attrs.edgeType ?? "related_to");
+      const edgeType = String(attrs.edgeType || "related_to");
       typeCounts.set(edgeType, (typeCounts.get(edgeType) ?? 0) + 1);
     });
     const dominantEdgeType = [...typeCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? representative.attrs.edgeType ?? "related_to";
@@ -2170,7 +2170,7 @@ function aggregateDisplayGraph(graphRef: GraphRef): Graph<NodeAttributes, EdgeAt
       dominantEdgeType: String(dominantEdgeType),
       representativeWeight: Number(representative.attrs.weight ?? 1),
       weight: Number(representative.attrs.weight ?? 1),
-      edgeType: String(representative.attrs.edgeType ?? dominantEdgeType ?? "related_to"),
+      edgeType: String(representative.attrs.edgeType || dominantEdgeType || "related_to"),
       parallelCount: rawEdgeIds.length,
       familySize: rawEdgeIds.length,
       bundleKind: isBidirectionalBundle ? "bidirectional" : "parallel",
@@ -2280,7 +2280,7 @@ function buildCommunityGroupedGraph(): GraphDisplayResult {
     };
     bucket.rawEdgeIds.push(String(edgeId));
     bucket.weight = Math.max(bucket.weight, Number((attrs as EdgeAttributes).weight ?? 1));
-    const edgeType = String((attrs as EdgeAttributes).edgeType ?? "related_to");
+    const edgeType = String((attrs as EdgeAttributes).edgeType || "related_to");
     bucket.typeCounts.set(edgeType, (bucket.typeCounts.get(edgeType) ?? 0) + 1);
     groupedEdges.set(key, bucket);
   });

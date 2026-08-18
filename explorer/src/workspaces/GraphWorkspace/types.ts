@@ -188,6 +188,7 @@ export interface GraphDiagnosticsSnapshot {
     communities: GraphEffectAvailability;
     centrality: GraphEffectAvailability;
     legend: GraphEffectAvailability;
+    edgeLabels: GraphEffectAvailability;
     diagnostics: GraphEffectAvailability;
   };
 }

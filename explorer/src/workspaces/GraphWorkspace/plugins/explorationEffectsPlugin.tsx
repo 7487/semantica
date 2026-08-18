@@ -151,7 +151,9 @@ export const explorationEffectsPlugin: GraphPlugin = {
                         ? "pathFlow"
                         : row.key === "lensEnabled"
                           ? "lens"
-                          : "legend"
+                          : row.key === "edgeLabelsEnabled"
+                            ? "edgeLabels"
+                            : "legend"
                   ] ?? {
                     enabled: effectsState[row.key],
                     available: false,

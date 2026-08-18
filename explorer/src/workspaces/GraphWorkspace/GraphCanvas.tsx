@@ -745,6 +745,12 @@ function buildEffectAvailability(
     ? { enabled: true, available: true, reason: "Panel enabled" }
     : { enabled: false, available: false, reason: "Disabled by toggle" };
 
+  // #1009: edge labels are immediately available once the graph is loaded —
+  // they have no async analytics or zoom-tier dependency.
+  const edgeLabels = effectsState.edgeLabelsEnabled
+    ? { enabled: true, available: true, reason: "Ready" }
+    : { enabled: false, available: false, reason: "Disabled by toggle" };
+
   const diagnostics = !GRAPH_THEME.effects.diagnostics.enabledInDev
     ? { enabled: false, available: false, reason: "Disabled in production" }
     : effectsState.diagnosticsEnabled
@@ -762,6 +768,7 @@ function buildEffectAvailability(
     communities,
     centrality,
     legend,
+    edgeLabels,
     diagnostics,
   };
 }
@@ -1218,7 +1225,9 @@ function applySceneState(
       // #1009: Sigma's edge label renderer draws data.label — the graph
       // stores the relationship type in edgeType, which the renderer never
       // saw, so enabling renderEdgeLabels alone left edges blank.
-      label: resolvedStyle.hidden ? undefined : String(attrs.edgeType ?? data.label ?? ""),
+      // Use || rather than ?? so that an empty-string edgeType (possible
+      // when the API returns type: "") does not produce a blank label.
+      label: resolvedStyle.hidden ? undefined : String(attrs.edgeType || data.label || ""),
     };
   });
 
