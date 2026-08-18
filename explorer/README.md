@@ -255,6 +255,11 @@ Vite automatically tries the next available port and prints the actual URL in th
 - Confirm the backend exposes the `/ws/graph-updates` WebSocket endpoint.
 - Check DevTools → Network → WS tab for the connection status and error code.
 - Ensure the backend version matches the frontend — mixing major versions can cause protocol mismatches.
+- **Authentication:** `/ws/graph-updates` enforces the same API key as the REST routes. Browsers cannot set custom headers on a WebSocket handshake, so pass the key as a query parameter instead:
+  ```
+  ws://127.0.0.1:8000/ws/graph-updates?api_key=<your-key>
+  ```
+  Non-browser clients (native apps, scripts) may send it as the `X-API-Key` header. A missing or incorrect key results in close code `4401`; if `SEMANTICA_API_KEY` is unset and `SEMANTICA_ALLOW_ANONYMOUS` is not `true`, the connection is also rejected. Note that API keys in URLs appear in server logs — prefer the header for non-browser clients.
 
 ---
 
