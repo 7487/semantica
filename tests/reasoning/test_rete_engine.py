@@ -6,8 +6,11 @@ whole only fires rules whose conditions actually unify with the facts.
 """
 
 import itertools
+import re
 import unittest
+from unittest import mock
 
+from semantica.reasoning import rete_engine
 from semantica.reasoning.reasoner import Fact, Rule
 from semantica.reasoning.rete_engine import (
     AlphaNode,
@@ -42,6 +45,33 @@ class TestUnifyCondition(unittest.TestCase):
         loves_other = Fact("f5", "Loves", ["John", "Mary"])
         self.assertEqual(unify_condition("Loves(?x, ?x)", loves_self), {"x": "John"})
         self.assertIsNone(unify_condition("Loves(?x, ?x)", loves_other))
+
+    def test_regex_error_logs_warning_and_returns_none(self):
+        """A regex compilation error is logged with context and yields None."""
+        fact = Fact("f6", "Person", ["John"])
+        with mock.patch.object(
+            rete_engine.re,
+            "match",
+            side_effect=re.error("bad pattern"),
+        ), self.assertLogs("semantica.rete_engine", level="WARNING") as captured:
+            result = unify_condition("Person(?x)", fact)
+        self.assertIsNone(result)
+        joined = "\n".join(captured.output)
+        self.assertIn("Person(?x)", joined)
+        self.assertIn("Person(John)", joined)
+        self.assertIn("bad pattern", joined)
+
+    def test_unexpected_error_logs_warning_and_returns_none(self):
+        """An unexpected error is also logged and swallowed as None."""
+        fact = Fact("f7", "Person", ["John"])
+        with mock.patch.object(
+            rete_engine.re,
+            "match",
+            side_effect=RuntimeError("boom"),
+        ), self.assertLogs("semantica.rete_engine", level="WARNING") as captured:
+            result = unify_condition("Person(?x)", fact)
+        self.assertIsNone(result)
+        self.assertIn("boom", "\n".join(captured.output))
 
 
 class TestAlphaNode(unittest.TestCase):

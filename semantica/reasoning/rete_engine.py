@@ -41,6 +41,8 @@ from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
 from .reasoner import Fact, Rule
 
+logger = get_logger("rete_engine")
+
 
 def unify_condition(
     condition: Any,
@@ -95,7 +97,25 @@ def unify_condition(
 
     try:
         match = re.match(p_regex, fact_str)
-    except re.error:
+    except re.error as e:
+        logger.warning(
+            "unify_condition failed to compile/match condition "
+            "%r (regex: %r) against fact %r: %s",
+            pattern,
+            p_regex,
+            fact_str,
+            e,
+        )
+        return None
+    except Exception as e:  # noqa: BLE001 - mirror Reasoner._match_pattern
+        logger.warning(
+            "unify_condition unexpected error matching condition "
+            "%r (regex: %r) against fact %r: %s",
+            pattern,
+            p_regex,
+            fact_str,
+            e,
+        )
         return None
     if not match:
         return None
