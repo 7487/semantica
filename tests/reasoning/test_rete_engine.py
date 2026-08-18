@@ -91,6 +91,33 @@ class TestAlphaNode(unittest.TestCase):
         self.assertIsNone(node.add_fact(fact))
         self.assertEqual(node.tokens, [])
 
+    def test_uses_precompiled_regex(self):
+        """AlphaNode compiles its condition once and reuses it per fact."""
+        node = AlphaNode("a1", "Person(?x)")
+        self.assertIsNotNone(node._compiled)
+        # Matching goes through the compiled matcher, not unify_condition.
+        with mock.patch.object(rete_engine, "unify_condition") as unify:
+            fact = Fact("f1", "Person", ["John"])
+            token = node.add_fact(fact)
+        unify.assert_not_called()
+        self.assertIsNotNone(token)
+        assert token is not None
+        self.assertEqual(token.bindings, {"x": "John"})
+
+    def test_bad_condition_never_matches_and_logs(self):
+        """A condition that fails to compile logs a warning and never fires."""
+        with mock.patch.object(
+            rete_engine,
+            "_build_condition_regex",
+            return_value="(unbalanced",
+        ), self.assertLogs("semantica.rete_engine", level="WARNING") as captured:
+            node = AlphaNode("bad", "Person(?x)")
+        self.assertIsNone(node._compiled)
+        self.assertIn("failed to compile", "\n".join(captured.output))
+        fact = Fact("f1", "Person", ["John"])
+        self.assertIsNone(node.add_fact(fact))
+        self.assertEqual(node.tokens, [])
+
 
 class TestBetaNode(unittest.TestCase):
     def test_join_consistent_bindings(self):

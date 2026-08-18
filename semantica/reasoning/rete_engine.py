@@ -44,6 +44,47 @@ from .reasoner import Fact, Rule
 logger = get_logger("rete_engine")
 
 
+def _build_condition_regex(
+    pattern: str,
+    initial_bindings: Optional[Dict[str, str]] = None,
+) -> str:
+    """Build an anchored regex string for a condition pattern.
+
+    Splits the pattern on ``?var`` placeholders, escaping the literal
+    segments so surrounding parentheses/commas match literally. Variables
+    become named groups (or backreferences when repeated); variables already
+    present in ``initial_bindings`` are inlined as their literal value.
+
+    Args:
+        pattern: The condition pattern string (e.g. ``"Person(?x)"``).
+        initial_bindings: Bindings already established upstream. Variables
+            already bound are matched as literals rather than captured.
+
+    Returns:
+        An anchored regex string (``^...$``) suitable for ``re.compile`` /
+        ``re.match``.
+    """
+    bindings = initial_bindings or {}
+    segments = re.split(r"(\?\w+)", pattern)
+    seen_vars: Set[str] = set()
+    p_regex = ""
+    for seg in segments:
+        if seg.startswith("?"):
+            var_name = seg[1:]
+            if var_name in bindings:
+                # Already bound — require the exact literal value.
+                p_regex += re.escape(bindings[var_name])
+            elif var_name in seen_vars:
+                # Same variable used twice — enforce a backreference.
+                p_regex += f"(?P={var_name})"
+            else:
+                p_regex += f"(?P<{var_name}>.+?)"
+                seen_vars.add(var_name)
+        else:
+            p_regex += re.escape(seg)
+    return f"^{p_regex}$"
+
+
 def unify_condition(
     condition: Any,
     fact: Fact,
@@ -74,26 +115,9 @@ def unify_condition(
     pattern = condition if isinstance(condition, str) else str(condition)
     fact_str = str(fact)
 
-    # Split on ?var placeholders, escaping only the literal segments so that
-    # the surrounding parentheses/commas are matched literally.
-    segments = re.split(r"(\?\w+)", pattern)
-    seen_vars: Set[str] = set()
-    p_regex = ""
-    for seg in segments:
-        if seg.startswith("?"):
-            var_name = seg[1:]
-            if var_name in bindings:
-                # Already bound — require the exact literal value.
-                p_regex += re.escape(bindings[var_name])
-            elif var_name in seen_vars:
-                # Same variable used twice — enforce a backreference.
-                p_regex += f"(?P={var_name})"
-            else:
-                p_regex += f"(?P<{var_name}>.+?)"
-                seen_vars.add(var_name)
-        else:
-            p_regex += re.escape(seg)
-    p_regex = f"^{p_regex}$"
+    # Build the anchored regex once (variables already bound are inlined as
+    # literals). See ``_build_condition_regex`` for the segment handling.
+    p_regex = _build_condition_regex(pattern, bindings)
 
     try:
         match = re.match(p_regex, fact_str)
@@ -172,6 +196,22 @@ class AlphaNode(ReteNode):
         # Single-fact tokens produced by unifying each matched fact with
         # this node's condition.
         self.tokens: List[Token] = []
+        # Pre-compile the condition regex once. Alpha nodes never have
+        # initial bindings, so the pattern is stable for the node's lifetime
+        # and every incoming fact reuses this compiled matcher instead of
+        # rebuilding it (avoids repeated regex construction overhead).
+        pattern = condition if isinstance(condition, str) else str(condition)
+        self._compiled: Optional[re.Pattern] = None
+        try:
+            self._compiled = re.compile(_build_condition_regex(pattern))
+        except re.error as e:
+            logger.warning(
+                "AlphaNode %r failed to compile condition %r: %s; "
+                "node will never match",
+                node_id,
+                pattern,
+                e,
+            )
 
     def add_fact(self, fact: Fact) -> Optional[Token]:
         """Add fact if it matches the condition, returning its token.
@@ -189,11 +229,32 @@ class AlphaNode(ReteNode):
     def _matches(self, fact: Fact) -> Optional[Dict[str, str]]:
         """Check if fact matches the alpha node condition.
 
+        Uses the pre-compiled regex built in ``__init__`` for performance,
+        since RETE evaluates many facts against every alpha node.
+
         Returns the variable bindings produced by unification if the fact
         matches, otherwise ``None``. An empty dict signals a match with no
         variables (still distinct from ``None``).
         """
-        return unify_condition(self.condition, fact)
+        if self._compiled is None:
+            # Compilation failed at build time; treat as non-matching.
+            return None
+        fact_str = str(fact)
+        try:
+            match = self._compiled.match(fact_str)
+        except Exception as e:  # noqa: BLE001 - mirror unify_condition
+            logger.warning(
+                "AlphaNode %r unexpected error matching condition "
+                "%r against fact %r: %s",
+                self.node_id,
+                self.condition,
+                fact_str,
+                e,
+            )
+            return None
+        if not match:
+            return None
+        return match.groupdict()
 
 
 class BetaNode(ReteNode):
