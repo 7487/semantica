@@ -408,6 +408,8 @@ def _apply_connection_pin(
     pinned_ips: Optional[List[str]],
     orig_http_adapter: "requests.adapters.HTTPAdapter",
     orig_https_adapter: "requests.adapters.HTTPAdapter",
+    had_host_header: bool,
+    orig_host_header: Optional[str],
 ) -> None:
     """Mount (or remove) IP pinning on *active_session* for the next hop."""
     # Session.mount() silently drops whatever adapter it replaces without
@@ -435,7 +437,15 @@ def _apply_connection_pin(
     else:
         active_session.mount("http://", orig_http_adapter)
         active_session.mount("https://", orig_https_adapter)
-        active_session.headers.pop("Host", None)
+        # Restore the session's own pre-call Host header state rather than
+        # unconditionally clearing it — a caller-supplied session may carry
+        # a legitimate Host override (e.g. a private/internal endpoint
+        # fronted by a name that differs from the connection host), which
+        # a hop that happens not to need pinning must not silently drop.
+        if had_host_header:
+            active_session.headers["Host"] = orig_host_header
+        else:
+            active_session.headers.pop("Host", None)
 
 
 _SESSION_LOCK_ATTR = "_semantica_ssrf_lock"
@@ -605,6 +615,8 @@ def request_with_ssrf_guard(
                 current_pinned_ips,
                 _orig_http_adapter,
                 _orig_https_adapter,
+                _had_host_header,
+                _orig_host_header,
             )
             response = requester(
                 current_method,

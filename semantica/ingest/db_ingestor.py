@@ -53,6 +53,34 @@ _SQL_FRAGMENT_BLOCKLIST_RE = re.compile(
     re.IGNORECASE,
 )
 
+# SQL single-quoted string literals (''  is the standard escaped-quote) and
+# double-quoted identifiers (""  likewise) — matched only when properly
+# closed, so a malformed/unterminated quote sequence is left alone and
+# still hits the blocklist above rather than being treated as "inside a
+# literal" and skipped.
+_SQL_STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
+_SQL_QUOTED_IDENTIFIER_RE = re.compile(r'"(?:[^"]|"")*"')
+
+
+def _mask_sql_literals(fragment: str) -> str:
+    """Blank the contents of quoted literals so they can't trip the blocklist.
+
+    A legitimate value or quoted identifier that happens to contain a
+    blocked word or character as *data* — e.g. ``status = 'union'`` or
+    ``"my--column" = 1`` — is not SQL syntax and shouldn't be rejected as
+    if it were. Only the quoted span's interior is replaced (with `?`,
+    keeping the surrounding quotes and the fragment's length/positions
+    intact for the error message); text outside any properly closed quote
+    is passed through unchanged and still fully scrutinized.
+    """
+    fragment = _SQL_STRING_LITERAL_RE.sub(
+        lambda m: "'" + "?" * (len(m.group(0)) - 2) + "'", fragment
+    )
+    fragment = _SQL_QUOTED_IDENTIFIER_RE.sub(
+        lambda m: '"' + "?" * (len(m.group(0)) - 2) + '"', fragment
+    )
+    return fragment
+
 
 def _validate_sql_identifier(name: str, kind: str) -> str:
     """Validate a table/schema name used as a raw SQL identifier.
@@ -90,7 +118,11 @@ def _validate_sql_fragment(fragment: str, kind: str) -> str:
     """
     if not isinstance(fragment, str):
         raise ValidationError(f"Invalid {kind}: must be a string")
-    if _SQL_FRAGMENT_BLOCKLIST_RE.search(fragment):
+    # Check the blocklist against literal-masked text so a blocked word
+    # appearing only as quoted data (not as SQL syntax) doesn't false-
+    # positive; the original, unmodified fragment is still what's returned
+    # and used in the query.
+    if _SQL_FRAGMENT_BLOCKLIST_RE.search(_mask_sql_literals(fragment)):
         raise ValidationError(
             f"Invalid {kind}: {fragment!r} contains disallowed SQL "
             "keywords or statement-boundary characters"
@@ -417,6 +449,8 @@ class DataExporter:
                 schema=schema,
             )
 
+        except ValidationError:
+            raise
         except Exception as e:
             self.logger.error(f"Failed to export table {table_name}: {e}")
             raise ProcessingError(f"Failed to export table: {e}") from e
