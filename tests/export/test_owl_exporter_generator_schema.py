@@ -179,3 +179,113 @@ def test_a_class_without_any_identifier_is_skipped_not_emitted_as_empty():
 
     assert set(graph.subjects(RDF.type, OWL.Class)) == set()
     assert (URIRef("https://example.org/onto/"), RDF.type, OWL.Ontology) in graph
+
+
+# ── Review findings on the first revision of this fix ────────────────────────
+
+def test_a_name_with_a_space_still_mints_a_valid_iri():
+    """The name fallback pasted free text onto a base, producing `<... ...>`."""
+    import pyoxigraph
+
+    ontology = {
+        "uri": "https://example.org/onto/",
+        "name": "Spaces",
+        "classes": [{"name": "Customer Account"}],
+    }
+    turtle = OWLExporter()._export_owl_turtle(ontology)
+
+    graph = Graph()
+    graph.parse(data=turtle, format="turtle")
+    subjects = [str(s) for s in graph.subjects(RDF.type, OWL.Class)]
+    assert subjects, "the class was dropped entirely"
+    assert " " not in subjects[0], subjects[0]
+
+    # rdflib only warns about a space in an IRI; a strict parser refuses it.
+    pyoxigraph.Store().load(
+        turtle.encode(), format=pyoxigraph.RdfFormat.TURTLE, base_iri=None
+    )
+
+
+def test_owl_thing_expands_instead_of_becoming_its_own_scheme():
+    """`owl:Thing` matches the generic scheme grammar but is a prefixed name."""
+    ontology = {
+        "uri": "https://example.org/onto/",
+        "name": "Thing",
+        "classes": [{"name": "Person", "uri": "https://example.org/onto/Person"}],
+        "object_properties": [
+            {
+                "name": "relatedTo",
+                "uri": "https://example.org/onto/relatedTo",
+                "domain": ["owl:Thing"],
+                "range": ["owl:Thing"],
+            }
+        ],
+    }
+    graph = Graph()
+    graph.parse(data=OWLExporter()._export_owl_turtle(ontology), format="turtle")
+
+    subject = URIRef("https://example.org/onto/relatedTo")
+    for predicate in (RDFS.domain, RDFS.range):
+        values = [str(v) for v in graph.objects(subject, predicate)]
+        assert values == ["http://www.w3.org/2002/07/owl#Thing"], values
+
+
+def test_the_generators_owl_thing_fallback_round_trips():
+    """stage 4 assigns domain/range of ["owl:Thing"], so this is the live path."""
+    ontology = {
+        "uri": "https://example.org/onto/",
+        "name": "Generated",
+        "classes": [{"name": "Person", "uri": "https://example.org/onto/Person"}],
+        "properties": [
+            {"name": "linkedTo", "type": "object", "uri": "https://example.org/onto/linkedTo",
+             "domain": ["owl:Thing"], "range": ["owl:Thing"], "@type": "owl:ObjectProperty"}
+        ],
+    }
+    graph = Graph()
+    graph.parse(data=OWLExporter()._export_owl_turtle(ontology), format="turtle")
+
+    assert (
+        URIRef("https://example.org/onto/linkedTo"),
+        RDFS.domain,
+        URIRef("http://www.w3.org/2002/07/owl#Thing"),
+    ) in graph
+
+
+def test_optimizing_a_class_without_a_uri_does_not_raise():
+    """improve_coherence lives on OntologyOptimizer, which owns no namespace manager."""
+    from semantica.ontology.ontology_generator import OntologyOptimizer
+
+    result = OntologyOptimizer().improve_coherence(
+        {"uri": "https://example.org/onto/", "classes": [{"name": "Person"}], "properties": []}
+    )
+    minted = result["classes"][0]["uri"]
+    assert minted.startswith("https://example.org/onto/"), minted
+    assert " " not in minted
+
+
+def test_optimizing_falls_back_to_a_base_when_the_ontology_has_no_uri():
+    from semantica.ontology.ontology_generator import OntologyOptimizer
+
+    result = OntologyOptimizer().improve_coherence(
+        {"classes": [{"name": "Customer Account"}], "properties": []}
+    )
+    minted = result["classes"][0]["uri"]
+    assert minted.startswith("http"), minted
+    assert " " not in minted, minted
+
+
+def test_unusable_property_entries_are_reported_not_silently_dropped(caplog):
+    import logging
+
+    ontology = {
+        "uri": "https://example.org/onto/",
+        "name": "Malformed",
+        "classes": [],
+        "properties": ["not a dict", {"name": "untyped", "uri": "https://example.org/onto/untyped"}],
+    }
+    with caplog.at_level(logging.WARNING):
+        OWLExporter()._export_owl_turtle(ontology)
+
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert "not dictionaries" in messages or "not\ndictionaries" in messages or "dictionaries" in messages
+    assert "untyped" in messages

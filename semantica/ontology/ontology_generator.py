@@ -33,6 +33,7 @@ License: MIT
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.logging import get_logger
@@ -698,12 +699,15 @@ class OntologyOptimizer:
         # Ensure all classes have required fields. Both guards used `not in`,
         # which misses a key that is present and None, and the URI fallback
         # assigned a bare class name where an absolute IRI is required (#1103).
+        #
+        # The base comes from the ontology being optimized. OntologyOptimizer
+        # holds no namespace manager, so reaching for one here would raise
+        # AttributeError on every ontology carrying a class with no URI.
+        base_uri = ontology.get("uri") or DEFAULT_ONTOLOGY_BASE_URI
         classes = ontology.get("classes", [])
         for cls in classes:
             if not cls.get("uri"):
-                cls["uri"] = self.namespace_manager.generate_class_iri(
-                    cls.get("name", "Entity")
-                )
+                cls["uri"] = _mint_term_iri(base_uri, cls.get("name", "Entity"))
             if not cls.get("label"):
                 cls["label"] = cls.get("name", "Entity")
 
@@ -749,6 +753,25 @@ class NodeShape:
     property_shapes: List[PropertyShape] = field(default_factory=list)
     closed: bool = False
     severity: str = "Violation"
+
+
+#: Used when an ontology carries no URI of its own.
+DEFAULT_ONTOLOGY_BASE_URI = "https://semantica.dev/ontology/"
+
+
+def _mint_term_iri(base_uri: str, name: str) -> str:
+    """
+    Mint an absolute IRI for a term from a base and a name.
+
+    The name is percent-encoded: names are free text, and "Customer Account"
+    pasted onto a base gives an IRI with a space in it, which strict parsers
+    reject outright.
+    """
+    local = quote(str(name).strip(), safe="~._-!$&'()*+,;=:@")
+    if not local:
+        local = "Entity"
+    separator = "" if base_uri.endswith(("#", "/", ":")) else "#"
+    return f"{base_uri}{separator}{local}"
 
 
 @dataclass

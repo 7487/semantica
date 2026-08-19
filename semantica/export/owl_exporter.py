@@ -25,6 +25,7 @@ License: MIT
 import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any, Dict, List, Optional, Union
 
 from ..utils.exceptions import ProcessingError, ValidationError
@@ -37,6 +38,9 @@ from ..utils.progress_tracker import get_progress_tracker
 # NamespaceManager "semantica" entry, so ontology URIs, KG instance URIs, and
 # PROV-exported URIs co-resolve under one shared namespace by default.
 from ..provenance.manager import DEFAULT_BASE_URI
+
+#: Module-level logger, for the classmethod helpers that have no instance.
+logger = get_logger("owl_exporter")
 
 
 class OWLExporter:
@@ -374,14 +378,60 @@ class OWLExporter:
 
     _XSD_NS = "http://www.w3.org/2001/XMLSchema#"
 
+    #: Prefixes the generator and hand-authored ontologies actually use. A
+    #: prefixed name is not an absolute IRI: `owl:Thing` matches the generic
+    #: scheme grammar, so treating it as one produced <owl:Thing> as a domain,
+    #: which is a different term from http://www.w3.org/2002/07/owl#Thing.
+    _KNOWN_PREFIXES = {
+        "owl": "http://www.w3.org/2002/07/owl#",
+        "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+        "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+        "xsd": _XSD_NS,
+        "skos": "http://www.w3.org/2004/02/skos/core#",
+        "dc": "http://purl.org/dc/elements/1.1/",
+        "dcterms": "http://purl.org/dc/terms/",
+        "foaf": "http://xmlns.com/foaf/0.1/",
+        "sem": "https://semantica.dev/ns#",
+        "semantica": "https://semantica.dev/ns#",
+    }
+
+    #: Schemes that really do introduce an absolute IRI without `//`.
+    _ABSOLUTE_SCHEMES = ("urn:", "doi:", "mailto:", "tag:", "uuid:")
+
+    @classmethod
+    def _is_absolute_iri(cls, value: str) -> bool:
+        if not isinstance(value, str):
+            return False
+        value = value.strip()
+        if "://" in value:
+            return bool(re.match(r"^[A-Za-z][A-Za-z0-9+.\-]*://", value))
+        return value.lower().startswith(cls._ABSOLUTE_SCHEMES)
+
+    @classmethod
+    def _expand_prefixed_name(cls, value: str) -> str:
+        """Expand a known prefixed name, or return "" when it cannot be expanded."""
+        prefix, _, local = value.partition(":")
+        namespace = cls._KNOWN_PREFIXES.get(prefix)
+        return f"{namespace}{local}" if namespace and local else ""
+
     @staticmethod
-    def _is_absolute_iri(value: str) -> bool:
-        return bool(re.match(r"^[A-Za-z][A-Za-z0-9+.\-]*:", value))
+    def _iri_safe(local: str) -> str:
+        """
+        Percent-encode a local name so it can sit inside <>.
+
+        A name is free text. "Customer Account" pasted onto a base gives an IRI
+        with a space in it, which rdflib only warns about and Oxigraph rejects
+        with "Invalid IRI code point".
+        """
+        return quote(local.strip(), safe="~._-!$&'()*+,;=:@/?")
 
     @classmethod
     def _join_iri(cls, base: str, local: str) -> str:
         """Append a local name to a base IRI, respecting hash and slash bases."""
         if not base:
+            return ""
+        local = cls._iri_safe(local)
+        if not local:
             return ""
         separator = "" if base.endswith(("#", "/", ":")) else "#"
         return f"{base}{separator}{local}"
@@ -438,8 +488,8 @@ class OWLExporter:
             return value
         if value in index:
             return index[value]
-        if ":" in value:  # a prefixed name we cannot expand
-            return ""
+        if ":" in value:
+            return cls._expand_prefixed_name(value)
         return cls._join_iri(base, value)
 
     @classmethod
@@ -497,15 +547,31 @@ class OWLExporter:
             if isinstance(prop, dict):
                 data_props.append(prop)
 
+        skipped = 0
+        untyped = []
         for prop in ontology.get("properties", []) or []:
             if not isinstance(prop, dict):
+                skipped += 1
                 continue
             kind = str(prop.get("type") or "").strip().lower()
             owl_type = str(prop.get("@type") or "").strip().lower()
             if kind in ("object", "objectproperty") or owl_type.endswith("objectproperty"):
                 object_props.append(prop)
             else:
+                if not kind and not owl_type:
+                    untyped.append(prop.get("name") or prop.get("uri") or "<unnamed>")
                 data_props.append(prop)
+
+        if skipped:
+            logger.warning(
+                f"Skipped {skipped} entr(y/ies) in 'properties' that are not "
+                "dictionaries and cannot be exported"
+            )
+        if untyped:
+            logger.warning(
+                "Exported as data properties because they declare no type or "
+                f"@type: {', '.join(str(name) for name in untyped)}"
+            )
 
         return object_props, data_props
 
