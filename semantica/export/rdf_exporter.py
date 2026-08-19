@@ -446,9 +446,12 @@ class RDFSerializer:
         """
         rel_id = rel.get("id") or mint_relationship_iri(idx, source_id or "", target_id or "")
 
-        type_label = rel_type.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+        # The full predicate, not its local name. Truncating to the fragment
+        # made https://a.example/ns#employs and https://b.example/ns#employs the
+        # same literal, so the temporal node no longer said which predicate it
+        # described, and it disagreed with the direct triple beside it.
         escaped = (
-            str(type_label)
+            str(rel_type)
             .replace("\\", "\\\\")
             .replace('"', '\\"')
             .replace("\n", "\\n")

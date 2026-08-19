@@ -141,3 +141,49 @@ def test_the_reified_terms_are_declared_in_the_shipped_vocabulary():
 
     undeclared = {t for t in emitted if t.startswith(NS) and t not in declared}
     assert not undeclared, f"emitted but not declared in the vocabulary: {undeclared}"
+
+
+# ── Review finding on the first revision of this fix ─────────────────────────
+
+def test_the_reified_type_keeps_the_full_predicate():
+    """
+    Truncating to the local name made two predicates from different namespaces
+    indistinguishable, and disagreed with the direct triple beside it.
+    """
+    from rdflib import Literal
+
+    def reified_type(rel_type):
+        kg = {
+            "entities": KG["entities"],
+            "relationships": [
+                {
+                    "source_id": E1,
+                    "target_id": E2,
+                    "type": rel_type,
+                    "valid_from": "2024-01-01T00:00:00Z",
+                }
+            ],
+        }
+        graph = Graph()
+        graph.parse(
+            data=RDFSerializer().serialize_to_turtle(kg, include_temporal=True),
+            format="turtle",
+        )
+        node = next(iter(graph.subjects(RDF.type, URIRef(NS + "Relationship"))))
+        return set(graph.objects(node, URIRef(NS + "type")))
+
+    a = reified_type("https://a.example/ns#employs")
+    b = reified_type("https://b.example/ns#employs")
+
+    assert a == {Literal("https://a.example/ns#employs")}, a
+    assert a != b, "two distinct predicates produced the same reified type"
+
+
+def test_the_reified_type_matches_the_direct_triples_predicate():
+    from rdflib import Literal
+
+    graph = _graph(include_temporal=True)
+    node = next(iter(graph.subjects(RDF.type, URIRef(NS + "Relationship"))))
+
+    assert set(graph.objects(node, URIRef(NS + "type"))) == {Literal(EMPLOYS)}
+    assert (URIRef(E1), URIRef(EMPLOYS), URIRef(E2)) in graph
