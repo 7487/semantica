@@ -438,10 +438,13 @@ class OntologyGenerator:
             entities=entities, relationships=relationships, classes=classes, **prop_options
         )
 
-        # Add types to classes
+        # Add types to classes.
+        # ClassInferrer sets "uri": None when it was given no namespace manager,
+        # so the key is present and a `not in` guard never fires: every class
+        # then reached the exporters with no IRI at all (#1103).
         for cls in classes:
             cls["@type"] = "owl:Class"
-            if "uri" not in cls:
+            if not cls.get("uri"):
                 cls["uri"] = self.namespace_manager.generate_class_iri(cls["name"])
 
         # Add types to properties
@@ -451,7 +454,7 @@ class OntologyGenerator:
             else:
                 prop["@type"] = "owl:DatatypeProperty"
 
-            if "uri" not in prop:
+            if not prop.get("uri"):
                 prop["uri"] = self.namespace_manager.generate_property_iri(prop["name"])
 
         return {
@@ -692,12 +695,16 @@ class OntologyOptimizer:
         Returns:
             Improved ontology
         """
-        # Ensure all classes have required fields
+        # Ensure all classes have required fields. Both guards used `not in`,
+        # which misses a key that is present and None, and the URI fallback
+        # assigned a bare class name where an absolute IRI is required (#1103).
         classes = ontology.get("classes", [])
         for cls in classes:
-            if "uri" not in cls:
-                cls["uri"] = cls.get("name", "Entity")
-            if "label" not in cls:
+            if not cls.get("uri"):
+                cls["uri"] = self.namespace_manager.generate_class_iri(
+                    cls.get("name", "Entity")
+                )
+            if not cls.get("label"):
                 cls["label"] = cls.get("name", "Entity")
 
         # Ensure all properties have domains and ranges
