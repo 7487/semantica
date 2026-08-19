@@ -2,7 +2,15 @@
 
 <img src="Semantica Logo.png" alt="Semantica" width="420"/>
 
-<a href="https://trendshift.io/repositories/18986?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-18986" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/18986" alt="semantica-agi%2Fsemantica | Trendshift" width="250" height="55"/></a>
+<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+  <a href="https://trendshift.io/repositories/18986?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-18986" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/repositories/18986" alt="semantica-agi/semantica | Trendshift" width="250" height="55"/>
+  </a>
+
+  <a href="https://trendshift.io/repositories/18986?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-18986" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/18986/weekly?language=Python" alt="semantica-agi/semantica | Trendshift" width="250" height="55"/>
+  </a>
+</div>
 
 ### Graph-Native Infrastructure for Context and Accountable AI Systems
 
@@ -52,6 +60,8 @@ Most AI agents act without a trail. They store embeddings, not meaning: context 
 
 Semantica sits underneath your LLM, vector store, and agent framework as a deterministic infrastructure layer: no LLM required for graph construction, reasoning, or provenance.
 
+> ⚠️ **System-level explainability, not foundation-model explainability.** Semantica does not expose or reconstruct what happens *inside* the LLM — its internal reasoning or chain-of-thought stays opaque, as it does for any external system. Semantica explains what's *outside* the model: the context and data fed in, the decision produced, its provenance, relevant relationships, applied policies, and the full execution trail.
+
 **Who it's for:**
 
 - **AI/ML platform teams** shipping agents that make consequential decisions and need structured, queryable context built from fragmented raw data, not just a vector index
@@ -77,7 +87,7 @@ Semantica sits underneath your LLM, vector store, and agent framework as a deter
 - **Graph Analytics:** Centrality, community detection, link prediction, and shortest-path queries over the graph you just built
 - **Polyglot Graph Storage:** Native RDF (embedded Oxigraph, Blazegraph, Apache Jena, Eclipse RDF4J via SPARQL) and Labeled Property Graphs (Neo4j, FalkorDB, Apache AGE, AWS Neptune via Cypher), plus vector stores, all swappable without touching your code
 - **Visualization:** Explore any graph, ontology, or timeline in an interactive browser workbench
-- **Drop-in Integrations:** Native Agno support, a full-featured MCP server, a comprehensive CLI, a REST API, and plugins across major editors
+- **Drop-in Integrations:** Native Agno and CrewAI support, a full-featured MCP server, a comprehensive CLI, a REST API, and plugins across major editors
 
 ---
 
@@ -293,17 +303,10 @@ graph.add_causal_relationship(d1, d2, relationship_type="CAUSED")
 prov.track_entity("patient_P4821", source="ehr/medication_orders_2024.json",
                   metadata={"extractor": "NamedEntityRecognizer"})
 
-# Export W3C PROV-O for regulator submission - RDFExporter expects
-# {"entities": [...], "relationships": [...]}, so map ContextGraph.to_dict()'s
-# {"nodes": [...], "edges": [...]} shape onto it first
-graph_dict = graph.to_dict()
-kg = {
-    "entities": [{"id": n["id"], "type": n["type"], "text": n["content"]} for n in graph_dict["nodes"]],
-    "relationships": [
-        {"source_id": e["source"], "target_id": e["target"], "type": e["type"]}
-        for e in graph_dict["edges"]
-    ],
-}
+# Export W3C PROV-O for regulator submission - to_kg_dict() is the official
+# adapter that emits the {"entities": [...], "relationships": [...]} /
+# source_id shape RDFExporter expects, so no manual field mapping is needed
+kg = graph.to_kg_dict()
 RDFExporter().export(kg, "audit_trail.ttl", format="turtle")
 ```
 
@@ -877,20 +880,14 @@ fact = BiTemporalFact(
     recorded_at=datetime(2024, 3, 5),
 )
 
-# Query facts valid within a time window - query_time_range() expects
-# {"relationships": [...]} with source_id/target_id keys, which differs from
-# ContextGraph.to_dict()'s {"nodes", "edges"} shape, so map it first
-graph_dict = graph.to_dict()
-kg_relationships = {
-    "relationships": [
-        {**e, "source_id": e["source"], "target_id": e["target"]}
-        for e in graph_dict["edges"]
-    ]
-}
+# Query facts valid within a time window - to_kg_dict() is the official
+# adapter that emits {"entities", "relationships"} with source_id/target_id
+# keys, the shape query_time_range() expects (no manual mapping required)
+kg = graph.to_kg_dict()
 
 tq = TemporalGraphQuery()
 facts_in_window = tq.query_time_range(
-    kg_relationships, query="valid_facts", start_time="2024-01-01", end_time="2024-12-31"
+    kg, query="valid_facts", start_time="2024-01-01", end_time="2024-12-31"
 )
 
 # Normalize natural language temporal expressions - returns a (start, end) range
@@ -1189,7 +1186,7 @@ Start with `semantica`, verify with `doctor`, build a graph, and explore the com
 
 ## Integrations
 
-Native plugin bundles for Claude Code, Cursor, Codex, Windsurf, Cline, Continue, VS Code, and OpenClaw; a full-featured MCP server for any MCP-compatible client; a comprehensive REST API; and first-class Agno support for multi-agent shared context. Every major LLM provider is already supported via `semantica.llms` and LiteLLM: OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Azure, Bedrock, Ollama, DeepSeek, HuggingFace, and more.
+Native plugin bundles for Claude Code, Cursor, Codex, Windsurf, Cline, Continue, VS Code, and OpenClaw; a full-featured MCP server for any MCP-compatible client; a comprehensive REST API; and first-class Agno and CrewAI support for agentic frameworks. Every major LLM provider is already supported via `semantica.llms` and LiteLLM: OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Azure, Bedrock, Ollama, DeepSeek, HuggingFace, and more.
 
 MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 
@@ -1303,6 +1300,11 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <strong>Agno</strong><br/>
 <sub>First-class · <code>pip install semantica[agno]</code></sub>
 </td>
+<td align="center" width="12.5%">
+<a href="https://github.com/crewAIInc/crewAI"><img src="https://github.com/crewAIInc.png?size=120" alt="CrewAI" width="48" height="48" /></a><br/>
+<strong>CrewAI</strong><br/>
+<sub>First-class · <code>pip install semantica[crewai]</code></sub>
+</td>
 </tr>
 <tr>
 <th colspan="8" align="left">Already Supported via REST API &amp; MCP</th>
@@ -1316,11 +1318,6 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <td align="center" width="12.5%">
 <a href="https://github.com/langchain-ai/langgraph"><img src="https://github.com/langchain-ai.png?size=120" alt="LangGraph" width="48" height="48" /></a><br/>
 <strong>LangGraph</strong><br/>
-<sub>REST API · MCP</sub>
-</td>
-<td align="center" width="12.5%">
-<a href="https://github.com/crewAIInc/crewAI"><img src="https://github.com/crewAIInc.png?size=120" alt="CrewAI" width="48" height="48" /></a><br/>
-<strong>CrewAI</strong><br/>
 <sub>REST API · MCP</sub>
 </td>
 <td align="center" width="12.5%">
@@ -1351,11 +1348,6 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <td align="center" width="12.5%">
 <a href="https://github.com/langchain-ai/langchain"><img src="https://github.com/langchain-ai.png?size=120" alt="LangChain" width="48" height="48" /></a><br/>
 <strong>LangChain</strong><br/>
-<sub>Dedicated toolkit</sub>
-</td>
-<td align="center" width="12.5%">
-<a href="https://github.com/crewAIInc/crewAI"><img src="https://github.com/crewAIInc.png?size=120" alt="CrewAI" width="48" height="48" /></a><br/>
-<strong>CrewAI</strong><br/>
 <sub>Dedicated toolkit</sub>
 </td>
 <td align="center" width="12.5%">
@@ -1503,6 +1495,8 @@ Semantica is designed for environments where AI outputs must be explainable, aud
 - **Cybersecurity:** Threat attribution, incident response timelines, and IOC provenance tracking
 - **Autonomous Systems:** Decision logs, safety validation, and explainable AI for certification
 
+> ⚠️ **This is system-level explainability, not foundation-model explainability.** Semantica does not expose, reconstruct, or explain what happens *inside* the LLM/foundation model — its internal reasoning or chain-of-thought stays opaque, as it does for any external system. What Semantica explains is *outside* the model: the context and data fed in, the decision produced, its provenance, the relevant relationships, the policies applied, and the full execution trail. In short, Semantica explains and audits what the AI system did, not the LLM's private internal reasoning.
+
 ---
 
 ## Installation
@@ -1514,6 +1508,7 @@ pip install semantica[all]      # everything
 
 ```bash
 pip install semantica[agno]                 # Agno multi-agent integration
+pip install semantica[crewai]               # CrewAI integration
 pip install semantica[llm-litellm]          # OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Bedrock, Ollama, DeepSeek, and more
 pip install semantica[graph-neo4j]          # Neo4j graph store (LPG)
 pip install semantica[graph-falkordb]       # FalkorDB graph store (LPG)
