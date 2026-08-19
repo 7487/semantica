@@ -1054,6 +1054,12 @@ class RDFExporter:
 
             self.logger.debug(f"Exporting to RDF format: {format}")
 
+            # Normalize the graph before serialization so every format benefits
+            # from field normalization (e.g. mapping 'name' -> 'label'/'text').
+            # Without this, graphs produced by GraphBuilder (which emit 'name')
+            # export with an empty semantica:text on all RDF paths. See #1097.
+            data = self.serializer.convert_kg_to_rdf(data)
+
             self.progress_tracker.update_tracking(
                 tracking_id, message="Validating RDF data..."
             )
