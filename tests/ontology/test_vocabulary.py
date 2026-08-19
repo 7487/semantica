@@ -28,6 +28,7 @@ from semantica.ontology.vocabulary import (  # noqa: E402
 EMITTED_TERMS = {
     "Entity",
     "Relationship",
+    "KnowledgeGraph",
     "text",
     "confidence",
     "metadata",
@@ -38,6 +39,7 @@ EMITTED_TERMS = {
     "entities",
     "relationships",
     "exportedAt",
+    "format",
     "openEndedInterval",
     "role_generator",
 }

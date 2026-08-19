@@ -30,11 +30,10 @@ License: MIT
 """
 
 from pathlib import Path
-import hashlib
 from typing import Any, Dict, List, Optional, Set, Union
 
 from ..utils.exceptions import ProcessingError, ValidationError
-from ..utils.helpers import ensure_directory
+from ..utils.helpers import ensure_directory, hash_data
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
 
@@ -60,13 +59,13 @@ def mint_entity_iri(text: str) -> str:
     provenance record written by an earlier process. SHA-256 is stable across
     runs and machines, which is what an identifier has to be.
     """
-    digest = hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
+    digest = hash_data(str(text))[:16]
     return f"{SEMANTICA_NS}entity_{digest}"
 
 
 def mint_relationship_iri(index: int, source: Any, target: Any) -> str:
     """Mint a stable IRI for a relationship that arrived without an id."""
-    digest = hashlib.sha256(f"{source}\x00{target}".encode("utf-8")).hexdigest()[:16]
+    digest = hash_data(f"{source}\x00{target}")[:16]
     return f"{SEMANTICA_NS}rel_{index}_{digest}"
 
 
@@ -526,7 +525,7 @@ class RDFSerializer:
                 entity_text = entity.get("text", "")
                 entity_id = mint_entity_iri(entity_text)
 
-            entity_type = entity.get("type", "semantica:Entity")
+            entity_type = entity.get("type", DEFAULT_ENTITY_TYPE)
             text = entity.get("text") or entity.get("label", "")
             confidence = entity.get("confidence", 1.0)
 

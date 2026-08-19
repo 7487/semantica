@@ -33,6 +33,13 @@ where a relationship carries sem:type, sem:source and sem:target rather than
 being written as a single triple.""" ;
     rdfs:isDefinedBy <https://semantica.dev/ns> .
 
+sem:KnowledgeGraph a owl:Class ;
+    rdfs:label "Knowledge Graph" ;
+    rdfs:comment """The document-level type of a JSON-LD export: the @type of
+the top-level node carrying sem:entities, sem:relationships and
+sem:exportedAt. Emitted by _convert_kg_to_jsonld in export/json_exporter.py.""" ;
+    rdfs:isDefinedBy <https://semantica.dev/ns> .
+
 # ── Properties on an entity ──────────────────────────────────────────────────
 
 sem:text a owl:DatatypeProperty ;
@@ -115,6 +122,14 @@ sem:exportedAt a owl:DatatypeProperty ;
 timestamp, so the range is xsd:dateTime rather than xsd:dateTimeStamp: the
 values carry no timezone offset.""" ;
     rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://semantica.dev/ns> .
+
+sem:format a owl:DatatypeProperty ;
+    rdfs:label "format" ;
+    rdfs:comment """The serialization format label written on a JSON-LD
+document (currently always the literal "json-ld"). Emitted by
+JSONExporter.export_to_jsonld in export/json_exporter.py.""" ;
+    rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://semantica.dev/ns> .
 
 # ── Temporal term (OWL-Time export) ──────────────────────────────────────────

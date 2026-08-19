@@ -11,6 +11,7 @@ IRI in the scheme ``semantica`` rather than the expansion of the declared
 ``semantica:`` prefix, so it never joined with anything written through it.
 """
 
+import os
 import subprocess
 import sys
 
@@ -45,7 +46,7 @@ def test_minted_entity_iri_is_stable_across_processes():
             capture_output=True,
             text=True,
             check=True,
-            env={"PYTHONHASHSEED": seed, "PATH": "/usr/bin:/bin"},
+            env={**os.environ, "PYTHONHASHSEED": seed},
         ).stdout.strip()
         for seed in ("0", "1", "random")
     }
@@ -86,6 +87,22 @@ def test_default_types_are_written_as_full_iris_in_turtle():
     assert f"<{DEFAULT_RELATION_TYPE}>" in turtle
     assert "<semantica:Entity>" not in turtle
     assert "<semantica:related_to>" not in turtle
+
+
+def test_default_entity_type_is_a_full_iri_in_rdfxml():
+    """RDF/XML's rdf:resource is an attribute value, not a QName context, so a
+
+    prefixed default there (``semantica:Entity``) resolves to the scheme
+    ``semantica`` rather than the declared namespace — the same failure mode
+    fixed for Turtle in #1101, missed here because the original tests only
+    checked Turtle output.
+    """
+    untyped = {"entities": [{"id": "https://example.org/e1", "text": "A"}],
+               "relationships": []}
+    rdfxml = RDFExporter().export_to_rdf(untyped, format="rdfxml")
+
+    assert f'rdf:resource="{DEFAULT_ENTITY_TYPE}"' in rdfxml
+    assert 'rdf:resource="semantica:Entity"' not in rdfxml
 
 
 def test_temporal_minting_uses_either_endpoint_representation():
