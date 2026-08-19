@@ -32,6 +32,7 @@ License: MIT
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Set, Union
+from urllib.parse import quote, urlsplit
 
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.helpers import ensure_directory, hash_data
@@ -395,6 +396,29 @@ class RDFSerializer:
 
     # OWL-Time namespace URI
     _OWL_TIME_NS = "http://www.w3.org/2006/time#"
+    _SEMANTICA_NS = "https://semantica.dev/ns#"
+
+    def _as_turtle_iri(
+        self, value: Any, namespaces: Optional[Dict[str, str]] = None
+    ) -> str:
+        """Return an absolute, safely encoded IRI for a Turtle resource."""
+        value = str(value)
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            parsed = urlsplit("")
+        if parsed.scheme:
+            prefix, separator, local_name = value.partition(":")
+            namespace = (namespaces or self.namespace_manager.namespaces).get(prefix)
+            if namespace and separator:
+                return quote(namespace + local_name, safe=":/?#[]@!$&'()*+,;=%")
+            remainder = value[len(prefix) + 1 :]
+            if len(prefix) >= 2 and (
+                remainder.startswith(("//", "/"))
+                or any(token in remainder for token in (":", "/", "@"))
+            ):
+                return quote(value, safe=":/?#[]@!$&'()*+,;=%")
+        return self._SEMANTICA_NS + quote(value, safe="")
 
     # Design decision — TemporalBound.OPEN in RDF:
     # OWL-Time has no standard predicate for "no known end date." We use
@@ -467,7 +491,10 @@ class RDFSerializer:
             text = entity.get("text") or entity.get("label", "")
             confidence = normalize_confidence(entity.get("confidence", 1.0))
 
-            lines.append(f"<{entity_id}> a <{entity_type}> ;")
+            lines.append(
+                f"<{self._as_turtle_iri(entity_id, merged_namespaces)}> a "
+                f"<{self._as_turtle_iri(entity_type, merged_namespaces)}> ;"
+            )
             if confidence is None:
                 self.logger.warning(
                     f"Entity {entity_id} has a confidence that is not a number "
@@ -488,7 +515,11 @@ class RDFSerializer:
             target_id = rel.get("target_id") or rel.get("target")
             rel_type = rel.get("type", DEFAULT_RELATION_TYPE)
 
-            lines.append(f"<{source_id}> <{rel_type}> <{target_id}> .")
+            lines.append(
+                f"<{self._as_turtle_iri(source_id)}> "
+                f"<{self._as_turtle_iri(rel_type)}> "
+                f"<{self._as_turtle_iri(target_id)}> ."
+            )
 
             if include_temporal:
                 owl_lines = self._owl_time_triples_for_rel(rel, idx, time_axis)
