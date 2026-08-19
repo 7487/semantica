@@ -30,12 +30,44 @@ License: MIT
 """
 
 from pathlib import Path
+import hashlib
 from typing import Any, Dict, List, Optional, Set, Union
 
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.helpers import ensure_directory
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
+
+
+SEMANTICA_NS = "https://semantica.dev/ns#"
+
+#: Written when an entity carries no type of its own. A full IRI rather than the
+#: prefixed form, because the Turtle serializer writes it inside angle brackets,
+#: where `semantica:Entity` would be read as an IRI in the scheme `semantica`
+#: rather than as the prefix expansion (issue #1101).
+DEFAULT_ENTITY_TYPE = f"{SEMANTICA_NS}Entity"
+
+#: Written when a relationship carries no type of its own. Same reasoning.
+DEFAULT_RELATION_TYPE = f"{SEMANTICA_NS}related_to"
+
+
+def mint_entity_iri(text: str) -> str:
+    """Mint a stable IRI for an entity that arrived without an id.
+
+    Python's builtin ``hash()`` is randomised per process (PYTHONHASHSEED), so
+    minting from it gave the same entity a different IRI on every run: exports
+    could not be diffed, deduplicated against an earlier load, or joined to a
+    provenance record written by an earlier process. SHA-256 is stable across
+    runs and machines, which is what an identifier has to be.
+    """
+    digest = hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
+    return f"{SEMANTICA_NS}entity_{digest}"
+
+
+def mint_relationship_iri(index: int, source: Any, target: Any) -> str:
+    """Mint a stable IRI for a relationship that arrived without an id."""
+    digest = hashlib.sha256(f"{source}\x00{target}".encode("utf-8")).hexdigest()[:16]
+    return f"{SEMANTICA_NS}rel_{index}_{digest}"
 
 
 class NamespaceManager:
@@ -360,9 +392,9 @@ class RDFSerializer:
             entity_id = entity.get("id")
             if not entity_id:
                 entity_text = entity.get("text", "")
-                entity_id = f"semantica:entity_{hash(entity_text)}"
+                entity_id = mint_entity_iri(entity_text)
 
-            entity_type = entity.get("type", "semantica:Entity")
+            entity_type = entity.get("type", DEFAULT_ENTITY_TYPE)
             text = entity.get("text") or entity.get("label", "")
             confidence = entity.get("confidence", 1.0)
 
@@ -376,7 +408,7 @@ class RDFSerializer:
         for idx, rel in enumerate(relationships):
             source_id = rel.get("source_id") or rel.get("source")
             target_id = rel.get("target_id") or rel.get("target")
-            rel_type = rel.get("type", "semantica:related_to")
+            rel_type = rel.get("type", DEFAULT_RELATION_TYPE)
 
             lines.append(f"<{source_id}> <{rel_type}> <{target_id}> .")
 
@@ -415,7 +447,7 @@ class RDFSerializer:
 
         rel_base_id = (
             rel.get("id")
-            or f"semantica:rel_{idx}_{hash(str(rel.get('source_id', '')) + str(rel.get('target_id', '')))}"
+            or mint_relationship_iri(idx, rel.get('source_id', ''), rel.get('target_id', ''))
         )
 
         lines = [""]  # blank separator
@@ -488,7 +520,7 @@ class RDFSerializer:
             entity_id = entity.get("id")
             if not entity_id:
                 entity_text = entity.get("text", "")
-                entity_id = f"semantica:entity_{hash(entity_text)}"
+                entity_id = mint_entity_iri(entity_text)
 
             entity_type = entity.get("type", "semantica:Entity")
             text = entity.get("text") or entity.get("label", "")
@@ -644,7 +676,7 @@ class RDFSerializer:
             entity_id = entity.get("id")
             if not entity_id:
                 entity_text = entity.get("text", "")
-                entity_id = f"semantica:entity_{hash(entity_text)}"
+                entity_id = mint_entity_iri(entity_text)
 
             subject = expand_uri(entity_id)
 
