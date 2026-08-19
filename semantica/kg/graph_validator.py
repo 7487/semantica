@@ -166,15 +166,24 @@ class GraphValidator:
             
             # Check ID uniqueness
             if eid:
-                if eid in entity_ids:
+                try:
+                    if eid in entity_ids:
+                        issues.append(ValidationIssue(
+                            code="DUPLICATE_ID",
+                            message=f"Duplicate entity ID found: {eid}",
+                            severity=ValidationSeverity.CRITICAL,
+                            element_id=eid,
+                            element_type="entity"
+                        ))
+                    entity_ids.add(eid)
+                except TypeError:
                     issues.append(ValidationIssue(
-                        code="DUPLICATE_ID",
-                        message=f"Duplicate entity ID found: {eid}",
-                        severity=ValidationSeverity.CRITICAL,
-                        element_id=eid,
+                        code="INVALID_ID",
+                        message=f"Entity ID is not hashable: {eid}",
+                        severity=ValidationSeverity.ERROR,
+                        element_id=str(eid),
                         element_type="entity"
                     ))
-                entity_ids.add(eid)
             
             # Schema Check (if schema provided)
             if self.schema and "entity_types" in self.schema:
