@@ -56,3 +56,22 @@ def test_turtle_preserves_absolute_iris():
         RDF.type,
         URIRef("urn:example:Person"),
     ) in parsed
+
+
+def test_turtle_expands_context_prefixes_and_normalizes_malformed_iris():
+    """Prefixes expand and malformed URI-like values are minted."""
+    turtle = RDFExporter().export_to_rdf(
+        {
+            "@context": {"ex": "https://example.org/"},
+            "entities": [{"id": "http://[invalid", "type": "ex:Person"}],
+            "relationships": [],
+        },
+        format="turtle",
+    )
+    parsed = Graph().parse(data=turtle, format="turtle")
+
+    assert (
+        URIRef("https://semantica.dev/ns#http%3A%2F%2F%5Binvalid"),
+        RDF.type,
+        URIRef("https://example.org/Person"),
+    ) in parsed

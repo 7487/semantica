@@ -516,9 +516,9 @@ class RDFSerializer:
             rel_type = rel.get("type", DEFAULT_RELATION_TYPE)
 
             lines.append(
-                f"<{self._as_turtle_iri(source_id)}> "
-                f"<{self._as_turtle_iri(rel_type)}> "
-                f"<{self._as_turtle_iri(target_id)}> ."
+                f"<{self._as_turtle_iri(source_id, merged_namespaces)}> "
+                f"<{self._as_turtle_iri(rel_type, merged_namespaces)}> "
+                f"<{self._as_turtle_iri(target_id, merged_namespaces)}> ."
             )
 
             if include_temporal:
