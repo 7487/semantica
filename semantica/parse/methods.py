@@ -179,7 +179,10 @@ def parse_document(
     """
     custom_method = method_registry.get("document", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, file_type, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, file_type, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -287,8 +290,9 @@ def parse_web_content(
     """
     custom_method = method_registry.get("web", method)
     if custom_method:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, content, content_type, base_url, **kwargs
+            logger, method, custom_method, content, content_type, base_url, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -342,7 +346,10 @@ def parse_structured_data(
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, data, data_format, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, data, data_format, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -386,7 +393,10 @@ def parse_email(
     """
     custom_method = method_registry.get("email", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, email_content, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, email_content, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -433,7 +443,10 @@ def parse_code(
     """
     custom_method = method_registry.get("code", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, language, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, language, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -483,7 +496,10 @@ def parse_media(
     """
     custom_method = method_registry.get("media", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, media_type, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, media_type, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -526,7 +542,10 @@ def parse_pdf(
     """
     custom_method = method_registry.get("document", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -567,7 +586,10 @@ def parse_docx(
     """
     custom_method = method_registry.get("document", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -607,7 +629,10 @@ def parse_json(file_path: Union[str, Path], method: str = "default", **kwargs) -
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -651,7 +676,10 @@ def parse_csv(
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, delimiter, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, delimiter, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -687,7 +715,10 @@ def parse_xml(file_path: Union[str, Path], method: str = "default", **kwargs) ->
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -732,7 +763,10 @@ def parse_image(
     """
     custom_method = method_registry.get("media", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 

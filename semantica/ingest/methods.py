@@ -249,7 +249,10 @@ def ingest_file(
     # Check for custom method in registry
     custom_method = method_registry.get("file", method)
     if custom_method and custom_method != ingest_file:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -312,7 +315,10 @@ def ingest_parquet(
     """
     custom_method = method_registry.get("parquet", method)
     if custom_method and custom_method != ingest_parquet:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -388,7 +394,10 @@ def ingest_arrow(
     """
     custom_method = method_registry.get("arrow", method)
     if custom_method and custom_method != ingest_arrow:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -469,7 +478,10 @@ def ingest_xml(
     """
     custom_method = method_registry.get("xml", method)
     if custom_method and custom_method != ingest_xml:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -530,7 +542,10 @@ def ingest_web(
     # Check for custom method in registry
     custom_method = method_registry.get("web", method)
     if custom_method and custom_method != ingest_web:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -617,7 +632,10 @@ def ingest_public_api(
     """
     custom_method = method_registry.get("public_api", method)
     if custom_method and custom_method != ingest_public_api:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -701,7 +719,10 @@ def ingest_feed(
     # Check for custom method in registry
     custom_method = method_registry.get("feed", method)
     if custom_method and custom_method != ingest_feed:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -767,7 +788,10 @@ def ingest_stream(
     # Check for custom method in registry
     custom_method = method_registry.get("stream", method)
     if custom_method and custom_method != ingest_stream:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -841,7 +865,10 @@ def ingest_repository(
     # Check for custom method in registry
     custom_method = method_registry.get("repo", method)
     if custom_method and custom_method != ingest_repository:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -910,7 +937,10 @@ def ingest_email(
     # Check for custom method in registry
     custom_method = method_registry.get("email", method)
     if custom_method and custom_method != ingest_email:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -986,7 +1016,10 @@ def ingest_ontology(
     # Check for custom method in registry
     custom_method = method_registry.get("ontology", method)
     if custom_method and custom_method != ingest_ontology:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -1049,7 +1082,10 @@ def ingest_database(
     if method:
         custom_method = method_registry.get("db", method)
         if custom_method and custom_method != ingest_database:
-            result = call_custom_method(logger, method, custom_method, source, **kwargs)
+            fallback = kwargs.pop("fallback_on_custom_error", False)
+            result = call_custom_method(
+                logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+            )
             if result is not CUSTOM_METHOD_FELL_BACK:
                 return result
 
@@ -1153,7 +1189,10 @@ def ingest_mcp(
     # Check for custom method in registry
     custom_method = method_registry.get("mcp", method)
     if custom_method and custom_method != ingest_mcp:
-        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, source, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 

@@ -154,3 +154,72 @@ def test_no_module_still_swallows_custom_method_failures(module_name):
     assert "falling back to default" not in source, (
         f"semantica/{module_name}/methods.py still swallows custom method failures"
     )
+
+
+# ── Review findings on the first revision of this fix ────────────────────────
+
+def test_the_reserved_flag_never_reaches_the_default_implementation(monkeypatch, tmp_path):
+    """
+    `**kwargs` unpacking builds a fresh dict inside the helper, so popping there
+    left the caller's own kwargs untouched and the flag was forwarded on to the
+    default path. The helper documents the flag as never forwarded, so that
+    promise was false for exactly the case the flag exists for.
+    """
+    seen = {}
+
+    class Spy:
+        def __init__(self, **config):
+            seen.update(config)
+
+        def export(self, *args, **kwargs):
+            (tmp_path / "written").write_text("default ran")
+
+    monkeypatch.setattr(export_methods, "RDFExporter", Spy)
+
+    def gate(data, file_path, **kwargs):
+        raise Refused("rejected")
+
+    method_registry.register("rdf", "gate", gate)
+    export_methods.export_rdf(
+        KG, str(tmp_path / "out.ttl"), method="gate", fallback_on_custom_error=True
+    )
+
+    assert (tmp_path / "written").exists(), "the default path did not run"
+    assert "fallback_on_custom_error" not in seen, (
+        f"the reserved flag was forwarded to the default implementation: {seen}"
+    )
+
+
+def test_the_reserved_flag_never_reaches_a_successful_custom_method(tmp_path):
+    seen = {}
+
+    def writer(data, file_path, **kwargs):
+        seen.update(kwargs)
+        return "ok"
+
+    method_registry.register("rdf", "writer", writer)
+    result = export_methods.export_rdf(
+        KG, str(tmp_path / "out.ttl"), method="writer", fallback_on_custom_error=True
+    )
+
+    assert result == "ok"
+    assert "fallback_on_custom_error" not in seen, seen
+
+
+@pytest.mark.parametrize(
+    "module_name", ["export", "ingest", "parse", "normalize", "embeddings", "kg"],
+)
+def test_every_site_consumes_the_flag_before_forwarding(module_name):
+    """A site that forgets the pop reintroduces the leak silently."""
+    import semantica
+
+    source = (
+        Path(semantica.__file__).parent / module_name / "methods.py"
+    ).read_text(encoding="utf-8")
+
+    calls = source.count("result = call_custom_method(")
+    pops = source.count('.pop("fallback_on_custom_error", False)')
+    assert calls == pops, (
+        f"semantica/{module_name}/methods.py has {calls} call site(s) but "
+        f"{pops} consume the reserved flag"
+    )

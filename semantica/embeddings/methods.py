@@ -120,8 +120,9 @@ def generate_embeddings(
     # Check for custom method in registry
     custom_method = method_registry.get("generation", method)
     if custom_method:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, data, data_type=data_type, **kwargs
+            logger, method, custom_method, data, data_type=data_type, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -167,7 +168,10 @@ def embed_text(
     # Check for custom method in registry
     custom_method = method_registry.get("text", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, text, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -224,7 +228,10 @@ def calculate_similarity(
     # Check for custom method in registry
     custom_method = method_registry.get("similarity", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, embedding1, embedding2, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, embedding1, embedding2, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -268,7 +275,10 @@ def pool_embeddings(
     # Check for custom method in registry
     custom_method = method_registry.get("pooling", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, embeddings, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, embeddings, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 

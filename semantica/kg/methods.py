@@ -190,7 +190,10 @@ def build_kg(
     # Check for custom method in registry
     custom_method = method_registry.get("build", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, sources, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, sources, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -235,7 +238,10 @@ def analyze_graph(
     # Check for custom method in registry
     custom_method = method_registry.get("analyze", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, graph, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, graph, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -436,7 +442,10 @@ def analyze_connectivity(
     # Check for custom method in registry
     custom_method = method_registry.get("connectivity", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, graph, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, graph, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 

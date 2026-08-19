@@ -222,8 +222,9 @@ def export_rdf(
     # Check for custom method in registry
     custom_method = method_registry.get("rdf", method)
     if custom_method and custom_method is not export_rdf:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, data, file_path, format=format, **kwargs
+            logger, method, custom_method, data, file_path, format=format, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -270,8 +271,9 @@ def export_json(
     # Check for custom method in registry
     custom_method = method_registry.get("json", method)
     if custom_method and custom_method is not export_json:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, data, file_path, format=format, **kwargs
+            logger, method, custom_method, data, file_path, format=format, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -315,7 +317,10 @@ def export_csv(
     # Check for custom method in registry
     custom_method = method_registry.get("csv", method)
     if custom_method and custom_method is not export_csv:
-        result = call_custom_method(logger, method, custom_method, data, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, data, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -357,7 +362,10 @@ def export_arrow(
     # Check for custom method in registry
     custom_method = method_registry.get("arrow", method)
     if custom_method and custom_method is not export_arrow:
-        result = call_custom_method(logger, method, custom_method, data, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, data, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -414,8 +422,9 @@ def export_parquet(
     # Check for custom method in registry
     custom_method = method_registry.get("parquet", method)
     if custom_method and custom_method is not export_parquet:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, data, file_path, compression=compression, **kwargs
+            logger, method, custom_method, data, file_path, compression=compression, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -464,8 +473,9 @@ def export_graph(
     # Check for custom method in registry
     custom_method = method_registry.get("graph", method)
     if custom_method and custom_method is not export_graph:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, graph_data, file_path, format=format, **kwargs
+            logger, method, custom_method, graph_data, file_path, format=format, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -529,7 +539,10 @@ def export_yaml(
     # Check for custom method in registry
     custom_method = method_registry.get("yaml", method)
     if custom_method and custom_method is not export_yaml:
-        result = call_custom_method(logger, method, custom_method, data, file_path, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, data, file_path, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -583,8 +596,9 @@ def export_owl(
     # Check for custom method in registry
     custom_method = method_registry.get("owl", method)
     if custom_method and custom_method is not export_owl:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, ontology, file_path, format=format, **kwargs
+            logger, method, custom_method, ontology, file_path, format=format, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -634,8 +648,9 @@ def export_vector(
     # Check for custom method in registry
     custom_method = method_registry.get("vector", method)
     if custom_method and custom_method is not export_vector:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, vectors, file_path, format=format, **kwargs
+            logger, method, custom_method, vectors, file_path, format=format, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -681,8 +696,9 @@ def export_lpg(
     # Check for custom method in registry
     custom_method = method_registry.get("lpg", method)
     if custom_method and custom_method is not export_lpg:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, knowledge_graph, file_path, **kwargs
+            logger, method, custom_method, knowledge_graph, file_path, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -723,8 +739,9 @@ def export_neo4j_csv(
     """
     custom_method = method_registry.get("neo4j_csv", method)
     if custom_method and custom_method is not export_neo4j_csv:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, knowledge_graph, output_dir, **kwargs
+            logger, method, custom_method, knowledge_graph, output_dir, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -792,8 +809,9 @@ def export_arango(
     # Check for custom method in registry
     custom_method = method_registry.get("arango", method)
     if custom_method and custom_method is not export_arango:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, knowledge_graph, file_path, **kwargs
+            logger, method, custom_method, knowledge_graph, file_path, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -842,8 +860,9 @@ def generate_report(
     # Check for custom method in registry
     custom_method = method_registry.get("report", method)
     if custom_method and custom_method is not generate_report:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, data, file_path, format=format, **kwargs
+            logger, method, custom_method, data, file_path, format=format, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result

@@ -169,7 +169,10 @@ def normalize_text(text: str, method: str = "default", **kwargs) -> str:
     """
     custom_method = method_registry.get("text", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, text, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -210,7 +213,10 @@ def clean_text(text: str, method: str = "default", **kwargs) -> str:
     """
     custom_method = method_registry.get("clean", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, text, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -257,8 +263,9 @@ def normalize_entity(
     """
     custom_method = method_registry.get("entity", method)
     if custom_method:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, entity_name, entity_type, **kwargs
+            logger, method, custom_method, entity_name, entity_type, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -303,8 +310,9 @@ def resolve_aliases(
     """
     custom_method = method_registry.get("entity", method)
     if custom_method:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, entity_name, entity_type, **kwargs
+            logger, method, custom_method, entity_name, entity_type, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -349,7 +357,10 @@ def disambiguate_entity(
     """
     custom_method = method_registry.get("entity", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, entity_name, **context)
+        fallback = context.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, entity_name, fallback_on_custom_error=fallback, **context
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -401,8 +412,9 @@ def normalize_date(
     """
     custom_method = method_registry.get("date", method)
     if custom_method:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, date_input, format, timezone, **kwargs
+            logger, method, custom_method, date_input, format, timezone, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -441,7 +453,10 @@ def normalize_time(time_input: Any, method: str = "default", **kwargs) -> str:
     """
     custom_method = method_registry.get("date", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, time_input, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, time_input, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -484,7 +499,10 @@ def normalize_number(
     """
     custom_method = method_registry.get("number", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, number_input, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, number_input, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -525,7 +543,10 @@ def normalize_quantity(
     """
     custom_method = method_registry.get("number", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, quantity_input, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, quantity_input, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -578,8 +599,9 @@ def clean_data(
     """
     custom_method = method_registry.get("clean", method)
     if custom_method:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, dataset, remove_duplicates, validate, handle_missing, **kwargs
+            logger, method, custom_method, dataset, remove_duplicates, validate, handle_missing, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -630,8 +652,9 @@ def detect_duplicates(
     """
     custom_method = method_registry.get("clean", method)
     if custom_method:
+        fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
-            logger, method, custom_method, dataset, threshold, key_fields, **kwargs
+            logger, method, custom_method, dataset, threshold, key_fields, fallback_on_custom_error=fallback, **kwargs
         )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
@@ -676,7 +699,10 @@ def detect_language(
     """
     custom_method = method_registry.get("language", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, text, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
@@ -734,7 +760,10 @@ def handle_encoding(
     """
     custom_method = method_registry.get("encoding", method)
     if custom_method:
-        result = call_custom_method(logger, method, custom_method, data, operation, **kwargs)
+        fallback = kwargs.pop("fallback_on_custom_error", False)
+        result = call_custom_method(
+            logger, method, custom_method, data, operation, fallback_on_custom_error=fallback, **kwargs
+        )
         if result is not CUSTOM_METHOD_FELL_BACK:
             return result
 
