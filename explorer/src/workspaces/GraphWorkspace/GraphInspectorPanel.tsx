@@ -414,13 +414,19 @@ export function GraphInspectorPanel({
         </div>
       ) : null}
 
-      {/* Content Section */}
-      <details className="node-panel-collapse" open>
-        <summary className="node-panel-summary">Content</summary>
-        <div className="node-panel-body" style={{ marginTop: 8 }}>
-          <MarkdownContentViewer content={nodeContent} />
-        </div>
-      </details>
+      {/* Content Section — only rendered when the node carries actual content.
+           This matches the existing inspector convention: sections that have no
+           data for the current node are either hidden (temporal bounds) or closed
+           by default (Source Attribution, Properties).  Always showing an open
+           empty panel would add noise for every relationship/predicate node. */}
+      {nodeContent && (
+        <details className="node-panel-collapse" open>
+          <summary className="node-panel-summary">Content</summary>
+          <div className="node-panel-body" style={{ marginTop: 8 }}>
+            <MarkdownContentViewer content={nodeContent} />
+          </div>
+        </details>
+      )}
 
       {/* Actions */}
       <section style={sectionStyle}>

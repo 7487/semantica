@@ -13,6 +13,11 @@ export interface MarkdownContentViewerProps {
 export function isSafeUrl(url?: string): boolean {
   if (!url) return false;
   const trimmed = url.trim();
+  // Reject whitespace-only strings — new URL("", base) would resolve to the base
+  // protocol and produce a false positive. This guards direct callers of the exported
+  // function; markdown parsers normalise whitespace-only destinations to "" which
+  // already fails the !url check above.
+  if (!trimmed) return false;
   if (trimmed.startsWith("//")) return false;
   if (trimmed.startsWith("#")) return true;
   if (trimmed.startsWith("/")) return true;
@@ -31,8 +36,24 @@ export function MarkdownContentViewer({
 }: MarkdownContentViewerProps) {
   const [activeMode, setActiveMode] = useState<"preview" | "source">(defaultMode);
   const [copied, setCopied] = useState(false);
+  // Track the content value for which the copied indicator is valid.
+  // When content changes (i.e. the user selects a different node), reset the
+  // copied indicator inline during render rather than in a useEffect — this
+  // avoids a cascading-render lint error and is the React-recommended pattern
+  // for resetting derived visual state on prop changes.
+  const [copiedForContent, setCopiedForContent] = useState<string | null | undefined>(content);
+  if (copiedForContent !== content) {
+    setCopiedForContent(content);
+    if (copied) {
+      // Clear the stale indicator synchronously so the new node's copy button
+      // never shows "Copied" from the previous selection.
+      setCopied(false);
+    }
+  }
+
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Clean up any outstanding timeout on unmount.
   useEffect(() => {
     return () => {
       if (copyTimeoutRef.current) {
@@ -113,12 +134,41 @@ export function MarkdownContentViewer({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
-                a: ({ href, children, ...props }) => {
+                // C-1: react-markdown passes a HAST `node` prop (the raw AST
+                // Element) to every custom component override via passNode:true.
+                // In React 19 any unknown prop spreads onto a native element are
+                // serialised as HTML attributes, producing node="[object Object]"
+                // on every rendered link. Fix: destructure `node` by name so it
+                // is explicitly discarded, then spread `...rest` to preserve all
+                // other legitimate HAST/remark-gfm attributes — e.g. the `id`,
+                // `aria-describedby`, `aria-label`, `data-footnote-ref`,
+                // `data-footnote-backref`, and `class` attrs that GFM footnotes
+                // require for correct in-page navigation and accessibility.
+                //
+                // C-2: fragment links (#anchor, GFM footnote backlinks) must
+                // navigate within the current document. External links continue
+                // to use target="_blank" with noopener noreferrer.
+                //
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                a: ({ href, children, title, node: _node, ...rest }) => {
                   if (!isSafeUrl(href)) {
                     return <span style={{ color: GRAPH_THEME.ui.text.muted, textDecoration: "line-through" }}>{children}</span>;
                   }
+                  // isSafeUrl returning true guarantees href is a non-empty string.
+                  const safeHref = href ?? "";
+                  // Fragment links (#section, footnote backlinks like
+                  // #user-content-fnref-1) are in-document anchors. Opening them
+                  // in a new tab would break GFM footnote back-navigation.
+                  const isFragment = safeHref.startsWith("#");
+                  if (isFragment) {
+                    return (
+                      <a href={safeHref} title={title} style={linkStyle} {...rest}>
+                        {children}
+                      </a>
+                    );
+                  }
                   return (
-                    <a href={href} target="_blank" rel="noopener noreferrer" style={linkStyle} {...props}>
+                    <a href={safeHref} title={title} target="_blank" rel="noopener noreferrer" style={linkStyle} {...rest}>
                       {children}
                       <ExternalLink size={10} style={{ marginLeft: 3, verticalAlign: "middle", display: "inline" }} />
                     </a>
@@ -151,10 +201,12 @@ export function MarkdownContentViewer({
                 th: ({ children }) => <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: GRAPH_THEME.ui.text.strong, borderRight: `1px solid ${GRAPH_THEME.ui.surface.panelBorder}` }}>{children}</th>,
                 td: ({ children }) => <td style={{ padding: "6px 8px", color: GRAPH_THEME.ui.text.body, borderRight: `1px solid ${GRAPH_THEME.ui.surface.panelBorder}` }}>{children}</td>,
                 pre: ({ children }) => <pre style={preBlockStyle}>{children}</pre>,
-                code: ({ className: codeClass, children, ...props }) => {
+                // C-1: discard `node` here too — code elements are custom components
+                // and would otherwise receive node="[object Object]" in the DOM.
+                code: ({ className: codeClass, children }) => {
                   const isInline = !codeClass && typeof children === "string" && !children.includes("\n");
                   return (
-                    <code style={isInline ? inlineCodeStyle : blockCodeStyle} {...props}>
+                    <code style={isInline ? inlineCodeStyle : blockCodeStyle}>
                       {children}
                     </code>
                   );

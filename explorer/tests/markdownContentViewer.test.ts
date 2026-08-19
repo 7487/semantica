@@ -30,6 +30,18 @@ test("isSafeUrl rejects protocol-relative URLs and dangerous schemes", () => {
   assert.equal(isSafeUrl(undefined), false);
 });
 
+// ─── C URL contract: whitespace-only strings ────────────────────────────────
+// The CommonMark parser normalises whitespace-only link destinations to "" so
+// these values are unreachable through normal markdown rendering. However, the
+// function is exported and its direct-call contract must be correct.
+test("isSafeUrl rejects whitespace-only strings (contract correctness)", () => {
+  assert.equal(isSafeUrl(" "), false, "single space must be rejected");
+  assert.equal(isSafeUrl("\t"), false, "tab must be rejected");
+  assert.equal(isSafeUrl("\n"), false, "newline must be rejected");
+  assert.equal(isSafeUrl("   "), false, "multiple spaces must be rejected");
+  assert.equal(isSafeUrl(" \t\n "), false, "mixed whitespace must be rejected");
+});
+
 test("renders Preview mode with formatted Markdown elements and tabs", () => {
   const markdown = `# Main Title\n\n**Bold Statement**\n\n* Item A\n* Item B`;
   const html = renderToString(React.createElement(MarkdownContentViewer, { content: markdown, defaultMode: "preview" }));
@@ -67,6 +79,118 @@ test("renders raw HTML safely as escaped text without executing elements", () =>
   assert.equal(html.includes("<iframe"), false);
   // Content is escaped as text
   assert.equal(html.includes("&lt;script&gt;"), true);
+});
+
+// ─── C-1: HAST node prop must not reach the DOM ─────────────────────────────
+// react-markdown passes a HAST `node` (Element) object to custom component
+// overrides. Before this fix, ...props spread caused React 19 to serialise it
+// as node="[object Object]" on every <a> and <code> element.
+test("rendered links do not expose the HAST node object as a DOM attribute", () => {
+  const content = `[Example](https://example.com)\n\nInline \`code\` here.`;
+  const html = renderToString(React.createElement(MarkdownContentViewer, { content, defaultMode: "preview" }));
+
+  // The rendered HTML must not contain the serialised HAST object
+  assert.equal(html.includes("node="), false, "node= attribute must not appear in rendered HTML");
+  assert.equal(html.includes("[object Object]"), false, "serialised HAST object must not appear in rendered HTML");
+
+  // The link must still render correctly with the right href
+  assert.equal(html.includes('href="https://example.com"'), true, "href must be present");
+});
+
+// ─── C-2: Fragment links must not open in a new tab ─────────────────────────
+// Links to in-document anchors such as #section or GFM footnote backlinks like
+// #user-content-fn-1 must stay in the current document. Only external links
+// use target="_blank".
+test("fragment links render in the current document without target blank", () => {
+  const content = `[Jump to section](#introduction)\n\n[External](https://example.com)`;
+  const html = renderToString(React.createElement(MarkdownContentViewer, { content, defaultMode: "preview" }));
+
+  // Fragment link must have the href
+  assert.equal(html.includes('href="#introduction"'), true, "fragment href must be present");
+
+  // Confirm no target=_blank attribute appears anywhere near the fragment link.
+  // We check that the output contains a fragment href WITHOUT target="_blank"
+  // by verifying the two strings are not both present (the external link has
+  // target blank; the fragment link must not).
+  const fragmentLinkIdx = html.indexOf('href="#introduction"');
+  assert.notEqual(fragmentLinkIdx, -1, "fragment link must be rendered");
+  // Inspect the 80 chars around the fragment href — should not contain target
+  const fragmentContext = html.slice(Math.max(0, fragmentLinkIdx - 10), fragmentLinkIdx + 90);
+  assert.equal(fragmentContext.includes('target="_blank"'), false, "fragment link must not have target=_blank");
+
+  // External link must still have target blank
+  assert.equal(html.includes('href="https://example.com"'), true, "external href must be present");
+  assert.equal(html.includes('target="_blank"'), true, "external link must have target=_blank");
+  assert.equal(html.includes('rel="noopener noreferrer"'), true, "external link must have rel");
+});
+
+test("GFM footnote backlinks render without target blank", () => {
+  // GFM footnote syntax: footnote ref in text + definition below
+  const content = `See the note[^1] for more.\n\n[^1]: This is the footnote text.`;
+  const html = renderToString(React.createElement(MarkdownContentViewer, { content, defaultMode: "preview" }));
+
+  // The footnote reference link (#user-content-fn-1) and backlink
+  // (#user-content-fnref-1) are fragment links and must not open in a new tab.
+  // We verify no fragment href is paired with target=_blank.
+  // Extract all href="#..." occurrences and confirm none is adjacent to target=_blank.
+  const anchorMatches = [...html.matchAll(/href="#[^"]*"/g)];
+  assert.ok(anchorMatches.length > 0, "GFM footnotes must produce fragment links");
+  for (const match of anchorMatches) {
+    const start = match.index ?? 0;
+    const context = html.slice(Math.max(0, start - 10), start + 120);
+    assert.equal(
+      context.includes('target="_blank"'),
+      false,
+      `fragment link ${match[0]} must not have target=_blank`,
+    );
+  }
+});
+
+// ─── C-1-R: GFM footnote attributes must be preserved (regression test) ─────
+// The C-1 fix (removing the HAST `node` prop) must NOT silently drop other
+// legitimate HAST attributes. remark-gfm generates the following on footnote
+// links that are required for correct in-page navigation and accessibility:
+//
+//   Footnote reference anchor:
+//     id="user-content-fnref-1"           ← backlink target
+//     data-footnote-ref="true"
+//     aria-describedby="footnote-label"
+//
+//   Footnote back-link anchor:
+//     data-footnote-backref=""
+//     aria-label="Back to reference 1"    ← screen-reader label
+//     class="data-footnote-backref"
+//
+// If these are absent, clicking the ↩ back-link cannot scroll back to the
+// in-text reference, and screen readers cannot announce the backlink purpose.
+test("GFM footnote links preserve generated id, aria, and class attributes", () => {
+  const content = `See the note[^1] for more.\n\n[^1]: This is the footnote text.`;
+  const html = renderToString(React.createElement(MarkdownContentViewer, { content, defaultMode: "preview" }));
+
+  // The HAST `node` object must not appear serialised as a DOM attribute.
+  assert.equal(html.includes("node="), false, "node= attribute must not appear in HTML");
+  assert.equal(html.includes("[object Object]"), false, "serialised HAST object must not appear in HTML");
+
+  // Footnote reference anchor must retain its id so the backlink can navigate to it.
+  assert.equal(
+    html.includes('id="user-content-fnref-1"'),
+    true,
+    "footnote reference anchor must retain id for back-navigation",
+  );
+
+  // Footnote backlink must retain its aria-label for screen-reader accessibility.
+  assert.equal(
+    html.includes('aria-label="Back to reference 1"'),
+    true,
+    "footnote backlink must retain aria-label for accessibility",
+  );
+
+  // Footnote backlink must retain its class attribute.
+  assert.equal(
+    html.includes('class="data-footnote-backref"'),
+    true,
+    "footnote backlink must retain class attribute",
+  );
 });
 
 test("renders safe links as <a> with target blank and unclickable span for unsafe links", () => {
@@ -117,4 +241,24 @@ test("handles very large Markdown content without failure", () => {
 
   const html = renderToString(React.createElement(MarkdownContentViewer, { content: largeContent, defaultMode: "preview" }));
   assert.equal(html.includes("Large Knowledge Node"), true);
+});
+
+// ─── H-2: Stale copied state lifecycle (SSR-compatible portion) ─────────────
+// Full state-transition testing (Node A → copy → Node B) requires an interactive
+// framework. The lifecycle correctness is guaranteed by the render-phase
+// previous-prop synchronisation pattern: a `copiedForContent` state value tracks
+// the content for which the copied indicator was set; when `content` changes, the
+// mismatch is detected during render and `copied` is reset to false in the same
+// React batch, before the new node's UI is painted. What we CAN verify in SSR
+// is that the initial render for any content value shows the Copy button (not the
+// Copied indicator), which confirms the initial state is always clean.
+test("copy button always starts in un-copied state on initial render", () => {
+  const html = renderToString(React.createElement(MarkdownContentViewer, {
+    content: "# Some Node\n\nDescription text.",
+    defaultMode: "preview",
+  }));
+
+  // Initial render must show 'Copy', never 'Copied'
+  assert.equal(html.includes("Copy"), true, "Copy button must be present on initial render");
+  assert.equal(html.includes("Copied"), false, "Copied indicator must NOT be present on initial render");
 });
