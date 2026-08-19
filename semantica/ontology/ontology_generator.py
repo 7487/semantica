@@ -30,6 +30,7 @@ Author: Semantica Contributors
 License: MIT
 """
 
+import re
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -751,6 +752,10 @@ class SHACLGraph:
     shapes_uri: str
     node_shapes: List[NodeShape] = field(default_factory=list)
     prefixes: Dict[str, str] = field(default_factory=dict)
+    # Bare class and property names mapped to the absolute IRI the data uses
+    # for them. Shapes are indexed internally by name; this is what those names
+    # expand to at serialisation time (#1104).
+    term_iris: Dict[str, str] = field(default_factory=dict)
 
 
 class SHACLGenerator:
@@ -783,8 +788,23 @@ class SHACLGenerator:
         include_inherited: bool = True,
         severity: str = "Violation",
         quality_tier: str = "standard",
+        target_namespace: Optional[str] = None,
+        attach_domainless_properties: bool = False,
         config: Optional[Dict[str, Any]] = None,
     ):
+        """
+        Args:
+            base_uri: Namespace the shape resources themselves live in.
+            target_namespace: Namespace the terms being validated live in, used
+                to expand sh:targetClass and sh:path when the ontology does not
+                supply absolute IRIs. This is deliberately separate from
+                base_uri: shapes that target their own namespace match nothing,
+                and pySHACL reports that as conforming (#1104).
+            attach_domainless_properties: When True, a property with no declared
+                domain is attached to every node shape, which is the pre-0.6.6
+                behaviour. It invents a constraint the ontology never stated, so
+                it is off by default (#1105).
+        """
         self.logger = get_logger("ontology_shacl")
         self.progress_tracker = get_progress_tracker()
         self.base_uri = base_uri.rstrip("/") + "/"
@@ -792,6 +812,8 @@ class SHACLGenerator:
         self.include_inherited = include_inherited
         self.severity = severity
         self.quality_tier = quality_tier
+        self.target_namespace = target_namespace
+        self.attach_domainless_properties = attach_domainless_properties
         self.config = config or {}
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -829,10 +851,14 @@ class SHACLGenerator:
                 "ex": base_uri,
             }
 
+            target_ns = self._resolve_target_namespace(ontology, base_uri)
+            prefixes["ex"] = target_ns
+
             graph = SHACLGraph(
                 base_uri=base_uri,
                 shapes_uri=self.shapes_uri,
                 prefixes=prefixes,
+                term_iris=self._build_term_index(classes, properties, target_ns),
             )
 
             self.progress_tracker.update_tracking(tracking_id, message="Generating node shapes")
@@ -901,6 +927,83 @@ class SHACLGenerator:
 
     # ── Internal pipeline stages ──────────────────────────────────────────────
 
+    _DEFAULT_TARGET_NAMESPACE = "https://semantica.dev/ns#"
+
+    @staticmethod
+    def _is_absolute_iri(value: Any) -> bool:
+        return isinstance(value, str) and bool(
+            re.match(r"^[A-Za-z][A-Za-z0-9+.\-]*:", value.strip())
+        )
+
+    @staticmethod
+    def _join_iri(base: str, local: str) -> str:
+        separator = "" if base.endswith(("#", "/", ":")) else "#"
+        return f"{base}{separator}{local}"
+
+    def _resolve_target_namespace(self, ontology: Dict[str, Any], base_uri: str) -> str:
+        """
+        Decide which namespace sh:targetClass and sh:path are expanded in.
+
+        base_uri says where the shapes live. It is only the right answer here
+        when the ontology declared it, meaning shapes and terms deliberately
+        share a namespace. Falling back to the shapes namespace produces shapes
+        that target terms no data graph uses.
+        """
+        if self.target_namespace:
+            return self.target_namespace
+
+        namespace = ontology.get("namespace")
+        if isinstance(namespace, dict) and namespace.get("base_uri"):
+            return str(namespace["base_uri"])
+
+        # An IRI already carried by a term is the most reliable evidence of
+        # where the data lives, so prefer it over any configured default.
+        for terms in (ontology.get("classes"), ontology.get("properties")):
+            for term in terms or []:
+                if not isinstance(term, dict):
+                    continue
+                for key in ("uri", "iri", "id"):
+                    value = term.get(key)
+                    if self._is_absolute_iri(value):
+                        value = value.strip()
+                        cut = max(value.rfind("#"), value.rfind("/"))
+                        if cut != -1:
+                            return value[: cut + 1]
+
+        if ontology.get("uri") and self._is_absolute_iri(ontology["uri"]):
+            return str(ontology["uri"])
+
+        if base_uri != self.base_uri:
+            return base_uri
+
+        return self._DEFAULT_TARGET_NAMESPACE
+
+    def _build_term_index(
+        self,
+        classes: List[Dict[str, Any]],
+        properties: List[Dict[str, Any]],
+        target_ns: str,
+    ) -> Dict[str, str]:
+        """Map every class and property name to the absolute IRI it expands to."""
+        index: Dict[str, str] = {}
+        for term in list(classes or []) + list(properties or []):
+            if not isinstance(term, dict):
+                continue
+            name = term.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            name = name.strip()
+
+            iri = ""
+            for key in ("uri", "iri", "id"):
+                value = term.get(key)
+                if isinstance(value, str) and value.strip():
+                    value = value.strip()
+                    iri = value if self._is_absolute_iri(value) else self._join_iri(target_ns, value)
+                    break
+            index.setdefault(name, iri or self._join_iri(target_ns, name))
+        return index
+
     def _build_class_index(
         self, classes: List[Dict[str, Any]]
     ) -> Dict[str, Dict[str, Any]]:
@@ -949,13 +1052,22 @@ class SHACLGenerator:
                         self.logger.debug(
                             f"Property '{pname}' domain '{d}' has no matching node shape — skipped"
                         )
-            else:
-                # No domain declared → attach to all shapes
+            elif self.attach_domainless_properties:
                 self.logger.debug(
-                    f"Property '{pname}' has no domain — attaching to all node shapes"
+                    f"Property '{pname}' has no domain, attaching to all node shapes "
+                    "because attach_domainless_properties is set"
                 )
                 for node_shape in graph.node_shapes:
                     node_shape.property_shapes.append(self._build_property_shape(prop))
+            else:
+                # Attaching here would state a constraint the ontology does not.
+                # With minCount 1 that invalidates every instance of every
+                # class, so the property is left unattached (#1105).
+                self.logger.warning(
+                    f"Property '{pname}' declares no domain, so it is not attached "
+                    "to any node shape. Declare a domain, or pass "
+                    "attach_domainless_properties=True to restore the old behaviour."
+                )
 
     def _build_property_shape(self, prop: Dict[str, Any]) -> PropertyShape:
         ptype = prop.get("type", "")
@@ -1036,9 +1148,18 @@ class SHACLGenerator:
         return "\n".join(f"@prefix {p}: <{u}> ." for p, u in sorted(graph.prefixes.items()))
 
     def _uri(self, graph: SHACLGraph, local: str) -> str:
-        """Return a compact URI reference; fall back to ex:local for bare names."""
+        """
+        Return a URI reference for a class or property name.
+
+        Bare names are expanded through the graph's term index, which holds the
+        IRI the data actually uses, rather than being pasted onto whichever
+        namespace the shapes happen to live in (#1104).
+        """
         if local.startswith("http://") or local.startswith("https://"):
             return f"<{local}>"
+        resolved = graph.term_iris.get(local)
+        if resolved:
+            return f"<{resolved}>"
         if ":" in local:
             return local
         return f"ex:{local}"
