@@ -48,8 +48,14 @@ sem:confidence a owl:DatatypeProperty ;
     rdfs:label "confidence" ;
     rdfs:comment """Extractor confidence in the assertion, on the unit interval.
 Emitted for both entities and relationships, so the domain is left open rather
-than tied to sem:Entity.""" ;
-    rdfs:range xsd:decimal ;
+than tied to sem:Entity.
+
+No rdfs:range is declared, deliberately. The Turtle serializer writes the value
+bare, which the Turtle grammar reads as xsd:decimal, while the N-Triples
+serializer types it xsd:float explicitly, and those two datatypes are disjoint.
+Declaring either one would make the vocabulary contradict one of the exporters.
+Issue #1100 tracks the disagreement; a range belongs here once the serializers
+agree on one.""" ;
     rdfs:isDefinedBy <https://semantica.dev/ns> .
 
 sem:metadata a owl:AnnotationProperty ;

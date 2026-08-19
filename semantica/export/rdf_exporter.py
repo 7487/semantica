@@ -445,10 +445,14 @@ class RDFSerializer:
         if time_axis in ("transaction", "both"):
             axes.append(("tx", rel.get("recorded_at"), rel.get("superseded_at")))
 
-        rel_base_id = (
-            rel.get("id")
-            or mint_relationship_iri(idx, rel.get('source_id', ''), rel.get('target_id', ''))
-        )
+        # Resolve endpoints the same way serialize_to_turtle does: both
+        # representations are accepted upstream, and minting from source_id
+        # alone hashes empty strings for every relationship that uses source,
+        # so unrelated relationships at the same index would collide on a
+        # deterministic IRI.
+        source_id = rel.get("source_id") or rel.get("source") or ""
+        target_id = rel.get("target_id") or rel.get("target") or ""
+        rel_base_id = rel.get("id") or mint_relationship_iri(idx, source_id, target_id)
 
         lines = [""]  # blank separator
         for axis_name, from_val, until_val in axes:

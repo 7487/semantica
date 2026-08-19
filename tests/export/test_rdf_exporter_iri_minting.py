@@ -86,3 +86,39 @@ def test_default_types_are_written_as_full_iris_in_turtle():
     assert f"<{DEFAULT_RELATION_TYPE}>" in turtle
     assert "<semantica:Entity>" not in turtle
     assert "<semantica:related_to>" not in turtle
+
+
+def test_temporal_minting_uses_either_endpoint_representation():
+    """Relationships may carry source/target or source_id/target_id (#1109 review).
+
+    Minting from source_id alone hashed empty strings for every relationship
+    that used the other representation, so once the IRI became deterministic,
+    unrelated relationships at the same index collided on it and their temporal
+    data aliased when the exports were loaded together.
+    """
+    def temporal(rel):
+        return RDFExporter().export_to_rdf(
+            {"entities": [], "relationships": [rel]},
+            format="turtle",
+            include_temporal=True,
+        )
+
+    a = temporal({"source": "https://example.org/a", "target": "https://example.org/b",
+                  "type": "https://example.org/worksFor", "valid_from": "2020-01-01T00:00:00Z"})
+    b = temporal({"source": "https://example.org/c", "target": "https://example.org/d",
+                  "type": "https://example.org/worksFor", "valid_from": "2020-01-01T00:00:00Z"})
+
+    assert f"<{SEMANTICA_NS}rel_" in a
+    assert a != b, "different endpoints must not mint the same temporal IRI"
+
+
+def test_temporal_minting_agrees_across_the_two_representations():
+    """The same relationship written either way is the same relationship."""
+    def mint(rel):
+        return mint_relationship_iri(
+            0,
+            rel.get("source_id") or rel.get("source") or "",
+            rel.get("target_id") or rel.get("target") or "",
+        )
+
+    assert mint({"source": "a", "target": "b"}) == mint({"source_id": "a", "target_id": "b"})

@@ -83,3 +83,32 @@ def test_every_declared_term_carries_a_label_and_a_comment(graph):
             continue
         assert graph.value(subject, rdflib.RDFS.label), f"{subject} has no rdfs:label"
         assert graph.value(subject, rdflib.RDFS.comment), f"{subject} has no rdfs:comment"
+
+
+def test_declared_ranges_do_not_contradict_what_the_exporters_emit(graph):
+    """A declared range must match the datatype the serializers actually write.
+
+    Caught by review on #1109: sem:confidence was declared xsd:decimal while the
+    N-Triples serializer types the same value xsd:float. A vocabulary that
+    contradicts the code is worse than no vocabulary, so any range declared here
+    has to be one the exporters really emit.
+    """
+    import re
+
+    from semantica.export.rdf_exporter import RDFExporter
+
+    sample = {
+        "entities": [{"id": "https://example.org/e1", "text": "A",
+                      "type": "https://example.org/T", "confidence": 0.5}],
+        "relationships": [],
+    }
+    emitted = RDFExporter().export_to_rdf(sample, format="ntriples")
+
+    for subject, _, range_ in graph.triples((None, rdflib.RDFS.range, None)):
+        if not str(subject).startswith(NAMESPACE):
+            continue
+        local = str(subject)[len(NAMESPACE):]
+        for match in re.finditer(rf'<{NAMESPACE}{local}> "[^"]*"\^\^<([^>]+)>', emitted):
+            assert match.group(1) == str(range_), (
+                f"{local}: vocabulary declares {range_}, N-Triples emits {match.group(1)}"
+            )
