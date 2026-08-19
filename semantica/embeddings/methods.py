@@ -80,6 +80,7 @@ import numpy as np
 
 from ..utils.exceptions import ConfigurationError, ProcessingError
 from ..utils.logging import get_logger
+from ..utils.custom_methods import CUSTOM_METHOD_FELL_BACK, call_custom_method
 from .config import embeddings_config
 from .embedding_generator import EmbeddingGenerator
 from .pooling_strategies import PoolingStrategyFactory
@@ -119,12 +120,11 @@ def generate_embeddings(
     # Check for custom method in registry
     custom_method = method_registry.get("generation", method)
     if custom_method:
-        try:
-            return custom_method(data, data_type=data_type, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, data, data_type=data_type, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         if method == "default":
@@ -167,12 +167,9 @@ def embed_text(
     # Check for custom method in registry
     custom_method = method_registry.get("text", method)
     if custom_method:
-        try:
-            return custom_method(text, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -227,12 +224,9 @@ def calculate_similarity(
     # Check for custom method in registry
     custom_method = method_registry.get("similarity", method)
     if custom_method:
-        try:
-            return custom_method(embedding1, embedding2, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, embedding1, embedding2, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         generator = EmbeddingGenerator(**kwargs)
@@ -274,12 +268,9 @@ def pool_embeddings(
     # Check for custom method in registry
     custom_method = method_registry.get("pooling", method)
     if custom_method:
-        try:
-            return custom_method(embeddings, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, embeddings, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         strategy = PoolingStrategyFactory.create(method, **kwargs)

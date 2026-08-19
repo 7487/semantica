@@ -125,6 +125,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from ..utils.exceptions import ConfigurationError, ProcessingError
 from ..utils.logging import get_logger
+from ..utils.custom_methods import CUSTOM_METHOD_FELL_BACK, call_custom_method
 from .code_parser import CodeParser
 from .config import parse_config
 from .csv_parser import CSVParser
@@ -178,12 +179,9 @@ def parse_document(
     """
     custom_method = method_registry.get("document", method)
     if custom_method:
-        try:
-            return custom_method(file_path, file_type, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, file_type, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("document")
@@ -289,12 +287,11 @@ def parse_web_content(
     """
     custom_method = method_registry.get("web", method)
     if custom_method:
-        try:
-            return custom_method(content, content_type, base_url, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, content, content_type, base_url, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("web")
@@ -345,12 +342,9 @@ def parse_structured_data(
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        try:
-            return custom_method(data, data_format, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, data, data_format, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("structured")
@@ -392,12 +386,9 @@ def parse_email(
     """
     custom_method = method_registry.get("email", method)
     if custom_method:
-        try:
-            return custom_method(email_content, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, email_content, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("email")
@@ -442,12 +433,9 @@ def parse_code(
     """
     custom_method = method_registry.get("code", method)
     if custom_method:
-        try:
-            return custom_method(file_path, language, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, language, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("code")
@@ -495,12 +483,9 @@ def parse_media(
     """
     custom_method = method_registry.get("media", method)
     if custom_method:
-        try:
-            return custom_method(file_path, media_type, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, media_type, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("media")
@@ -541,12 +526,9 @@ def parse_pdf(
     """
     custom_method = method_registry.get("document", method)
     if custom_method:
-        try:
-            return custom_method(file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("document")
@@ -585,12 +567,9 @@ def parse_docx(
     """
     custom_method = method_registry.get("document", method)
     if custom_method:
-        try:
-            return custom_method(file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("document")
@@ -628,12 +607,9 @@ def parse_json(file_path: Union[str, Path], method: str = "default", **kwargs) -
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        try:
-            return custom_method(file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("structured")
@@ -675,12 +651,9 @@ def parse_csv(
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        try:
-            return custom_method(file_path, delimiter, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, delimiter, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("structured")
@@ -714,12 +687,9 @@ def parse_xml(file_path: Union[str, Path], method: str = "default", **kwargs) ->
     """
     custom_method = method_registry.get("structured", method)
     if custom_method:
-        try:
-            return custom_method(file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("structured")
@@ -762,12 +732,9 @@ def parse_image(
     """
     custom_method = method_registry.get("media", method)
     if custom_method:
-        try:
-            return custom_method(file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = parse_config.get_method_config("media")

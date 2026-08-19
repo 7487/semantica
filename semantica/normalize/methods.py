@@ -125,6 +125,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..utils.exceptions import ConfigurationError, ProcessingError
 from ..utils.logging import get_logger
+from ..utils.custom_methods import CUSTOM_METHOD_FELL_BACK, call_custom_method
 from .config import normalize_config
 from .data_cleaner import DataCleaner
 from .date_normalizer import DateNormalizer
@@ -168,12 +169,9 @@ def normalize_text(text: str, method: str = "default", **kwargs) -> str:
     """
     custom_method = method_registry.get("text", method)
     if custom_method:
-        try:
-            return custom_method(text, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("text")
@@ -212,12 +210,9 @@ def clean_text(text: str, method: str = "default", **kwargs) -> str:
     """
     custom_method = method_registry.get("clean", method)
     if custom_method:
-        try:
-            return custom_method(text, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("clean")
@@ -262,12 +257,11 @@ def normalize_entity(
     """
     custom_method = method_registry.get("entity", method)
     if custom_method:
-        try:
-            return custom_method(entity_name, entity_type, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, entity_name, entity_type, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("entity")
@@ -309,12 +303,11 @@ def resolve_aliases(
     """
     custom_method = method_registry.get("entity", method)
     if custom_method:
-        try:
-            return custom_method(entity_name, entity_type, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, entity_name, entity_type, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("entity")
@@ -356,12 +349,9 @@ def disambiguate_entity(
     """
     custom_method = method_registry.get("entity", method)
     if custom_method:
-        try:
-            return custom_method(entity_name, **context)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, entity_name, **context)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("entity")
@@ -411,12 +401,11 @@ def normalize_date(
     """
     custom_method = method_registry.get("date", method)
     if custom_method:
-        try:
-            return custom_method(date_input, format, timezone, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, date_input, format, timezone, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("date")
@@ -452,12 +441,9 @@ def normalize_time(time_input: Any, method: str = "default", **kwargs) -> str:
     """
     custom_method = method_registry.get("date", method)
     if custom_method:
-        try:
-            return custom_method(time_input, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, time_input, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("date")
@@ -498,12 +484,9 @@ def normalize_number(
     """
     custom_method = method_registry.get("number", method)
     if custom_method:
-        try:
-            return custom_method(number_input, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, number_input, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("number")
@@ -542,12 +525,9 @@ def normalize_quantity(
     """
     custom_method = method_registry.get("number", method)
     if custom_method:
-        try:
-            return custom_method(quantity_input, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, quantity_input, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("number")
@@ -598,14 +578,11 @@ def clean_data(
     """
     custom_method = method_registry.get("clean", method)
     if custom_method:
-        try:
-            return custom_method(
-                dataset, remove_duplicates, validate, handle_missing, **kwargs
-            )
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, dataset, remove_duplicates, validate, handle_missing, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("clean")
@@ -653,12 +630,11 @@ def detect_duplicates(
     """
     custom_method = method_registry.get("clean", method)
     if custom_method:
-        try:
-            return custom_method(dataset, threshold, key_fields, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, dataset, threshold, key_fields, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("clean")
@@ -700,12 +676,9 @@ def detect_language(
     """
     custom_method = method_registry.get("language", method)
     if custom_method:
-        try:
-            return custom_method(text, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, text, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("language")
@@ -761,12 +734,9 @@ def handle_encoding(
     """
     custom_method = method_registry.get("encoding", method)
     if custom_method:
-        try:
-            return custom_method(data, operation, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, data, operation, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = normalize_config.get_method_config("encoding")

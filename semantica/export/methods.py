@@ -164,6 +164,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from ..utils.exceptions import ProcessingError
 from ..utils.logging import get_logger
+from ..utils.custom_methods import CUSTOM_METHOD_FELL_BACK, call_custom_method
 from .arango_aql_exporter import ArangoAQLExporter
 from .arrow_exporter import ArrowExporter
 from .config import export_config
@@ -221,12 +222,11 @@ def export_rdf(
     # Check for custom method in registry
     custom_method = method_registry.get("rdf", method)
     if custom_method and custom_method is not export_rdf:
-        try:
-            return custom_method(data, file_path, format=format, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, data, file_path, format=format, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -270,12 +270,11 @@ def export_json(
     # Check for custom method in registry
     custom_method = method_registry.get("json", method)
     if custom_method and custom_method is not export_json:
-        try:
-            return custom_method(data, file_path, format=format, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, data, file_path, format=format, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -316,12 +315,9 @@ def export_csv(
     # Check for custom method in registry
     custom_method = method_registry.get("csv", method)
     if custom_method and custom_method is not export_csv:
-        try:
-            return custom_method(data, file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, data, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -361,12 +357,9 @@ def export_arrow(
     # Check for custom method in registry
     custom_method = method_registry.get("arrow", method)
     if custom_method and custom_method is not export_arrow:
-        try:
-            return custom_method(data, file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, data, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -421,12 +414,11 @@ def export_parquet(
     # Check for custom method in registry
     custom_method = method_registry.get("parquet", method)
     if custom_method and custom_method is not export_parquet:
-        try:
-            return custom_method(data, file_path, compression=compression, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, data, file_path, compression=compression, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -472,12 +464,11 @@ def export_graph(
     # Check for custom method in registry
     custom_method = method_registry.get("graph", method)
     if custom_method and custom_method is not export_graph:
-        try:
-            return custom_method(graph_data, file_path, format=format, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, graph_data, file_path, format=format, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -538,12 +529,9 @@ def export_yaml(
     # Check for custom method in registry
     custom_method = method_registry.get("yaml", method)
     if custom_method and custom_method is not export_yaml:
-        try:
-            return custom_method(data, file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, data, file_path, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -595,12 +583,11 @@ def export_owl(
     # Check for custom method in registry
     custom_method = method_registry.get("owl", method)
     if custom_method and custom_method is not export_owl:
-        try:
-            return custom_method(ontology, file_path, format=format, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, ontology, file_path, format=format, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -647,12 +634,11 @@ def export_vector(
     # Check for custom method in registry
     custom_method = method_registry.get("vector", method)
     if custom_method and custom_method is not export_vector:
-        try:
-            return custom_method(vectors, file_path, format=format, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, vectors, file_path, format=format, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -695,12 +681,11 @@ def export_lpg(
     # Check for custom method in registry
     custom_method = method_registry.get("lpg", method)
     if custom_method and custom_method is not export_lpg:
-        try:
-            return custom_method(knowledge_graph, file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, knowledge_graph, file_path, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -738,12 +723,11 @@ def export_neo4j_csv(
     """
     custom_method = method_registry.get("neo4j_csv", method)
     if custom_method and custom_method is not export_neo4j_csv:
-        try:
-            return custom_method(knowledge_graph, output_dir, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, knowledge_graph, output_dir, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         config = export_config.get_method_config("neo4j_csv")
@@ -808,12 +792,11 @@ def export_arango(
     # Check for custom method in registry
     custom_method = method_registry.get("arango", method)
     if custom_method and custom_method is not export_arango:
-        try:
-            return custom_method(knowledge_graph, file_path, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, knowledge_graph, file_path, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -859,12 +842,11 @@ def generate_report(
     # Check for custom method in registry
     custom_method = method_registry.get("report", method)
     if custom_method and custom_method is not generate_report:
-        try:
-            return custom_method(data, file_path, format=format, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(
+            logger, method, custom_method, data, file_path, format=format, **kwargs
+        )
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config

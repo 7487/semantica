@@ -180,6 +180,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from ..utils.exceptions import ConfigurationError, ProcessingError
 from ..utils.logging import get_logger
+from ..utils.custom_methods import CUSTOM_METHOD_FELL_BACK, call_custom_method
 from .config import ingest_config
 from .file_ingestor import FileIngestor, FileObject
 from .registry import method_registry
@@ -248,12 +249,9 @@ def ingest_file(
     # Check for custom method in registry
     custom_method = method_registry.get("file", method)
     if custom_method and custom_method != ingest_file:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         # Get config
@@ -314,12 +312,9 @@ def ingest_parquet(
     """
     custom_method = method_registry.get("parquet", method)
     if custom_method and custom_method != ingest_parquet:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         try:
@@ -393,12 +388,9 @@ def ingest_arrow(
     """
     custom_method = method_registry.get("arrow", method)
     if custom_method and custom_method != ingest_arrow:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         try:
@@ -477,12 +469,9 @@ def ingest_xml(
     """
     custom_method = method_registry.get("xml", method)
     if custom_method and custom_method != ingest_xml:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         from .xml_ingestor import XMLIngestor
@@ -541,12 +530,9 @@ def ingest_web(
     # Check for custom method in registry
     custom_method = method_registry.get("web", method)
     if custom_method and custom_method != ingest_web:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         try:
@@ -631,12 +617,9 @@ def ingest_public_api(
     """
     custom_method = method_registry.get("public_api", method)
     if custom_method and custom_method != ingest_public_api:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         from .public_api_ingestor import PublicAPIExamples, PublicAPIIngestor
@@ -718,12 +701,9 @@ def ingest_feed(
     # Check for custom method in registry
     custom_method = method_registry.get("feed", method)
     if custom_method and custom_method != ingest_feed:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         try:
@@ -787,12 +767,9 @@ def ingest_stream(
     # Check for custom method in registry
     custom_method = method_registry.get("stream", method)
     if custom_method and custom_method != ingest_stream:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         from .stream_ingestor import StreamIngestor
@@ -864,12 +841,9 @@ def ingest_repository(
     # Check for custom method in registry
     custom_method = method_registry.get("repo", method)
     if custom_method and custom_method != ingest_repository:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         try:
@@ -936,12 +910,9 @@ def ingest_email(
     # Check for custom method in registry
     custom_method = method_registry.get("email", method)
     if custom_method and custom_method != ingest_email:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         try:
@@ -1015,12 +986,9 @@ def ingest_ontology(
     # Check for custom method in registry
     custom_method = method_registry.get("ontology", method)
     if custom_method and custom_method != ingest_ontology:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         from .ontology_ingestor import OntologyIngestor
@@ -1081,12 +1049,9 @@ def ingest_database(
     if method:
         custom_method = method_registry.get("db", method)
         if custom_method and custom_method != ingest_database:
-            try:
-                return custom_method(source, **kwargs)
-            except Exception as e:
-                logger.warning(
-                    f"Custom method {method} failed: {e}, falling back to default"
-                )
+            result = call_custom_method(logger, method, custom_method, source, **kwargs)
+            if result is not CUSTOM_METHOD_FELL_BACK:
+                return result
 
     try:
         from .db_ingestor import DBIngestor
@@ -1188,12 +1153,9 @@ def ingest_mcp(
     # Check for custom method in registry
     custom_method = method_registry.get("mcp", method)
     if custom_method and custom_method != ingest_mcp:
-        try:
-            return custom_method(source, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Custom method {method} failed: {e}, falling back to default"
-            )
+        result = call_custom_method(logger, method, custom_method, source, **kwargs)
+        if result is not CUSTOM_METHOD_FELL_BACK:
+            return result
 
     try:
         from .mcp_ingestor import MCPIngestor
