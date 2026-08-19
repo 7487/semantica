@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useState, useRef, useEffect, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy, Code2, Eye, ExternalLink, Image as ImageIcon } from "lucide-react";
@@ -13,7 +13,9 @@ export interface MarkdownContentViewerProps {
 export function isSafeUrl(url?: string): boolean {
   if (!url) return false;
   const trimmed = url.trim();
-  if (trimmed.startsWith("#") || trimmed.startsWith("/")) return true;
+  if (trimmed.startsWith("//")) return false;
+  if (trimmed.startsWith("#")) return true;
+  if (trimmed.startsWith("/")) return true;
   try {
     const parsed = new URL(trimmed, "http://localhost");
     return ["http:", "https:", "mailto:"].includes(parsed.protocol);
@@ -29,6 +31,15 @@ export function MarkdownContentViewer({
 }: MarkdownContentViewerProps) {
   const [activeMode, setActiveMode] = useState<"preview" | "source">(defaultMode);
   const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const rawContent = typeof content === "string" ? content : "";
   const hasContent = rawContent.trim().length > 0;
@@ -37,8 +48,11 @@ export function MarkdownContentViewer({
     if (!hasContent) return;
     try {
       await navigator.clipboard.writeText(rawContent);
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      copyTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       // Clipboard write unavailable
     }

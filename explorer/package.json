@@ -8,10 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --import tsx --test tests/markdownContentViewer.test.ts tests/graphSceneState.display.test.ts tests/temporalLifecycle.test.ts",
     "test:graph-store": "node --test tests/graphStore.multi-edge.test.mjs",
     "test:graph-workspace": "node --import tsx --test tests/markdownContentViewer.test.ts tests/graphSceneState.display.test.ts tests/temporalLifecycle.test.ts",
-    "test:markdown-viewer": "node --import tsx --test tests/markdownContentViewer.test.ts",
     "test:plugin-registry": "node --import tsx --test tests/pluginRegistry.temporal.test.mjs"
   },
   "dependencies": {
