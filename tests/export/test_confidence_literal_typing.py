@@ -175,3 +175,38 @@ def test_the_emitted_datatype_matches_the_shipped_vocabulary():
     assert str(declared[0]) == CONFIDENCE_DATATYPE, (
         f"vocabulary says {declared[0]}, serializers write {CONFIDENCE_DATATYPE}"
     )
+
+
+# ── Review findings on the first revision of this fix ────────────────────────
+
+@pytest.mark.parametrize("huge", ["1e100000000", "1E1000000", "-1e999999", 10**400])
+def test_an_absurd_magnitude_is_rejected_not_expanded(huge):
+    """
+    xsd:decimal has no exponent notation, so the value has to be written out.
+    "1e100000000" is eleven characters that expand to a hundred million digits,
+    and the export path continues past validation errors.
+    """
+    from semantica.export.rdf_exporter import normalize_confidence
+
+    assert normalize_confidence(huge) is None
+
+
+def test_a_legitimately_small_confidence_is_still_accepted():
+    from semantica.export.rdf_exporter import normalize_confidence
+
+    assert normalize_confidence(1e-9) == "0.000000001"
+
+
+def test_signed_zero_is_normalized():
+    """0.0 and -0.0 would otherwise be two distinct RDF terms."""
+    from semantica.export.rdf_exporter import normalize_confidence
+
+    assert normalize_confidence(0.0) == normalize_confidence(-0.0) == "0"
+
+
+def test_signed_zero_gives_one_term_across_serializers():
+    positive = {n: _confidence_terms(g)[0] for n, g in _graphs(_kg(0.0)).items()}
+    negative = {n: _confidence_terms(g)[0] for n, g in _graphs(_kg(-0.0)).items()}
+
+    assert set(positive.values()) | set(negative.values()) == set(positive.values())
+    assert len(set(positive.values())) == 1

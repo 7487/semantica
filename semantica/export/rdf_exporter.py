@@ -63,6 +63,11 @@ DEFAULT_RELATION_TYPE = f"{SEMANTICA_NS}related_to"
 #: xsd:float is 32 bit binary, and cannot represent 0.9 or 0.95 at all.
 CONFIDENCE_DATATYPE = "http://www.w3.org/2001/XMLSchema#decimal"
 
+#: Largest power of ten a confidence may carry. xsd:decimal has no exponent
+#: notation, so a value has to be written out in full, and a compact literal
+#: such as "1e100000000" would expand to a hundred million digits.
+MAX_CONFIDENCE_EXPONENT = 100
+
 
 def normalize_confidence(value: Any) -> Optional[str]:
     """
@@ -95,11 +100,23 @@ def normalize_confidence(value: Any) -> Optional[str]:
     if not decimal_value.is_finite():
         return None
 
+    # xsd:decimal has no exponent notation, so writing one means expanding it.
+    # "1e100000000" is eleven characters that expand to a hundred million, and
+    # the export path continues past validation errors, so a single malformed
+    # field could exhaust memory. Nothing near this magnitude is a confidence.
+    if not -MAX_CONFIDENCE_EXPONENT <= decimal_value.adjusted() <= MAX_CONFIDENCE_EXPONENT:
+        return None
+
     # `str(Decimal("0.00001"))` gives "0.00001", but a float that has already
     # been through repr can arrive as "1e-05", which xsd:decimal does not allow.
     formatted = format(decimal_value, "f")
     if "." in formatted:
         formatted = formatted.rstrip("0").rstrip(".") or "0"
+
+    # Decimal keeps the sign of zero, so 0.0 and -0.0 would serialise as two
+    # distinct RDF terms and defeat the point of a canonical form.
+    if formatted.lstrip("-").strip("0.") == "":
+        formatted = "0"
     return formatted
 
 
