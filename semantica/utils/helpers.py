@@ -320,6 +320,35 @@ def format_timestamp(
     return dt.strftime(format_str)
 
 
+def utc_now() -> datetime:
+    """
+    Current instant as a timezone-aware UTC datetime.
+
+    ``datetime.now()`` reads the local clock and ``datetime.utcnow()`` reads UTC,
+    but both return a naive datetime, and the two are indistinguishable once
+    serialized: a consumer cannot tell which zone the value belongs to, and an
+    RDF timestamp without an offset is not comparable against one that has an
+    offset (a SPARQL FILTER drops it rather than reporting an error). Use this
+    for any timestamp that leaves the process.
+
+    Returns:
+        Current UTC time, timezone-aware
+    """
+    return datetime.now(timezone.utc)
+
+
+def utc_now_iso() -> str:
+    """
+    Current instant as an ISO 8601 string carrying an explicit UTC offset.
+
+    Returns:
+        Timestamp string such as ``2026-08-19T14:19:04.229937+00:00``, which is
+        a valid ``xsd:dateTimeStamp`` and orders correctly against timestamps
+        written in any other timezone
+    """
+    return utc_now().isoformat()
+
+
 def parse_timestamp(timestamp_str: str, format_str: Optional[str] = None) -> datetime:
     """
     Parse timestamp string to datetime.

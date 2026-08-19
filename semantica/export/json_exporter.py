@@ -24,12 +24,11 @@ License: MIT
 """
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from ..utils.exceptions import ProcessingError, ValidationError
-from ..utils.helpers import ensure_directory, write_json_file
+from ..utils.helpers import ensure_directory, utc_now_iso, write_json_file
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
 
@@ -269,7 +268,7 @@ class JSONExporter:
             },
             "entities": entities,
             "metadata": {
-                "exported_at": datetime.now().isoformat(),
+                "exported_at": utc_now_iso(),
                 "entity_count": len(entities),
                 **options.get("metadata", {}),
             },
@@ -301,7 +300,7 @@ class JSONExporter:
             },
             "relationships": relationships,
             "metadata": {
-                "exported_at": datetime.now().isoformat(),
+                "exported_at": utc_now_iso(),
                 "relationship_count": len(relationships),
                 **options.get("metadata", {}),
             },
@@ -339,7 +338,7 @@ class JSONExporter:
             if include_metadata:
                 if "metadata" not in result:
                     result["metadata"] = {}
-                result["metadata"]["exported_at"] = datetime.now().isoformat()
+                result["metadata"]["exported_at"] = utc_now_iso()
                 if include_provenance:
                     result["metadata"]["format"] = "json"
 
@@ -349,7 +348,7 @@ class JSONExporter:
                 "data": data,
                 "count": len(data),
                 "metadata": {
-                    "exported_at": datetime.now().isoformat(),
+                    "exported_at": utc_now_iso(),
                     "format": "json" if include_provenance else None,
                     **options.get("metadata", {}),
                 },
@@ -358,7 +357,7 @@ class JSONExporter:
             # Single value
             return {
                 "value": data,
-                "metadata": {"exported_at": datetime.now().isoformat()}
+                "metadata": {"exported_at": utc_now_iso()}
                 if include_metadata
                 else {},
             }
@@ -410,9 +409,9 @@ class JSONExporter:
 
         # Add metadata and provenance if requested
         if include_metadata:
-            jsonld["@id"] = f"https://semantica.dev/data/{datetime.now().isoformat()}"
+            jsonld["@id"] = f"https://semantica.dev/data/{utc_now_iso()}"
             if include_provenance:
-                jsonld["semantica:exportedAt"] = datetime.now().isoformat()
+                jsonld["semantica:exportedAt"] = utc_now_iso()
                 jsonld["semantica:format"] = "json-ld"
 
         return jsonld
@@ -444,7 +443,7 @@ class JSONExporter:
             "nodes": kg.get("nodes", []),
             "edges": kg.get("edges", []),
             "metadata": {
-                "exported_at": datetime.now().isoformat(),
+                "exported_at": utc_now_iso(),
                 **kg.get("metadata", {}),
                 **options.get("metadata", {}),
             },
@@ -481,7 +480,7 @@ class JSONExporter:
                 "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
                 "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
             },
-            "@id": f"https://semantica.dev/graph/{datetime.now().isoformat()}",
+            "@id": f"https://semantica.dev/graph/{utc_now_iso()}",
             "@type": "semantica:KnowledgeGraph",
         }
 
@@ -502,7 +501,7 @@ class JSONExporter:
             )
 
         # Add metadata
-        jsonld["semantica:exportedAt"] = datetime.now().isoformat()
+        jsonld["semantica:exportedAt"] = utc_now_iso()
         if "metadata" in kg:
             jsonld["semantica:metadata"] = kg["metadata"]
 
