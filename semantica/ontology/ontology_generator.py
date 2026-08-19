@@ -752,10 +752,13 @@ class SHACLGraph:
     shapes_uri: str
     node_shapes: List[NodeShape] = field(default_factory=list)
     prefixes: Dict[str, str] = field(default_factory=dict)
-    # Bare class and property names mapped to the absolute IRI the data uses
-    # for them. Shapes are indexed internally by name; this is what those names
-    # expand to at serialisation time (#1104).
-    term_iris: Dict[str, str] = field(default_factory=dict)
+    # Bare names mapped to the absolute IRI the data uses for them. Shapes are
+    # indexed internally by name; this is what those names expand to at
+    # serialisation time (#1104). Classes and properties are kept apart because
+    # a property may legitimately share a class's name, and a single map would
+    # silently give it the class's IRI.
+    class_iris: Dict[str, str] = field(default_factory=dict)
+    property_iris: Dict[str, str] = field(default_factory=dict)
 
 
 class SHACLGenerator:
@@ -858,7 +861,8 @@ class SHACLGenerator:
                 base_uri=base_uri,
                 shapes_uri=self.shapes_uri,
                 prefixes=prefixes,
-                term_iris=self._build_term_index(classes, properties, target_ns),
+                class_iris=self._build_term_index(classes, target_ns),
+                property_iris=self._build_term_index(properties, target_ns),
             )
 
             self.progress_tracker.update_tracking(tracking_id, message="Generating node shapes")
@@ -979,14 +983,11 @@ class SHACLGenerator:
         return self._DEFAULT_TARGET_NAMESPACE
 
     def _build_term_index(
-        self,
-        classes: List[Dict[str, Any]],
-        properties: List[Dict[str, Any]],
-        target_ns: str,
+        self, terms: List[Dict[str, Any]], target_ns: str
     ) -> Dict[str, str]:
-        """Map every class and property name to the absolute IRI it expands to."""
+        """Map each term's name to the absolute IRI it expands to."""
         index: Dict[str, str] = {}
-        for term in list(classes or []) + list(properties or []):
+        for term in terms or []:
             if not isinstance(term, dict):
                 continue
             name = term.get("name")
@@ -1053,9 +1054,10 @@ class SHACLGenerator:
                             f"Property '{pname}' domain '{d}' has no matching node shape — skipped"
                         )
             elif self.attach_domainless_properties:
-                self.logger.debug(
-                    f"Property '{pname}' has no domain, attaching to all node shapes "
-                    "because attach_domainless_properties is set"
+                self.logger.warning(
+                    f"Property '{pname}' declares no domain and is being attached "
+                    "to every node shape because attach_domainless_properties is "
+                    "set. This states a constraint the ontology does not."
                 )
                 for node_shape in graph.node_shapes:
                     node_shape.property_shapes.append(self._build_property_shape(prop))
@@ -1147,22 +1149,40 @@ class SHACLGenerator:
     def _prefix_decls(self, graph: SHACLGraph) -> str:
         return "\n".join(f"@prefix {p}: <{u}> ." for p, u in sorted(graph.prefixes.items()))
 
-    def _uri(self, graph: SHACLGraph, local: str) -> str:
+    def _term_iri(self, graph: SHACLGraph, local: str, kind: str = "class") -> str:
         """
-        Return a URI reference for a class or property name.
+        Resolve a class or property name to the absolute IRI the data uses.
 
-        Bare names are expanded through the graph's term index, which holds the
-        IRI the data actually uses, rather than being pasted onto whichever
-        namespace the shapes happen to live in (#1104).
+        Every serializer goes through here. Turtle alone was corrected at first,
+        which left JSON-LD and N-Triples still pasting names onto the shapes
+        namespace, so the shapes they produced went on matching nothing (#1104).
+
+        `kind` selects the index: a property may share a class's name, and the
+        two can carry different IRIs.
         """
         if local.startswith("http://") or local.startswith("https://"):
-            return f"<{local}>"
-        resolved = graph.term_iris.get(local)
+            return local
+        index = graph.property_iris if kind == "property" else graph.class_iris
+        resolved = index.get(local)
         if resolved:
-            return f"<{resolved}>"
+            return resolved
+        # Fall back to the other index before giving up: sh:class names a class,
+        # but a caller may pass a term only registered on the other side.
+        other = graph.class_iris if kind == "property" else graph.property_iris
+        resolved = other.get(local)
+        if resolved:
+            return resolved
         if ":" in local:
             return local
-        return f"ex:{local}"
+        separator = "" if graph.base_uri.endswith(("#", "/", ":")) else "#"
+        return f"{graph.base_uri}{separator}{local}"
+
+    def _uri(self, graph: SHACLGraph, local: str, kind: str = "class") -> str:
+        """Turtle-facing wrapper: the resolved IRI, in angle brackets."""
+        resolved = self._term_iri(graph, local, kind)
+        if resolved.startswith(("http://", "https://", "urn:")):
+            return f"<{resolved}>"
+        return resolved
 
     def _serialize_turtle(self, graph: SHACLGraph) -> str:
         lines = [self._prefix_decls(graph), ""]
@@ -1189,11 +1209,11 @@ class SHACLGenerator:
                 is_last = i == len(node_shape.property_shapes) - 1
                 terminator = " ." if is_last else " ;"
                 parts = ["    sh:property ["]
-                parts.append(f"        sh:path {self._uri(graph, ps.path)} ;")
+                parts.append(f'        sh:path {self._uri(graph, ps.path, "property")} ;')
                 if ps.datatype:
                     parts.append(f"        sh:datatype {ps.datatype} ;")
                 if ps.class_:
-                    parts.append(f"        sh:class {self._uri(graph, ps.class_)} ;")
+                    parts.append(f'        sh:class {self._uri(graph, ps.class_, "class")} ;')
                 if ps.min_count is not None:
                     parts.append(f"        sh:minCount {ps.min_count} ;")
                 if ps.max_count is not None:
@@ -1234,7 +1254,7 @@ class SHACLGenerator:
             node: Dict[str, Any] = {
                 "@id": shape_id,
                 "@type": "sh:NodeShape",
-                "sh:targetClass": {"@id": f"{graph.base_uri}{node_shape.target_class}"},
+                "sh:targetClass": {"@id": self._term_iri(graph, node_shape.target_class, "class")},
             }
             if node_shape.name:
                 node["sh:name"] = node_shape.name
@@ -1247,7 +1267,7 @@ class SHACLGenerator:
                 props = []
                 for ps in node_shape.property_shapes:
                     p: Dict[str, Any] = {
-                        "sh:path": {"@id": f"{graph.base_uri}{ps.path}"}
+                        "sh:path": {"@id": self._term_iri(graph, ps.path, "property")}
                     }
                     if ps.datatype:
                         dt = ps.datatype.replace(
@@ -1255,7 +1275,7 @@ class SHACLGenerator:
                         )
                         p["sh:datatype"] = {"@id": dt}
                     if ps.class_:
-                        p["sh:class"] = {"@id": f"{graph.base_uri}{ps.class_}"}
+                        p["sh:class"] = {"@id": self._term_iri(graph, ps.class_, "class")}
                     if ps.min_count is not None:
                         p["sh:minCount"] = ps.min_count
                     if ps.max_count is not None:
@@ -1288,7 +1308,7 @@ class SHACLGenerator:
 
         for i, node_shape in enumerate(graph.node_shapes):
             shape_uri = f"<{graph.base_uri}{node_shape.target_class}Shape>"
-            class_uri = f"<{graph.base_uri}{node_shape.target_class}>"
+            class_uri = f'<{self._term_iri(graph, node_shape.target_class, "class")}>'
             t(shape_uri, f"<{RDF}type>", f"<{SHACL}NodeShape>")
             t(shape_uri, f"<{SHACL}targetClass>", class_uri)
             if node_shape.name:
@@ -1303,13 +1323,13 @@ class SHACLGenerator:
             for j, ps in enumerate(node_shape.property_shapes):
                 bnode = f"_:ps{i}_{j}"
                 t(shape_uri, f"<{SHACL}property>", bnode)
-                prop_uri = f"<{graph.base_uri}{ps.path}>"
+                prop_uri = f'<{self._term_iri(graph, ps.path, "property")}>'
                 t(bnode, f"<{SHACL}path>", prop_uri)
                 if ps.datatype:
                     dt_uri = ps.datatype.replace("xsd:", XSD)
                     t(bnode, f"<{SHACL}datatype>", f"<{dt_uri}>")
                 if ps.class_:
-                    t(bnode, f"<{SHACL}class>", f"<{graph.base_uri}{ps.class_}>")
+                    t(bnode, f"<{SHACL}class>", f'<{self._term_iri(graph, ps.class_, "class")}>')
                 if ps.min_count is not None:
                     t(bnode, f"<{SHACL}minCount>", f'"{ps.min_count}"^^<{XSD}integer>')
                 if ps.max_count is not None:

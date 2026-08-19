@@ -214,3 +214,117 @@ def test_domainless_attachment_is_available_as_an_explicit_opt_in():
         if prop.path.endswith("sourceDocument")
     }
     assert len(carriers) == len(graph.node_shapes)
+
+
+# ── Review findings on the first revision of this fix ────────────────────────
+
+@pytest.mark.parametrize("fmt,parse_as", [
+    ("turtle", "turtle"), ("n-triples", "nt"), ("json-ld", "json-ld"),
+])
+def test_every_format_targets_the_ontology_namespace(fmt, parse_as):
+    """
+    The first revision fixed Turtle alone. JSON-LD and N-Triples went on
+    pasting names onto the shapes namespace, so two of the three formats still
+    produced shapes that matched nothing.
+    """
+    generator = SHACLGenerator()
+    graph = generator.generate(_ontology(declare_namespace=False, carry_class_uris=True))
+
+    shapes = Graph()
+    shapes.parse(data=generator.serialize(graph, fmt), format=parse_as)
+    targets = {str(o) for o in shapes.objects(None, SH.targetClass)}
+
+    assert targets == {ONTOLOGY_NS + "Person", ONTOLOGY_NS + "Organization"}, targets
+    assert not any(t.startswith(SHAPES_NS) for t in targets), targets
+
+
+@pytest.mark.parametrize("fmt,parse_as", [
+    ("turtle", "turtle"), ("n-triples", "nt"), ("json-ld", "json-ld"),
+])
+def test_every_format_reports_a_real_violation(fmt, parse_as):
+    generator = SHACLGenerator()
+    graph = generator.generate(_ontology(declare_namespace=False, carry_class_uris=True))
+
+    shapes = Graph()
+    shapes.parse(data=generator.serialize(graph, fmt), format=parse_as)
+    conforms, text = _validate(VIOLATING_DATA, shapes)
+
+    assert not conforms, f"{fmt} shapes matched no focus nodes:\n{text}"
+
+
+def test_a_property_sharing_a_class_name_keeps_its_own_iri():
+    """One name-keyed map gave the property the class's IRI, so sh:path validated
+    the wrong predicate."""
+    ontology = {
+        "classes": [{"name": "Account", "uri": ONTOLOGY_NS + "Account"}],
+        "properties": [
+            {
+                "name": "Account",
+                "uri": ONTOLOGY_NS + "accountNumber",
+                "type": "datatype",
+                "range": "string",
+                "domain": "Account",
+                "required": True,
+            }
+        ],
+    }
+    shapes = _shapes_graph(ontology)
+
+    paths = {str(o) for o in shapes.objects(None, SH.path)}
+    targets = {str(o) for o in shapes.objects(None, SH.targetClass)}
+
+    assert paths == {ONTOLOGY_NS + "accountNumber"}, paths
+    assert targets == {ONTOLOGY_NS + "Account"}, targets
+
+
+def test_sh_class_resolves_to_the_class_namespace():
+    ontology = {
+        "classes": [
+            {"name": "Person", "uri": ONTOLOGY_NS + "Person"},
+            {"name": "Organization", "uri": ONTOLOGY_NS + "Organization"},
+        ],
+        "properties": [
+            {
+                "name": "worksAt",
+                "uri": ONTOLOGY_NS + "worksAt",
+                "type": "object",
+                "range": "Organization",
+                "domain": "Person",
+            }
+        ],
+    }
+    shapes = _shapes_graph(ontology)
+    classes = {str(o) for o in shapes.objects(None, SH["class"])}
+
+    assert classes == {ONTOLOGY_NS + "Organization"}, classes
+
+
+def test_the_engine_forwards_the_new_options():
+    """to_shacl passed them through generate(**options), which never reads them."""
+    from semantica.ontology.engine import OntologyEngine
+
+    ontology = _ontology(declare_namespace=False, carry_class_uris=False)
+
+    turtle = OntologyEngine().to_shacl(ontology, target_namespace="https://forwarded.example/ns#")
+    shapes = Graph()
+    shapes.parse(data=turtle, format="turtle")
+    targets = {str(o) for o in shapes.objects(None, SH.targetClass)}
+    assert all(t.startswith("https://forwarded.example/ns#") for t in targets), targets
+
+    attached = OntologyEngine().to_shacl(ontology, attach_domainless_properties=True)
+    assert "sourceDocument" in attached
+
+    default = OntologyEngine().to_shacl(ontology)
+    assert "sourceDocument" not in default
+
+
+def test_the_opt_in_warns_rather_than_whispering(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        SHACLGenerator(attach_domainless_properties=True).generate(
+            _ontology(declare_namespace=True, carry_class_uris=True)
+        )
+
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert "sourceDocument" in messages
