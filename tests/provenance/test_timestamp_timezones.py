@@ -85,3 +85,69 @@ def test_prov_o_timestamps_are_valid_datetimestamp():
                   if isinstance(o, rdflib.Literal) and o.datatype == XSD.dateTime]:
         assert rdflib.Literal(str(stamp), datatype=XSD.dateTime).ill_typed is False
         assert datetime.fromisoformat(str(stamp)).utcoffset() is not None
+
+
+class TestRangeQueriesCompareInstants:
+    """Range APIs compared ISO strings, so they ordered by spelling (#1121 review).
+
+    Once new entries carry ``+00:00`` and stored ones do not, a raw string
+    comparison puts an inclusive naive bound *below* the offset-bearing
+    timestamp it names, dropping the record, and a bound written in another
+    offset lands wherever its digits fall rather than at its instant.
+    """
+
+    @staticmethod
+    def _manager_with(timestamps):
+        manager = ProvenanceManager()
+        for index, stamp in enumerate(timestamps):
+            manager.storage.store(ProvenanceEntry(
+                entity_id=f"e{index}", entity_type="Doc",
+                activity_id="act", timestamp=stamp,
+            ))
+        return manager
+
+    def test_inclusive_bound_written_without_an_offset_still_matches(self):
+        manager = self._manager_with(["2026-08-19T14:19:04.229937+00:00"])
+
+        found = manager.query_recorded_between(
+            "2026-08-19T00:00:00", "2026-08-19T14:19:04.229937"
+        )
+        assert [e["entity_id"] for e in found] == ["e0"]
+
+    def test_bound_in_another_offset_selects_by_instant(self):
+        """19:45+05:30 is 14:15Z: before the entry, though its digits are after."""
+        manager = self._manager_with(["2026-08-19T14:19:04+00:00"])
+
+        assert manager.query_recorded_between(
+            "2026-08-19T00:00:00Z", "2026-08-19T19:45:00+05:30"
+        ) == []
+        assert len(manager.query_recorded_between(
+            "2026-08-19T00:00:00Z", "2026-08-19T19:50:00+05:30"
+        )) == 1
+
+    def test_legacy_and_offset_bearing_entries_are_both_found_and_ordered(self):
+        manager = self._manager_with([
+            "2026-08-19T14:19:05+00:00",     # written after #1114
+            "2026-08-19T14:19:04",           # written before it, meaning UTC
+        ])
+
+        found = manager.query_recorded_between(
+            "2026-08-19T14:00:00Z", "2026-08-19T15:00:00Z"
+        )
+        assert [e["entity_id"] for e in found] == ["e1", "e0"]
+
+    def test_audit_log_since_reads_a_naive_bound_as_utc(self):
+        manager = self._manager_with([
+            "2026-08-19T14:19:05+00:00",
+            "2026-08-19T09:00:00",
+        ])
+
+        recent = manager.audit_log(since="2026-08-19T14:19:05", format="json")
+        assert [e["entity_id"] for e in recent] == ["e0"]
+
+    def test_an_unreadable_bound_falls_back_to_the_previous_behaviour(self):
+        """A call that used to work with a non-timestamp bound must not raise."""
+        manager = self._manager_with(["2026-08-19T14:19:04+00:00"])
+
+        assert manager.query_recorded_between("not-a-date", "also-not") == []
+        assert manager.audit_log(since="not-a-date", format="json") == []

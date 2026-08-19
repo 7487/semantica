@@ -349,6 +349,36 @@ def utc_now_iso() -> str:
     return utc_now().isoformat()
 
 
+def to_utc_datetime(value: Union[str, datetime, None]) -> Optional[datetime]:
+    """
+    Read an ISO 8601 timestamp as a timezone-aware UTC instant.
+
+    Timestamps written before #1114 carry no offset. They were produced by
+    ``datetime.utcnow()``, so a missing offset is read as UTC: that keeps a
+    stored naive value and the same instant written with an offset comparing
+    equal, instead of ordering by how the timestamp happens to be spelled.
+
+    Args:
+        value: ISO 8601 string or datetime. ``Z`` is accepted as the offset.
+
+    Returns:
+        Timezone-aware UTC datetime, or None if the value cannot be read as a
+        timestamp, so callers can fall back rather than raise on stored data
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def parse_timestamp(timestamp_str: str, format_str: Optional[str] = None) -> datetime:
     """
     Parse timestamp string to datetime.
