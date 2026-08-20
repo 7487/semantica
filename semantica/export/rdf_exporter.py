@@ -277,6 +277,61 @@ class RDFSerializer:
 
         self.logger.debug("RDF serializer initialized")
 
+    @staticmethod
+    def _escape_turtle_literal(value: str) -> str:
+        """Escape a string for use inside a Turtle/N-Triples double-quoted literal.
+
+        Follows the RDF 1.1 Turtle grammar for STRING_LITERAL_QUOTE: backslash
+        must be escaped first, then the double quote and the recognized control
+        characters. This prevents literal breakout and injection.
+        """
+        return (
+            value.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+            .replace("\t", "\\t")
+        )
+
+    @staticmethod
+    def _escape_xml_text(value: str) -> str:
+        """Escape a string for safe inclusion in RDF/XML character data."""
+        from xml.sax.saxutils import escape
+
+        # escape() handles &, <, > by default; add quotes for attribute safety.
+        return escape(value, {'"': "&quot;", "'": "&apos;"})
+
+    @staticmethod
+    def _local_name_from_id(identifier: str) -> str:
+        """Derive a human-readable local name from an entity identifier.
+
+        Handles HTTP(S)/IRI identifiers (path segments and fragments, tolerating
+        trailing slashes) as well as compact/CURIE and URN-style identifiers.
+        """
+        raw = str(identifier).strip()
+        if not raw:
+            return ""
+
+        # Prefer a fragment if present (e.g. http://ex.org/onto#acme -> acme).
+        if "#" in raw:
+            candidate = raw.rsplit("#", 1)[-1]
+            if candidate:
+                return candidate
+
+        # For IRIs/paths, take the last non-empty path segment.
+        if "/" in raw:
+            segment = raw.rstrip("/").rsplit("/", 1)[-1]
+            if segment:
+                return segment
+
+        # Fall back to the tail of a CURIE/URN (e.g. urn:x:acme, semantica:acme).
+        if ":" in raw:
+            candidate = raw.rsplit(":", 1)[-1]
+            if candidate:
+                return candidate
+
+        return raw
+
     def convert_kg_to_rdf(self, knowledge_graph: Dict[str, Any]) -> Dict[str, Any]:
         """
         Convert knowledge graph to RDF data structure.
@@ -316,8 +371,11 @@ class RDFSerializer:
                 if "name" in norm_entity:
                     norm_entity["label"] = norm_entity["name"]
                 elif "id" in norm_entity:
-                    # Use ID part as label if no name/text
-                    norm_entity["label"] = str(norm_entity["id"]).split(":")[-1]
+                    # Derive a readable label from the identifier's local name
+                    # (fragment/last path segment/CURIE tail). See #1097.
+                    local_name = self._local_name_from_id(norm_entity["id"])
+                    if local_name:
+                        norm_entity["label"] = local_name
 
             rdf_data["entities"].append(norm_entity)
 
@@ -398,7 +456,9 @@ class RDFSerializer:
             confidence = entity.get("confidence", 1.0)
 
             lines.append(f"<{entity_id}> a <{entity_type}> ;")
-            lines.append(f'    semantica:text "{text}" ;')
+            lines.append(
+                f'    semantica:text "{self._escape_turtle_literal(text)}" ;'
+            )
             lines.append(f"    semantica:confidence {confidence} .")
             lines.append("")
 
@@ -532,7 +592,9 @@ class RDFSerializer:
             # RDF/XML syntax: rdf:Description with rdf:about
             lines.append(f'  <rdf:Description rdf:about="{entity_id}">')
             lines.append(f'    <rdf:type rdf:resource="{entity_type}"/>')
-            lines.append(f"    <semantica:text>{text}</semantica:text>")
+            lines.append(
+                f"    <semantica:text>{self._escape_xml_text(text)}</semantica:text>"
+            )
             lines.append(
                 f"    <semantica:confidence>{confidence}</semantica:confidence>"
             )
@@ -692,7 +754,7 @@ class RDFSerializer:
             # Text property
             text = entity.get("text") or entity.get("label", "")
             if text:
-                safe_text = text.replace('"', '\\"').replace("\n", "\\n")
+                safe_text = self._escape_turtle_literal(text)
                 lines.append(
                     f'{subject} {expand_uri("semantica:text")} "{safe_text}" .'
                 )
