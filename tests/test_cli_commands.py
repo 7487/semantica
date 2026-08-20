@@ -1876,11 +1876,19 @@ class TestDoctorEmbeddings:
         assert "Embeddings (sentence-transformers)" in checks
         assert "Embeddings (fastembed)" in checks
 
-    def test_import_failure_is_fail_status_with_hint(self, runner):
+    def test_import_failure_is_fail_status_with_hint(self, runner, monkeypatch):
+        # Force the 'import sentence_transformers' inside _embedding_backend to
+        # raise ImportError regardless of whether the package is installed on
+        # this machine.  Setting a module entry to None is the standard Python
+        # mechanism: any subsequent 'import <name>' raises
+        # "import of <name> halted; None in sys.modules".
+        monkeypatch.setitem(
+            __import__("sys").modules, "sentence_transformers", None
+        )
         checks = self._doctor_checks(runner)
         st = checks["Embeddings (sentence-transformers)"]
-        if st["status"] == "fail":
-            assert st["hint"] == "pip install sentence-transformers"
+        assert st["status"] == "fail"
+        assert st["hint"] == "pip install sentence-transformers"
 
     def test_deep_probe_detects_fallback_active(self, runner, monkeypatch):
         self._with_fake_st(monkeypatch)
