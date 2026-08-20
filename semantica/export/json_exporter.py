@@ -34,6 +34,25 @@ from ..utils.progress_tracker import get_progress_tracker
 from .rdf_exporter import SEMANTICA_NS, mint_entity_iri, mint_relationship_iri
 
 
+def _is_jsonld_document(data: Dict[str, Any]) -> bool:
+    """
+    Report whether a dictionary is already a JSON-LD document.
+
+    ``export_knowledge_graph`` converts a knowledge graph to JSON-LD and then
+    hands the finished document to ``export()``, which converted it a second
+    time. The converted document no longer carries ``entities``/
+    ``relationships`` keys, so the second pass treated it as an opaque value and
+    buried it inside ``@graph``.
+
+    Args:
+        data: Dictionary to test
+
+    Returns:
+        True when the dictionary declares a JSON-LD context
+    """
+    return "@context" in data
+
+
 class JSONExporter:
     """
     JSON exporter for knowledge graphs and semantic data.
@@ -397,7 +416,16 @@ class JSONExporter:
 
         # Convert data based on type
         if isinstance(data, dict):
-            if "entities" in data or "relationships" in data:
+            if _is_jsonld_document(data):
+                # Already JSON-LD: merge it rather than nesting it. Wrapping a
+                # converted document in @graph re-typed the payload as a named
+                # graph and doubled the @context, which is what happened when
+                # export_knowledge_graph handed its own output back to export().
+                context = data.get("@context")
+                if isinstance(context, dict):
+                    jsonld["@context"].update(context)
+                jsonld.update({k: v for k, v in data.items() if k != "@context"})
+            elif "entities" in data or "relationships" in data:
                 # Knowledge graph structure - use specialized conversion
                 jsonld.update(self._convert_kg_to_jsonld(data, **options))
             else:
@@ -412,12 +440,45 @@ class JSONExporter:
 
         # Add metadata and provenance if requested
         if include_metadata:
-            jsonld["@id"] = f"https://semantica.dev/data/{utc_now_iso()}"
-            if include_provenance:
-                jsonld["semantica:exportedAt"] = utc_now_iso()
-                jsonld["semantica:format"] = "json-ld"
+            self._attach_document_metadata(jsonld, include_provenance)
 
         return jsonld
+
+    @staticmethod
+    def _attach_document_metadata(
+        jsonld: Dict[str, Any], include_provenance: bool
+    ) -> None:
+        """
+        Attach the export's own metadata without naming the graph.
+
+        A top-level ``@id`` alongside a top-level ``@graph`` is a *named graph*:
+        the members of ``@graph`` become quads named by that ``@id`` and leave
+        the default graph empty. ``rdflib.Graph.parse()`` keeps only the default
+        graph, so every statement in the export was discarded without an error
+        (2 of 21 statements survived a two-entity knowledge graph). When the
+        payload lives in ``@graph``, the document node goes in beside it as one
+        more node; otherwise it is the document itself.
+
+        Args:
+            jsonld: Document being built, modified in place
+            include_provenance: Whether to record how and when it was exported
+        """
+        document: Dict[str, Any] = {}
+        # Do not overwrite an identifier the payload already carries: the
+        # knowledge-graph conversion names its own document node.
+        if "@id" not in jsonld:
+            document["@id"] = f"https://semantica.dev/data/{utc_now_iso()}"
+        if include_provenance:
+            document["semantica:exportedAt"] = utc_now_iso()
+            document["semantica:format"] = "json-ld"
+
+        if "@graph" in jsonld:
+            document.setdefault(
+                "@id", f"https://semantica.dev/data/{utc_now_iso()}"
+            )
+            jsonld["@graph"] = list(jsonld["@graph"]) + [document]
+        else:
+            jsonld.update(document)
 
     def _convert_kg_to_json(self, kg: Dict[str, Any], **options) -> Dict[str, Any]:
         """
