@@ -141,3 +141,78 @@ def test_document_provenance_still_reaches_the_default_graph(tmp_path):
         str(s) for s in graph.subjects()
     }
     assert {"A", "B"} <= {str(o) for o in graph.objects()}
+
+
+# The document a caller hands to export() need not be one Semantica built, and
+# the branch that recognises an already-converted document has to survive every
+# shape JSON-LD allows. Each of the four cases below regressed when that branch
+# was first written.
+
+
+def test_a_url_valued_context_is_not_thrown_away(tmp_path):
+    """@context may be a URL or an array, not only an object."""
+    payload = {
+        "@context": "https://schema.org/",
+        "@id": "https://example.org/thing",
+        "name": "Acme Corp",
+    }
+    path = _write(payload, tmp_path)
+    context = json.loads(path.read_text())["@context"]
+
+    flattened = context if isinstance(context, list) else [context]
+    assert "https://schema.org/" in flattened, (
+        "the caller's context was replaced by Semantica's defaults, "
+        "which silently changes how every term expands"
+    )
+
+
+def test_a_graph_given_as_one_node_object_survives(tmp_path):
+    """@graph may be a single node object; list() on it yields its keys."""
+    payload = {
+        "@context": {"rdfs": "http://www.w3.org/2000/01/rdf-schema#"},
+        "@graph": {"@id": "https://example.org/only", "rdfs:label": "Only"},
+    }
+    path = _write(payload, tmp_path)
+
+    graph = Graph()
+    graph.parse(str(path), format="json-ld")
+    assert "Only" in {str(o) for o in graph.objects()}
+
+
+def test_a_caller_supplied_named_graph_keeps_our_provenance_readable(tmp_path):
+    """A deliberate named graph stays named, but must not swallow the export's own metadata."""
+    payload = {
+        "@context": {"rdfs": "http://www.w3.org/2000/01/rdf-schema#"},
+        "@id": "https://example.org/named",
+        "@graph": [{"@id": "https://example.org/n1", "rdfs:label": "N1"}],
+    }
+    path = _write(payload, tmp_path)
+    document = json.loads(path.read_text())
+
+    assert "@id" not in document or "@graph" not in document
+
+    graph = Graph()
+    graph.parse(str(path), format="json-ld")
+    predicates = {str(p) for p in graph.predicates()}
+    assert "https://semantica.dev/ns#exportedAt" in predicates, (
+        "the export's provenance was written inside the caller's named graph, "
+        "where a default-graph reader cannot see it"
+    )
+
+    dataset = Dataset()
+    dataset.parse(str(path), format="json-ld")
+    names = {str(c.identifier) for c in dataset.graphs()}
+    assert "https://example.org/named" in names, "the caller's graph lost its name"
+
+
+def test_a_knowledge_graph_carrying_a_context_is_still_converted(tmp_path):
+    """entities/relationships must win over the already-JSON-LD branch."""
+    payload = dict(KG, **{"@context": {"ex": "https://example.org/ns#"}})
+    path = _write(payload, tmp_path)
+    document = json.loads(path.read_text())
+
+    assert "semantica:entities" in document, (
+        "the knowledge graph skipped its own conversion, so entity ids, "
+        "endpoints, types and confidences were left as raw keys"
+    )
+    assert "entities" not in document
