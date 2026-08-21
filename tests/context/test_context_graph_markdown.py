@@ -1,9 +1,13 @@
+import os
+import stat
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
 import semantica.context.context_graph as context_graph_module
+from semantica.change_management.managers import TemporalVersionManager
 from semantica.context.context_graph import ContextEdge, ContextGraph, ContextNode
 
 
@@ -244,7 +248,6 @@ def test_markdown_export_rejects_duplicate_edge_ids_before_writing(tmp_path):
     [
         ("unsupported-version", "Unsupported ContextGraph Markdown version"),
         ("duplicate-edge", "Duplicate Markdown edge ID"),
-        ("dangling-edge", "do not have node files"),
         ("duplicate-node", "Duplicate Markdown node ID"),
         ("cyclic-skos", "SKOS hierarchy contains a cycle"),
     ],
@@ -262,8 +265,6 @@ def test_invalid_markdown_does_not_mutate_existing_graph(
         manifest["version"] = 2
     elif corruption == "duplicate-edge":
         manifest["edges"].append(dict(manifest["edges"][0]))
-    elif corruption == "dangling-edge":
-        manifest["edges"][0]["target"] = "missing-node"
     elif corruption == "duplicate-node":
         original = _node_file(export_path, "evidence-1")
         (original.parent / "duplicate.md").write_bytes(original.read_bytes())
@@ -298,6 +299,26 @@ def test_invalid_markdown_does_not_mutate_existing_graph(
         target.load_from_file(export_path, format="markdown")
 
     assert _normalized_state(target) == before
+
+
+def test_markdown_import_creates_json_compatible_stub_nodes_for_dangling_edges(
+    tmp_path,
+):
+    source, _, _ = _sample_graph()
+    export_path = tmp_path / "dangling-edge"
+    source.save_to_file(export_path, format="markdown")
+    manifest_path = export_path / "graph.md"
+    manifest, manifest_body = _read_markdown(manifest_path)
+    manifest["edges"][0]["target"] = "missing-node"
+    _write_markdown(manifest_path, manifest, manifest_body)
+
+    restored = ContextGraph(advanced_analytics=False)
+    restored.load_from_file(export_path, format="markdown")
+
+    stub = restored.nodes["missing-node"]
+    assert stub.node_type == "entity"
+    assert stub.content == "missing-node"
+    assert any(edge.target_id == "missing-node" for edge in restored.edges)
 
 
 @pytest.mark.parametrize(
@@ -373,6 +394,41 @@ def test_markdown_export_rejects_unrelated_graph_markdown_file(tmp_path):
         )
 
     assert unrelated.exists()
+
+
+@pytest.mark.parametrize("extra_location", ["root", "nodes"])
+def test_markdown_export_refuses_managed_directory_with_untracked_files(
+    tmp_path, extra_location
+):
+    graph = ContextGraph(advanced_analytics=False)
+    graph.add_node("node-1", "Note", "Body")
+    destination = tmp_path / "existing"
+    graph.save_to_file(destination, format="markdown")
+    parent = destination if extra_location == "root" else destination / "nodes"
+    human_file = parent / "human-notes.txt"
+    human_file.write_text("do not delete", encoding="utf-8")
+    original_contents = _directory_contents(destination)
+
+    with pytest.raises(ValueError, match="not a managed ContextGraph export"):
+        graph.save_to_file(destination, format="markdown")
+
+    assert _directory_contents(destination) == original_contents
+
+
+def test_markdown_export_refuses_noncanonical_node_layout(tmp_path):
+    graph = ContextGraph(advanced_analytics=False)
+    graph.add_node("node-1", "Note", "Body")
+    destination = tmp_path / "existing"
+    graph.save_to_file(destination, format="markdown")
+    canonical = _node_file(destination, "node-1")
+    renamed = canonical.with_name("human-name.md")
+    canonical.rename(renamed)
+    original_contents = _directory_contents(destination)
+
+    with pytest.raises(ValueError, match="not a managed ContextGraph export"):
+        graph.save_to_file(destination, format="markdown")
+
+    assert _directory_contents(destination) == original_contents
 
 
 def test_markdown_export_preserves_manifest_inspection_errors(tmp_path, monkeypatch):
@@ -456,7 +512,7 @@ def test_markdown_export_preserves_publish_error_when_restore_fails(
     assert not list(tmp_path.glob(".graph.staging-*"))
 
 
-def test_markdown_load_rebuilds_indexes_and_emits_one_reload_event(tmp_path):
+def test_markdown_load_rebuilds_indexes_and_emits_json_compatible_events(tmp_path):
     source, _, _ = _sample_graph()
     destination = tmp_path / "graph"
     source.save_to_file(destination, format="markdown")
@@ -471,13 +527,27 @@ def test_markdown_load_rebuilds_indexes_and_emits_one_reload_event(tmp_path):
     assert target.node_type_index["Policy"] == {"policy/\u6771\u4eac"}
     assert target.edge_type_index["SUPPORTS"][0].edge_id == "edge-supports"
     assert target._adjacency["evidence-1"][0].target_id == "policy/\u6771\u4eac"
-    assert events == [
-        (
-            "RELOAD_GRAPH",
-            "graph-primary",
-            {"node_count": len(target.nodes), "edge_count": len(target.edges)},
-        )
-    ]
+    assert [event[0] for event in events] == ["ADD_NODE"] * len(target.nodes) + [
+        "ADD_EDGE"
+    ] * len(target.edges)
+    assert {event[1] for event in events if event[0] == "ADD_NODE"} == set(target.nodes)
+    assert {event[1] for event in events if event[0] == "ADD_EDGE"} == {
+        edge.edge_id for edge in target.edges
+    }
+
+
+def test_markdown_load_records_granular_change_manager_history(tmp_path):
+    source, _, _ = _sample_graph()
+    destination = tmp_path / "graph"
+    source.save_to_file(destination, format="markdown")
+    target = ContextGraph(advanced_analytics=False)
+    manager = TemporalVersionManager()
+    manager.attach_to_graph(target)
+
+    target.load_from_file(destination, format="markdown")
+
+    assert manager.get_node_history("evidence-1")[0]["operation"] == "ADD_NODE"
+    assert manager.get_node_history("edge-supports")[0]["operation"] == "ADD_EDGE"
 
 
 def test_markdown_export_rejects_recursive_metadata(tmp_path):
@@ -520,6 +590,74 @@ def test_markdown_import_and_export_reject_symlinks(tmp_path):
         )
 
 
+def test_markdown_import_and_export_reject_windows_junctions(tmp_path, monkeypatch):
+    graph = ContextGraph(advanced_analytics=False)
+    graph.add_node("node-1", "Note", "Body")
+    export_path = tmp_path / "junction"
+    graph.save_to_file(export_path, format="markdown")
+
+    monkeypatch.setattr(
+        os.path,
+        "isjunction",
+        lambda candidate: Path(candidate) == export_path,
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="junction"):
+        ContextGraph(advanced_analytics=False).load_from_file(
+            export_path, format="markdown"
+        )
+    with pytest.raises(ValueError, match="junction"):
+        graph.save_to_file(export_path, format="markdown")
+
+
+def test_markdown_import_rejects_windows_reparse_point_fallback(tmp_path, monkeypatch):
+    source = tmp_path / "reparse-point"
+    source.mkdir()
+    real_lstat = os.lstat
+
+    class ReparseStat:
+        st_file_attributes = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+    monkeypatch.delattr(os.path, "isjunction", raising=False)
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    monkeypatch.setattr(
+        os,
+        "lstat",
+        lambda candidate: (
+            ReparseStat() if Path(candidate) == source else real_lstat(candidate)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="junction"):
+        ContextGraph(advanced_analytics=False).load_from_file(source, format="markdown")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows junctions")
+def test_markdown_import_rejects_real_windows_junction(tmp_path):
+    graph = ContextGraph(advanced_analytics=False)
+    graph.add_node("node-1", "Note", "Body")
+    outside = tmp_path / "outside"
+    graph.save_to_file(outside, format="markdown")
+    source = tmp_path / "junction"
+    result = subprocess.run(
+        ["cmd.exe", "/c", "mklink", "/J", str(source), str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"could not create Windows junction: {result.stderr}")
+
+    try:
+        with pytest.raises(ValueError, match="junction"):
+            ContextGraph(advanced_analytics=False).load_from_file(
+                source, format="markdown"
+            )
+    finally:
+        os.rmdir(source)
+
+
 @pytest.mark.skipif(
     not hasattr(context_graph_module.os, "O_NOFOLLOW"),
     reason="O_NOFOLLOW is unavailable on this platform",
@@ -557,8 +695,14 @@ def test_json_remains_default_and_unknown_format_is_rejected(tmp_path):
     graph.save_to_file(json_path)
 
     restored = ContextGraph(advanced_analytics=False)
+    restored._analytics_cache["stale"] = {"value": True}
     restored.load_from_file(json_path)
     assert "node-1" in restored.nodes
+    assert restored._analytics_cache == {}
+
+    before = _normalized_state(restored)
+    restored.load_from_file(tmp_path / "missing", format="markdown")
+    assert _normalized_state(restored) == before
 
     with pytest.raises(ValueError, match="Unsupported context graph"):
         graph.save_to_file(tmp_path / "graph", format="html")

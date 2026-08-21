@@ -105,30 +105,31 @@ Production Use Cases:
     - Business: Workflow decisions, policy compliance, audit trails
 """
 
-from collections import defaultdict, deque
 import copy
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
 import errno
 import hashlib
+import itertools
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import stat
 import tempfile
 import threading
-import itertools
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import uuid
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import yaml
 
+from ..utils.helpers import classify_path_distance
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
-from ..utils.helpers import classify_path_distance
 from ..utils.skos import is_skos_hierarchy_edge, validate_skos_hierarchy
+from ._markdown_filesystem import find_filesystem_link
 from .entity_linker import EntityLinker
 
 
@@ -171,9 +172,15 @@ _UniqueKeySafeLoader.add_constructor(
 # Optional imports for advanced features
 try:
     from ..kg import (
-        GraphBuilder, GraphAnalyzer, CentralityCalculator, CommunityDetector,
-        PathFinder, NodeEmbedder, SimilarityCalculator, LinkPredictor,
-        ConnectivityAnalyzer
+        CentralityCalculator,
+        CommunityDetector,
+        ConnectivityAnalyzer,
+        GraphAnalyzer,
+        GraphBuilder,
+        LinkPredictor,
+        NodeEmbedder,
+        PathFinder,
+        SimilarityCalculator,
     )
     KG_AVAILABLE = True
 except ImportError:
@@ -1084,7 +1091,17 @@ class ContextGraph:
         """
         normalized_format = self._normalize_persistence_format(format)
         if normalized_format == "markdown":
-            self._load_markdown_directory(Path(path))
+            markdown_path = Path(path)
+            linked_component = find_filesystem_link(markdown_path)
+            if linked_component is not None:
+                raise ValueError(
+                    "Refusing to import Markdown symbolic link or junction: "
+                    f"{linked_component}"
+                )
+            if not markdown_path.exists():
+                self.logger.warning(f"File not found: {path}")
+                return
+            self._load_markdown_directory(markdown_path)
             self.logger.info(f"Loaded context graph Markdown from {path}")
             return
 
@@ -1115,6 +1132,7 @@ class ContextGraph:
             self.edge_type_index.clear()
             self._linked_graphs.clear()
             self._unresolved_links.clear()
+            self._analytics_cache.clear()
 
             if "graph_id" in data:
                 self.graph_id = data["graph_id"]
@@ -1161,28 +1179,25 @@ class ContextGraph:
     def _save_markdown_directory(self, destination: Path) -> None:
         if not destination.name:
             raise ValueError("Markdown export destination cannot be a filesystem root.")
-        if destination.is_symlink():
+        linked_component = find_filesystem_link(destination)
+        if linked_component is not None:
             raise ValueError(
-                f"Refusing to replace Markdown symbolic link: {destination}"
+                "Refusing to replace Markdown symbolic link or junction: "
+                f"{linked_component}"
             )
         if destination.exists() and not destination.is_dir():
             raise ValueError(
                 f"Markdown export destination is not a directory: {destination}"
             )
         if destination.exists() and any(destination.iterdir()):
-            manifest = destination / self._MARKDOWN_MANIFEST
             try:
-                document = self._read_markdown_file(manifest)
-                frontmatter, _ = self._parse_markdown_document(
-                    document, str(manifest)
-                )
-                is_managed = (
-                    frontmatter.get("format") == self._MARKDOWN_FORMAT
-                    and not isinstance(frontmatter.get("version"), bool)
-                    and frontmatter.get("version") == self._MARKDOWN_VERSION
+                self._parse_markdown_directory(
+                    destination, require_canonical_layout=True
                 )
             except (FileNotFoundError, ValueError):
                 is_managed = False
+            else:
+                is_managed = True
             if not is_managed:
                 raise ValueError(
                     "Refusing to replace a non-empty directory that is not a "
@@ -1191,6 +1206,12 @@ class ContextGraph:
 
         manifest_document, node_documents = self._markdown_documents()
         destination.parent.mkdir(parents=True, exist_ok=True)
+        linked_component = find_filesystem_link(destination.parent)
+        if linked_component is not None:
+            raise ValueError(
+                "Refusing to export through Markdown symbolic link or junction: "
+                f"{linked_component}"
+            )
         staging_path = Path(
             tempfile.mkdtemp(
                 dir=str(destination.parent), prefix=f".{destination.name}.staging-"
@@ -1449,62 +1470,8 @@ class ContextGraph:
         return value
 
     def _load_markdown_directory(self, source: Path) -> None:
-        manifest_document, node_documents = self._read_markdown_directory(source)
-        manifest, _ = self._parse_markdown_document(
-            manifest_document, str(source / self._MARKDOWN_MANIFEST)
-        )
-        graph_id, edges, links = self._parse_markdown_manifest(manifest, source)
-
-        nodes_by_id: Dict[str, ContextNode] = {}
-        for node_source, document in node_documents:
-            frontmatter, body = self._parse_markdown_document(document, node_source)
-            node = self._parse_markdown_node(frontmatter, body, node_source)
-            if node.node_id in nodes_by_id:
-                raise ValueError(
-                    f"Duplicate Markdown node ID {node.node_id!r} in {node_source}."
-                )
-            nodes_by_id[node.node_id] = node
-
-        missing_endpoints = sorted(
-            {
-                endpoint
-                for edge in edges
-                for endpoint in (edge.source_id, edge.target_id)
-                if endpoint not in nodes_by_id
-            }
-        )
-        if missing_endpoints:
-            missing = ", ".join(repr(endpoint) for endpoint in missing_endpoints)
-            raise ValueError(
-                f"Invalid ContextGraph Markdown: edge endpoint(s) {missing} "
-                "do not have node files."
-            )
-
-        hierarchy_edges = [
-            {
-                "source": edge.source_id,
-                "target": edge.target_id,
-                "type": edge.edge_type,
-            }
-            for edge in edges
-            if is_skos_hierarchy_edge(edge.to_dict())
-        ]
-        if hierarchy_edges:
-            validate_skos_hierarchy(hierarchy_edges, [])
-
-        unresolved_links = {}
-        for link in links:
-            link_id = link["link_id"]
-            if link_id in unresolved_links:
-                raise ValueError(
-                    f"Duplicate cross-graph link ID {link_id!r} in graph manifest."
-                )
-            if link["source_node_id"] not in nodes_by_id:
-                raise ValueError(
-                    f"Cross-graph link {link_id!r} references missing source node "
-                    f"{link['source_node_id']!r}."
-                )
-            unresolved_links[link_id] = link
+        parsed_state = self._parse_markdown_directory(source)
+        graph_id, nodes_by_id, edges, unresolved_links = parsed_state
 
         adjacency: Dict[str, List[ContextEdge]] = defaultdict(list)
         node_type_index: Dict[str, Set[str]] = defaultdict(set)
@@ -1533,22 +1500,114 @@ class ContextGraph:
             self._analytics_cache.clear()
 
         if self.mutation_callback and not self._suspend_mutation_callback:
-            try:
-                self.mutation_callback(
-                    "RELOAD_GRAPH",
-                    graph_id,
-                    {"node_count": len(nodes_by_id), "edge_count": len(edges)},
+            mutation_events = [
+                ("ADD_NODE", node.node_id, node.to_dict())
+                for node in nodes_by_id.values()
+            ]
+            mutation_events.extend(
+                ("ADD_EDGE", edge.edge_id, edge.to_dict()) for edge in edges
+            )
+            for operation, entity_id, payload in mutation_events:
+                try:
+                    self.mutation_callback(operation, entity_id, payload)
+                except Exception as exc:
+                    self.logger.warning(
+                        "Audit trail callback failed for Markdown graph load "
+                        "%s %s: %s",
+                        operation,
+                        entity_id,
+                        exc,
+                    )
+
+    def _parse_markdown_directory(
+        self, source: Path, require_canonical_layout: bool = False
+    ) -> Tuple[
+        str,
+        Dict[str, ContextNode],
+        List[ContextEdge],
+        Dict[str, Dict[str, str]],
+    ]:
+        manifest_document, node_documents = self._read_markdown_directory(
+            source, require_canonical_layout=require_canonical_layout
+        )
+        manifest, _ = self._parse_markdown_document(
+            manifest_document, str(source / self._MARKDOWN_MANIFEST)
+        )
+        graph_id, edges, links = self._parse_markdown_manifest(manifest, source)
+
+        nodes_by_id: Dict[str, ContextNode] = {}
+        for node_source, document in node_documents:
+            frontmatter, body = self._parse_markdown_document(document, node_source)
+            node = self._parse_markdown_node(frontmatter, body, node_source)
+            if node.node_id in nodes_by_id:
+                raise ValueError(
+                    f"Duplicate Markdown node ID {node.node_id!r} in {node_source}."
                 )
-            except Exception as exc:
-                self.logger.warning(
-                    "Audit trail callback failed for Markdown graph load: %s", exc
+            node_filename = Path(node_source).name
+            if (
+                require_canonical_layout
+                and node_filename != self._node_markdown_filename(node.node_id)
+            ):
+                raise ValueError(
+                    "Invalid managed ContextGraph export: node file "
+                    f"{node_filename!r} is not the canonical filename "
+                    f"for node {node.node_id!r}."
                 )
+            nodes_by_id[node.node_id] = node
+
+        missing_endpoints = sorted(
+            {
+                endpoint
+                for edge in edges
+                for endpoint in (edge.source_id, edge.target_id)
+                if endpoint not in nodes_by_id
+            }
+        )
+        if missing_endpoints and require_canonical_layout:
+            missing = ", ".join(repr(endpoint) for endpoint in missing_endpoints)
+            raise ValueError(
+                "Invalid managed ContextGraph export: edge endpoint(s) "
+                f"{missing} do not have node files."
+            )
+        for endpoint in missing_endpoints:
+            nodes_by_id[endpoint] = ContextNode(endpoint, "entity", endpoint)
+
+        hierarchy_edges = [
+            {
+                "source": edge.source_id,
+                "target": edge.target_id,
+                "type": edge.edge_type,
+            }
+            for edge in edges
+            if is_skos_hierarchy_edge(edge.to_dict())
+        ]
+        if hierarchy_edges:
+            validate_skos_hierarchy(hierarchy_edges, [])
+
+        unresolved_links = {}
+        for link in links:
+            link_id = link["link_id"]
+            if link_id in unresolved_links:
+                raise ValueError(
+                    f"Duplicate cross-graph link ID {link_id!r} in graph manifest."
+                )
+            if link["source_node_id"] not in nodes_by_id:
+                raise ValueError(
+                    f"Cross-graph link {link_id!r} references missing source node "
+                    f"{link['source_node_id']!r}."
+                )
+            unresolved_links[link_id] = link
+        return graph_id, nodes_by_id, edges, unresolved_links
 
     def _read_markdown_directory(
-        self, source: Path
+        self, source: Path, require_canonical_layout: bool = False
     ) -> Tuple[str, List[Tuple[str, str]]]:
-        if source.is_symlink():
-            raise ValueError(f"Refusing to import Markdown symbolic link: {source}")
+        linked_component = find_filesystem_link(source)
+        if linked_component is not None:
+            raise ValueError(
+                "Refusing to import Markdown symbolic link or junction: "
+                f"{linked_component}"
+            )
         if not source.exists():
             raise FileNotFoundError(
                 f"ContextGraph Markdown import path does not exist: {source}"
@@ -1558,11 +1617,35 @@ class ContextGraph:
                 f"ContextGraph Markdown import path is not a directory: {source}"
             )
 
+        if require_canonical_layout:
+            expected_entries = {
+                self._MARKDOWN_MANIFEST,
+                self._MARKDOWN_NODES_DIRECTORY,
+            }
+            actual_entries = {path.name for path in source.iterdir()}
+            if actual_entries != expected_entries:
+                unexpected = sorted(actual_entries - expected_entries)
+                missing = sorted(expected_entries - actual_entries)
+                details = []
+                if unexpected:
+                    details.append(f"unexpected entries: {unexpected!r}")
+                if missing:
+                    details.append(f"missing entries: {missing!r}")
+                raise ValueError(
+                    "Invalid managed ContextGraph export layout ("
+                    + "; ".join(details)
+                    + ")."
+                )
+
         manifest_path = source / self._MARKDOWN_MANIFEST
         manifest_document = self._read_markdown_file(manifest_path)
         nodes_path = source / self._MARKDOWN_NODES_DIRECTORY
-        if nodes_path.is_symlink():
-            raise ValueError(f"Refusing to import Markdown symbolic link: {nodes_path}")
+        linked_component = find_filesystem_link(nodes_path)
+        if linked_component is not None:
+            raise ValueError(
+                "Refusing to import Markdown symbolic link or junction: "
+                f"{linked_component}"
+            )
         if not nodes_path.is_dir():
             raise ValueError(
                 f"ContextGraph Markdown nodes directory is missing: {nodes_path}"
@@ -1570,13 +1653,28 @@ class ContextGraph:
 
         node_paths = []
         for path in nodes_path.iterdir():
-            if path.is_symlink():
-                raise ValueError(f"Refusing to import Markdown symbolic link: {path}")
+            linked_component = find_filesystem_link(path)
+            if linked_component is not None:
+                raise ValueError(
+                    "Refusing to import Markdown symbolic link or junction: "
+                    f"{linked_component}"
+                )
             if path.suffix.lower() not in self._MARKDOWN_EXTENSIONS:
+                if require_canonical_layout:
+                    raise ValueError(
+                        "Invalid managed ContextGraph export: unexpected node "
+                        f"entry {path.name!r}."
+                    )
                 continue
             if not path.is_file():
                 raise ValueError(f"Markdown node path is not a regular file: {path}")
             node_paths.append(path)
+        linked_component = find_filesystem_link(nodes_path)
+        if linked_component is not None:
+            raise ValueError(
+                "Refusing to import Markdown symbolic link or junction: "
+                f"{linked_component}"
+            )
         node_paths.sort(key=lambda path: (path.name.casefold(), path.name))
         return manifest_document, [
             (str(path), self._read_markdown_file(path)) for path in node_paths
@@ -1584,17 +1682,23 @@ class ContextGraph:
 
     @staticmethod
     def _read_markdown_file(path: Path) -> str:
-        if path.is_symlink():
-            raise ValueError(f"Refusing to import Markdown symbolic link: {path}")
+        linked_component = find_filesystem_link(path)
+        if linked_component is not None:
+            raise ValueError(
+                "Refusing to import Markdown symbolic link or junction: "
+                f"{linked_component}"
+            )
         flags = os.O_RDONLY
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
             descriptor = os.open(path, flags)
         except OSError as exc:
-            if exc.errno == errno.ELOOP or path.is_symlink():
+            linked_component = find_filesystem_link(path)
+            if exc.errno == errno.ELOOP or linked_component is not None:
                 raise ValueError(
-                    f"Refusing to import Markdown symbolic link: {path}"
+                    "Refusing to import Markdown symbolic link or junction: "
+                    f"{linked_component or path}"
                 ) from exc
             if exc.errno == errno.ENOENT:
                 raise FileNotFoundError(f"Markdown file is missing: {path}") from exc
@@ -1605,6 +1709,12 @@ class ContextGraph:
             ) from exc
 
         try:
+            linked_component = find_filesystem_link(path)
+            if linked_component is not None:
+                raise ValueError(
+                    "Refusing to import Markdown symbolic link or junction: "
+                    f"{linked_component}"
+                )
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                 raise ValueError(f"Markdown path is not a regular file: {path}")
             with os.fdopen(descriptor, "r", encoding="utf-8") as input_file:
@@ -2523,8 +2633,9 @@ class ContextGraph:
 
     def _load_conversation(self, file_path: str) -> Dict[str, Any]:
         """Load conversation from file."""
-        from ..utils.helpers import read_json_file
         from pathlib import Path
+
+        from ..utils.helpers import read_json_file
 
         return read_json_file(Path(file_path))
 
@@ -3236,7 +3347,7 @@ class ContextGraph:
         """
         import uuid
         from datetime import datetime
-        
+
         # Input validation
         if not isinstance(category, str) or not category.strip():
             raise ValueError("Category must be a non-empty string")
