@@ -187,16 +187,53 @@ def _escape_literal(value: str) -> str:
 
 
 def _escape_xml(value: str) -> str:
-    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    """Escape a string for either XML element text or an attribute value.
+
+    The quotes matter. This helper feeds `rdf:about`, `rdf:resource` and
+    `xmlns:` attribute values, which are delimited by double quotes, so a value
+    carrying one would close the attribute early and produce a document that
+    does not parse. Escaping them in element text as well is harmless and
+    means one helper cannot be used in the wrong place.
+    """
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def _is_ncname(value: str) -> bool:
+    """Whether a string can be an XML NCName, which is what RDF/XML requires.
+
+    Checked over the ASCII range rather than the full XML production: the
+    grammar also admits combining characters and extenders, so this is
+    deliberately conservative. It refuses names it could have accepted, and it
+    never accepts one that would produce a document a parser rejects. The
+    earlier check tested only that the first character was not a digit, which
+    let through every other way a local name can fail to be a name.
+    """
+    if not value:
+        return False
+    if not (value[0].isascii() and (value[0].isalpha() or value[0] == "_")):
+        return False
+    return all(c.isascii() and (c.isalnum() or c in "._-") for c in value[1:])
 
 
 def _split_iri(iri: str) -> Optional[tuple]:
-    """Split an IRI into (namespace, local name) for RDF/XML's QName syntax."""
+    """Split an IRI into (namespace, local name) for RDF/XML's QName syntax.
+
+    Returns None when no split yields a usable local name. RDF/XML is the only
+    serialization here that cannot write an arbitrary predicate IRI, so this is
+    the one place a term can be unrepresentable, and the caller reports it
+    rather than dropping it quietly.
+    """
     for sep in ("#", "/"):
         index = iri.rfind(sep)
         if index != -1 and index + 1 < len(iri):
             local = iri[index + 1 :]
-            if local and not local[0].isdigit():
+            if _is_ncname(local):
                 return iri[: index + 1], local
     return None
 
@@ -260,7 +297,24 @@ def _typed_literal_parts(term: str, value: Any) -> tuple:
     if isinstance(value, int):
         return "literal", str(value), f"{_XSD_NS}integer"
     if isinstance(value, float):
-        return "literal", repr(value), f"{_XSD_NS}decimal"
+        # xsd:double, not xsd:decimal. `repr(1e-05)` is "1e-05" and
+        # `repr(float("nan"))` is "nan", and xsd:decimal admits neither the
+        # exponent form nor the special values, so typing a float as decimal
+        # produced lexicals a strict parser rejects. A Python float is an IEEE
+        # 754 double; xsd:double has legal lexicals for all of them, and it is
+        # also the honest claim, since nothing that arrived as a float was ever
+        # exact. `normalize_confidence` keeps xsd:decimal for confidence
+        # deliberately: that is a bounded score where exactness is meaningful
+        # and NaN is not a confidence at all.
+        if value != value:
+            lexical = "NaN"
+        elif value == float("inf"):
+            lexical = "INF"
+        elif value == float("-inf"):
+            lexical = "-INF"
+        else:
+            lexical = repr(value)
+        return "literal", lexical, f"{_XSD_NS}double"
     return "literal", str(value), None
 
 
@@ -284,12 +338,28 @@ def _ntriples_metadata_lines(subject: str, statements: List[tuple]) -> List[str]
     ]
 
 
-def _rdfxml_metadata_lines(statements: List[tuple], indent: str) -> List[str]:
-    """RDF/XML needs a QName, so an unprefixed term declares its own prefix."""
+def _rdfxml_metadata_lines(
+    statements: List[tuple], indent: str, logger: Any = None
+) -> List[str]:
+    """RDF/XML needs a QName, so an unprefixed term declares its own prefix.
+
+    A term with no QName form has no RDF/XML representation at all, and this is
+    the only serialization with that restriction. Skipping it quietly would
+    reintroduce, in one format, exactly the silent metadata loss this module
+    was changed to stop, so it is reported and the other three formats still
+    carry the statement in full.
+    """
     lines: List[str] = []
     for position, (term, value) in enumerate(statements):
         split = _split_iri(term)
         if split is None:
+            if logger is not None:
+                logger.warning(
+                    "Term %r has no QName form, so it cannot be written in "
+                    "RDF/XML and was omitted from that serialization only. "
+                    "Turtle, N-Triples and JSON-LD carry it in full.",
+                    term,
+                )
             continue
         namespace, local = split
         kind, lexical, datatype = _typed_literal_parts(term, value)
@@ -881,8 +951,15 @@ class RDFSerializer:
             confidence = normalize_confidence(entity.get("confidence", 1.0))
 
             # RDF/XML syntax: rdf:Description with rdf:about
-            lines.append(f'  <rdf:Description rdf:about="{entity_id}">')
-            lines.append(f'    <rdf:type rdf:resource="{entity_type}"/>')
+            # Attribute values are delimited by quotes, and both of these
+            # are caller input. Element text is left alone deliberately: that
+            # is #1098, and it is being fixed on its own path.
+            lines.append(
+                f'  <rdf:Description rdf:about="{_escape_xml(str(entity_id))}">'
+            )
+            lines.append(
+                f'    <rdf:type rdf:resource="{_escape_xml(str(entity_type))}"/>'
+            )
             lines.append(f"    <semantica:text>{text}</semantica:text>")
             if confidence is None:
                 self.logger.warning(
@@ -900,6 +977,7 @@ class RDFSerializer:
                         entity.get("metadata"), metadata_terms, self.logger
                     ),
                     "    ",
+                    self.logger,
                 )
             )
             lines.append("  </rdf:Description>")
@@ -913,8 +991,12 @@ class RDFSerializer:
             rel_type = rel.get("type", "semantica:related_to")
 
             # Relationship as property on source entity
-            lines.append(f'  <rdf:Description rdf:about="{source_id}">')
-            lines.append(f'    <{rel_type} rdf:resource="{target_id}"/>')
+            lines.append(
+                f'  <rdf:Description rdf:about="{_escape_xml(str(source_id))}">'
+            )
+            lines.append(
+                f'    <{rel_type} rdf:resource="{_escape_xml(str(target_id))}"/>'
+            )
             lines.append("  </rdf:Description>")
             lines.append("")
 
@@ -924,6 +1006,7 @@ class RDFSerializer:
                     rdf_data.get("metadata"), metadata_terms, self.logger
                 ),
                 "    ",
+                self.logger,
             )
             if graph_uri
             else []

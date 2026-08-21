@@ -98,7 +98,9 @@ def test_every_format_writes_the_same_metadata_triples():
     for fmt in FORMATS:
         g = _serialize(RDFSerializer(), fmt, GRAPH_WITH_METADATA)
         per_format[fmt] = {
-            (p, o) for s, p, o in g if str(p).startswith(SEMANTICA_NS) and "numEntities" in str(p)
+            (p, o)
+            for s, p, o in g
+            if str(p).startswith(SEMANTICA_NS) and "numEntities" in str(p)
         }
     assert len(set(map(frozenset, per_format.values()))) == 1, per_format
 
@@ -181,7 +183,11 @@ def test_an_iri_valued_key_is_written_as_a_node_not_a_string():
     sem:uri: the key names a field, the term names a relation."""
     data = {
         "entities": [
-            {"id": ENTITY_IRI, "text": "Acme", "metadata": {"uri": "https://example.org/db"}}
+            {
+                "id": ENTITY_IRI,
+                "text": "Acme",
+                "metadata": {"uri": "https://example.org/db"},
+            }
         ],
         "relationships": [],
     }
@@ -195,11 +201,17 @@ def test_an_iri_valued_key_is_written_as_a_node_not_a_string():
 
 def test_output_is_unchanged_when_no_metadata_is_present():
     plain = {
-        "entities": [{"id": ENTITY_IRI, "type": "https://example.org/Org", "text": "Acme"}],
-        "relationships": [{"source_id": ENTITY_IRI, "target_id": "https://example.org/e2"}],
+        "entities": [
+            {"id": ENTITY_IRI, "type": "https://example.org/Org", "text": "Acme"}
+        ],
+        "relationships": [
+            {"source_id": ENTITY_IRI, "target_id": "https://example.org/e2"}
+        ],
     }
     serializer = RDFSerializer()
-    assert serializer.serialize_to_turtle(plain) == serializer.serialize_to_turtle(plain)
+    assert serializer.serialize_to_turtle(plain) == serializer.serialize_to_turtle(
+        plain
+    )
     g = _parse(serializer.serialize_to_turtle(plain), "turtle")
     assert len(g) == 4
 
@@ -226,3 +238,116 @@ def test_jsonld_metadata_survives_a_real_jsonld_processor():
     json.loads(raw)  # must be valid JSON before it can be valid JSON-LD
     g = _parse(raw, "json-ld")
     assert (URIRef(ENTITY_IRI), NUM_ENTITIES, Literal(3)) in g
+
+
+# --- Findings from the Qodo review of PR #1165 -----------------------------
+
+
+@pytest.mark.parametrize("fmt", FORMATS)
+@pytest.mark.parametrize(
+    "value", [1e-05, 1e300, 0.1, -0.0, float("nan"), float("inf"), float("-inf")]
+)
+def test_a_float_metadata_value_is_a_double_and_keeps_a_legal_lexical(fmt, value):
+    """`repr()` of a float is not an xsd:decimal lexical.
+
+    `repr(1e-05)` is "1e-05" and `repr(float("nan"))` is "nan", neither of which
+    xsd:decimal admits, so typing a float as decimal produced RDF a strict
+    parser rejects. A Python float is an IEEE 754 double, xsd:double has legal
+    lexicals for the exponent form and for the three special values, and saying
+    double is also the honest claim: nothing here was ever exact.
+    """
+    data = {
+        "entities": [
+            {"id": ENTITY_IRI, "text": "Acme", "metadata": {"num_entities": value}}
+        ],
+        "relationships": [],
+    }
+    g = _serialize(RDFSerializer(), fmt, data)
+    objects = list(g.objects(URIRef(ENTITY_IRI), NUM_ENTITIES))
+    assert len(objects) == 1, f"{fmt}: {objects}"
+    (written,) = objects
+    assert written.datatype == XSD.double, written.datatype
+    parsed = written.toPython()
+    if value != value:  # NaN
+        assert parsed != parsed
+    else:
+        assert parsed == value
+
+
+def test_every_format_agrees_on_a_float_metadata_value():
+    per_format = {}
+    for fmt in FORMATS:
+        g = _serialize(
+            RDFSerializer(),
+            fmt,
+            {
+                "entities": [
+                    {"id": ENTITY_IRI, "text": "A", "metadata": {"num_entities": 1e-05}}
+                ],
+                "relationships": [],
+            },
+        )
+        per_format[fmt] = {(p, o) for s, p, o in g if p == NUM_ENTITIES}
+    assert len(set(map(frozenset, per_format.values()))) == 1, per_format
+
+
+def test_a_term_rdfxml_cannot_name_is_refused_out_loud(caplog):
+    """RDF/XML needs a QName, and the PR's whole point is no silent drops.
+
+    A term whose local part is not an XML NCName has no RDF/XML form at all.
+    Skipping it quietly reintroduces, in one format, exactly the loss this
+    change exists to stop.
+    """
+    unnameable = "http://example.org/ns/123"
+    data = {
+        "entities": [
+            {"id": ENTITY_IRI, "text": "Acme", "metadata": {"reviewed_by": "fabio"}}
+        ],
+        "relationships": [],
+    }
+    with caplog.at_level("WARNING"):
+        xml = RDFSerializer().serialize_to_rdfxml(
+            data, metadata_terms={"reviewed_by": unnameable}
+        )
+    _parse(xml, "xml")  # must still be well-formed
+    messages = " ".join(r.getMessage() for r in caplog.records)
+    assert unnameable in messages
+    assert "RDF/XML" in messages
+
+
+@pytest.mark.parametrize("fmt", ["turtle", "ntriples", "jsonld"])
+def test_the_other_formats_still_carry_a_term_rdfxml_cannot_name(fmt):
+    """Only RDF/XML has the QName restriction; the rest write the full IRI."""
+    unnameable = "http://example.org/ns/123"
+    data = {
+        "entities": [
+            {"id": ENTITY_IRI, "text": "Acme", "metadata": {"reviewed_by": "fabio"}}
+        ],
+        "relationships": [],
+    }
+    g = _serialize(
+        RDFSerializer(), fmt, data, metadata_terms={"reviewed_by": unnameable}
+    )
+    assert (URIRef(ENTITY_IRI), URIRef(unnameable), Literal("fabio")) in g
+
+
+def test_a_quote_in_an_attribute_value_cannot_break_the_document():
+    """`_escape_xml` feeds attribute values, which are delimited by quotes.
+
+    Escaping only &, < and > leaves a caller-supplied value able to close the
+    attribute early and produce XML that does not parse.
+    """
+    data = {
+        "entities": [
+            {
+                "id": 'https://example.org/e"1',
+                "text": "Acme",
+                "metadata": {"uri": 'https://example.org/db"x'},
+            }
+        ],
+        "relationships": [],
+    }
+    xml = RDFSerializer().serialize_to_rdfxml(data)
+    from xml.dom.minidom import parseString
+
+    parseString(xml)  # well-formedness is the assertion
