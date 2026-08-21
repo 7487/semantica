@@ -24,7 +24,12 @@ import pytest
 # rdf:/rdfs: namespaces) and neither the code nor this test caught it,
 # since both had the same bug. Importing the real function makes that class
 # of drift impossible.
-from semantica.explorer.routes.sparql import _is_read_only_query
+# fastapi ships in the optional `explorer` extra, not in `dev`, so this module
+# must skip rather than fail collection when it is absent. The guard has to sit
+# above the import below, which pulls fastapi in transitively.
+pytest.importorskip("fastapi")
+
+from semantica.explorer.routes.sparql import _is_read_only_query  # noqa: E402
 
 
 class TestSparqlReadOnlyValidation:
