@@ -20,7 +20,7 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from dataclasses import asdict, dataclass, field, is_dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import yaml
@@ -3933,15 +3933,68 @@ def backup_restore(cli_ctx: CLIContext, source: str, local_dry: bool) -> None:
 
         try:
             if _tf.is_tarfile(str(work_path)):
-                restore_root = Path.cwd()
+                restore_root = Path.cwd().resolve()
                 with _tf.open(str(work_path), "r:*") as tar:
                     # Dry-run listing was already handled above; extract now
                     for member in tar.getmembers():
                         # Strip the leading "semantica-backup/" prefix
                         member.name = member.name.replace("semantica-backup/", "", 1)
-                        if member.name:
-                            tar.extract(member, path=str(restore_root))
-                            console.print(f"  restored: {member.name}")
+                        if not member.name:
+                            continue
+
+                        # Reject members whose resolved path escapes the
+                        # restore root (path traversal / absolute paths),
+                        # regardless of the "semantica-backup/" prefix.
+                        member_path = (restore_root / member.name).resolve()
+                        try:
+                            member_path.relative_to(restore_root)
+                        except ValueError:
+                            raise click.ClickException(
+                                f"Refusing to restore '{member.name}': "
+                                "path escapes the restore directory."
+                            )
+
+                        # Reject symlink/hardlink members whose target
+                        # escapes the restore root. Checked two ways:
+                        # lexically (linkname itself, so an absolute path or
+                        # a literal ".." segment is rejected outright, with
+                        # no dependence on what else does or doesn't already
+                        # exist on disk) and by resolution (catches any
+                        # remaining traversal the lexical check misses).
+                        if member.issym() or member.islnk():
+                            linkname = member.linkname or ""
+                            linkname_parts = PurePosixPath(
+                                linkname.replace("\\", "/")
+                            ).parts
+                            if (
+                                not linkname
+                                or os.path.isabs(linkname)
+                                or PureWindowsPath(linkname).is_absolute()
+                                or ".." in linkname_parts
+                            ):
+                                raise click.ClickException(
+                                    f"Refusing to restore '{member.name}': "
+                                    "link target is absolute or traverses "
+                                    "out of the archive."
+                                )
+                            link_target = (
+                                member_path.parent / linkname
+                            ).resolve()
+                            try:
+                                link_target.relative_to(restore_root)
+                            except ValueError:
+                                raise click.ClickException(
+                                    f"Refusing to restore '{member.name}': "
+                                    "link target escapes the restore directory."
+                                )
+
+                        extract_kwargs: Dict[str, Any] = {"path": str(restore_root)}
+                        if hasattr(_tf, "data_filter"):
+                            # Python >=3.12: also reject device files, and
+                            # further harden the traversal/ownership checks.
+                            extract_kwargs["filter"] = "data"
+                        tar.extract(member, **extract_kwargs)
+                        console.print(f"  restored: {member.name}")
             elif src.is_dir():
                 restore_root = Path.cwd()
                 for f in src.rglob("*"):
@@ -4065,7 +4118,7 @@ def server(ctx: click.Context) -> None:
 @click.option("--port", default=8000, type=int, show_default=True)
 @click.option("--workers", default=1, type=int, show_default=True)
 @click.option("--reload", is_flag=True, default=False, help="Enable hot reload.")
-@click.option("--host", default="0.0.0.0", show_default=True)
+@click.option("--host", default="127.0.0.1", show_default=True)
 @click.pass_obj
 def server_start(cli_ctx: CLIContext, port: int, workers: int, reload: bool, host: str) -> None:
     """Start the REST API server.
@@ -4075,6 +4128,16 @@ def server_start(cli_ctx: CLIContext, port: int, workers: int, reload: bool, hos
       semantica server start --port 8000 --workers 4
     """
     cli_ctx = _require_ctx(cli_ctx)
+
+    _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+    if host not in _LOOPBACK_HOSTS:
+        console.print(
+            f"[{_WARN_STY}] ⚠[/{_WARN_STY}] Binding to [cyan]{host}[/cyan] exposes "
+            "the server to the network. Set SEMANTICA_API_KEY before doing this "
+            "in any reachable environment — without it, protected routes refuse "
+            "all requests (503), and with SEMANTICA_ALLOW_ANONYMOUS=true they are "
+            "wide open."
+        )
 
     def _action() -> None:
         import subprocess as sp
