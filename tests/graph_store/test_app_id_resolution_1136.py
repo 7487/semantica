@@ -139,10 +139,29 @@ class AppIdResolutionTests(unittest.TestCase):
     def test_create_node_also_populates_the_map(self) -> None:
         store, manager = make_store()
 
-        store.create_node("Person", {"id": "app-1", "name": "Alice"})
+        store.create_node(["Person"], {"id": "app-1", "name": "Alice"})
         store.add_edges([{"source_id": "app-1", "target_id": 42, "type": "knows"}])
 
         self.assertEqual(manager.relationships.calls, [(100, 42, "knows")])
+
+    def test_integer_application_ids_never_collide_with_internal_ids(self) -> None:
+        # Qodo review: an int application id must not be recorded/resolved,
+        # or a caller passing that same int as an internal id would be
+        # silently remapped to a different node.
+        store, manager = make_store()
+
+        store.add_nodes(
+            [
+                {"id": 100, "type": "Person", "properties": {}},
+                {"id": "str-app", "type": "Person", "properties": {}},
+            ]
+        )
+        # Internal id 100 legitimately targets the FIRST node; the integer
+        # app id of that same value must not redirect it to the second.
+        store.create_relationship(100, 101, "RELATES_TO")
+
+        self.assertEqual(manager.relationships.calls, [(100, 101, "RELATES_TO")])
+        self.assertNotIn(100, store._app_node_id_map)
 
     def test_nodes_without_application_id_do_not_pollute_the_map(self) -> None:
         store, manager = make_store()

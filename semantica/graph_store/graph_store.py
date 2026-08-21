@@ -703,11 +703,16 @@ class GraphStore:
         strings, while backends such as Neo4j match on internal integer ids
         (#1136). Known application ids are resolved to the internal ids the
         backend returned at creation time; unknown ids pass through
-        unchanged, so direct internal-id callers keep working.
+        unchanged, so direct internal-id callers keep working. Only string
+        application ids participate: internal ids are commonly integers, so
+        recording or resolving an integer key could remap a caller-supplied
+        internal id to a different node.
         """
         return self._manager.relationships.create(
-            self._app_node_id_map.get(start_node_id, start_node_id),
-            self._app_node_id_map.get(end_node_id, end_node_id),
+            self._app_node_id_map.get(start_node_id, start_node_id)
+            if isinstance(start_node_id, str) else start_node_id,
+            self._app_node_id_map.get(end_node_id, end_node_id)
+            if isinstance(end_node_id, str) else end_node_id,
             rel_type,
             properties,
             **options,
@@ -820,13 +825,16 @@ class GraphStore:
         Backends return their own internal id alongside the stored properties;
         when the caller supplied an application id it is preserved in
         ``properties["id"]`` by the compatibility layer, which makes the pair
-        recoverable (#1136).
+        recoverable (#1136). Only STRING application ids are recorded:
+        internal ids are commonly integers, and an integer application id
+        would collide with (and silently remap) a caller-supplied internal id
+        of the same value in ``create_relationship``.
         """
         if not isinstance(created, dict):
             return
         app_id = (created.get("properties") or {}).get("id")
         internal_id = created.get("id")
-        if app_id is not None and internal_id is not None:
+        if isinstance(app_id, str) and internal_id is not None:
             self._app_node_id_map[app_id] = internal_id
 
     # Compatibility with AgentMemory / ContextGraph interface
