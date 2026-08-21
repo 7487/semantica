@@ -233,7 +233,7 @@ def test_markdown_export_rejects_duplicate_edge_ids_before_writing(tmp_path):
     graph.add_node("source", "Note", "Source")
     graph.add_node("target", "Note", "Target")
     graph.add_edge("source", "target", "REFERENCES")
-    graph.add_edge("source", "target", "REFERENCES")
+    graph.edges.append(graph.edges[0])
     export_path = tmp_path / "graph"
 
     assert graph.edges[0].edge_id == graph.edges[1].edge_id
@@ -521,12 +521,17 @@ def test_markdown_load_rebuilds_indexes_and_emits_json_compatible_events(tmp_pat
         advanced_analytics=False,
         mutation_callback=lambda *event: events.append(event),
     )
+    target._retractions[("node", "stale")] = {"entity_id": "stale"}
+    target._tombstones[("edge", "stale")] = {"entity_id": "stale"}
 
     target.load_from_file(destination, format="markdown")
 
     assert target.node_type_index["Policy"] == {"policy/\u6771\u4eac"}
     assert target.edge_type_index["SUPPORTS"][0].edge_id == "edge-supports"
+    assert target._edge_index["edge-supports"].edge_type == "SUPPORTS"
     assert target._adjacency["evidence-1"][0].target_id == "policy/\u6771\u4eac"
+    assert target._retractions == {}
+    assert target._tombstones == {}
     assert [event[0] for event in events] == ["ADD_NODE"] * len(target.nodes) + [
         "ADD_EDGE"
     ] * len(target.edges)
