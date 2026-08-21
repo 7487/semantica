@@ -1,5 +1,7 @@
 import errno
 import os
+import stat
+import subprocess
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -804,6 +806,66 @@ def test_markdown_import_does_not_follow_symlink_raced_before_open(tmp_path):
     with patch.object(Path, "is_symlink", return_value=False):
         with pytest.raises(ValueError, match="symbolic link"):
             AgentMemory._read_markdown_file(source)
+
+
+def test_markdown_import_rejects_windows_junction(tmp_path, monkeypatch):
+    source = tmp_path / "junction"
+    source.mkdir()
+    (source / "memory.md").write_text("not read", encoding="utf-8")
+
+    monkeypatch.setattr(
+        os.path,
+        "isjunction",
+        lambda candidate: Path(candidate) == source,
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="junction"):
+        AgentMemory().import_data(source, format="markdown")
+
+
+def test_markdown_import_rejects_windows_reparse_point_fallback(tmp_path, monkeypatch):
+    source = tmp_path / "reparse-point"
+    source.mkdir()
+    real_lstat = os.lstat
+
+    class ReparseStat:
+        st_file_attributes = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+    monkeypatch.delattr(os.path, "isjunction", raising=False)
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    monkeypatch.setattr(
+        os,
+        "lstat",
+        lambda candidate: (
+            ReparseStat() if Path(candidate) == source else real_lstat(candidate)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="junction"):
+        AgentMemory().import_data(source, format="markdown")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows junctions")
+def test_markdown_import_rejects_real_windows_junction(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "memory.md").write_text("not read", encoding="utf-8")
+    source = tmp_path / "junction"
+    result = subprocess.run(
+        ["cmd.exe", "/c", "mklink", "/J", str(source), str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"could not create Windows junction: {result.stderr}")
+
+    try:
+        with pytest.raises(ValueError, match="junction"):
+            AgentMemory().import_data(source, format="markdown")
+    finally:
+        os.rmdir(source)
 
 
 def test_legacy_dict_import_behavior_is_unchanged():

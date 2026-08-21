@@ -69,11 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Markdown import followed symbolic links even though Markdown export already refused to overwrite them** (#851, follow-up to #765, #786) by @SaurabhScripts
-  - `AgentMemory._read_markdown_path()` now rejects a symlink file, a broken symlink, or a symlinked directory supplied directly as an import path, and rejects any symlinked Markdown entry discovered while walking an import directory - before any parsing happens, so an import can no longer read a different file or directory than the path presented to the caller
-  - New `_read_markdown_file()` re-checks `is_symlink()` immediately before opening (closing the window between directory-scan validation and the actual read), opens with `O_NOFOLLOW` on platforms that support it, and verifies the resulting descriptor is a regular file via `fstat`/`S_ISREG` before reading, so a symlink swapped in after validation is still rejected rather than silently followed
-  - Documented the import restriction in `docs/reference/context.md`; added 8 tests to `tests/context/test_agent_memory_markdown.py` covering file/directory/broken-symlink rejection for both `str` and `Path` inputs, plus a simulated-race test proving the `O_NOFOLLOW` open still catches a symlink when the pre-open `is_symlink()` check is bypassed
-  - Disclosed limitation: `O_NOFOLLOW` isn't available on Windows, so the final open there relies solely on the pre-open `is_symlink()` check rather than a kernel-enforced guarantee against a race
+- **Markdown import followed filesystem links even though Markdown export already refused to overwrite them** (#851, follow-up to #765, #786) by @SaurabhScripts
+  - `AgentMemory._read_markdown_path()` now rejects symlink files, broken symlinks, symlinked directories, Windows directory junctions, and other Windows reparse points before parsing, including linked Markdown entries discovered while walking an import directory
+  - New `_read_markdown_file()` re-checks the file and parent directory immediately before and after opening, uses `O_NOFOLLOW` where available, and verifies the resulting descriptor is a regular file via `fstat`/`S_ISREG`, so link swaps are rejected rather than silently followed
+  - Junction detection uses `os.path.isjunction()` where available and falls back to the Windows reparse-point file attribute on older Python versions; export applies the same link check before replacing a Markdown file
+  - Documented the import restriction in `docs/reference/context.md`; added 11 tests to `tests/context/test_agent_memory_markdown.py` covering file/directory/broken-symlink rejection, simulated open races, mocked and real Windows junctions, and the reparse-point fallback
   - Any additional review follow-up commits land in this same PR/entry rather than as a separate changelog item
 
 - **`VectorStore.search_vectors()` returned inconsistent result shapes across backend implementations** (#853, closes #845) by @Sameer6305, reviewed by @KaifAhmad1

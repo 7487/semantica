@@ -77,6 +77,7 @@ import yaml
 from ..utils.logging import get_logger
 from ..utils.progress_tracker import get_progress_tracker
 from ..utils.types import EntityDict, RelationshipDict
+from ._markdown_filesystem import find_filesystem_link
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -1742,9 +1743,10 @@ class AgentMemory:
     @staticmethod
     def _write_markdown_file(file_path: Path, document: str) -> None:
         """Atomically replace a Markdown file without following output symlinks."""
-        if file_path.is_symlink():
+        if find_filesystem_link(file_path) is not None:
             raise ValueError(
-                f"Refusing to overwrite Markdown symbolic link: {file_path}"
+                "Refusing to overwrite Markdown symbolic link or junction: "
+                f"{file_path}"
             )
 
         temporary_path = None
@@ -1867,8 +1869,8 @@ class AgentMemory:
             if "\n" not in data and "\r" not in data:
                 candidate = Path(data)
                 try:
-                    candidate_is_symlink = candidate.is_symlink()
-                    candidate_exists = candidate_is_symlink or candidate.exists()
+                    candidate_is_link = find_filesystem_link(candidate) is not None
+                    candidate_exists = candidate_is_link or candidate.exists()
                 except OSError as exc:
                     error_message = (
                         "Failed to inspect possible Markdown import "
@@ -1910,8 +1912,10 @@ class AgentMemory:
         return memories
 
     def _read_markdown_path(self, path: Path) -> List[Tuple[str, str]]:
-        if path.is_symlink():
-            raise ValueError(f"Refusing to import Markdown symbolic link: {path}")
+        if find_filesystem_link(path) is not None:
+            raise ValueError(
+                f"Refusing to import Markdown symbolic link or junction: {path}"
+            )
 
         if not path.exists():
             raise FileNotFoundError(f"Markdown import path does not exist: {path}")
@@ -1921,9 +1925,10 @@ class AgentMemory:
             for file_path in path.iterdir():
                 if file_path.suffix.lower() not in self._MARKDOWN_EXTENSIONS:
                     continue
-                if file_path.is_symlink():
+                if find_filesystem_link(file_path) is not None:
                     raise ValueError(
-                        f"Refusing to import Markdown symbolic link: {file_path}"
+                        "Refusing to import Markdown symbolic link or junction: "
+                        f"{file_path}"
                     )
                 if file_path.is_file():
                     file_paths.append(file_path)
@@ -1941,30 +1946,41 @@ class AgentMemory:
     @staticmethod
     def _read_markdown_file(file_path: Path) -> str:
         """Read a regular Markdown file without following a raced symlink."""
-        if file_path.is_symlink():
-            raise ValueError(f"Refusing to import Markdown symbolic link: {file_path}")
+        if find_filesystem_link(file_path) is not None:
+            raise ValueError(
+                f"Refusing to import Markdown symbolic link or junction: {file_path}"
+            )
 
         # Defend the open itself against a symlink introduced after the
         # is_symlink() check above (TOCTOU). O_NOFOLLOW is used where the
         # platform supports it, causing os.open() to fail with ELOOP if the
         # target became a symlink in the meantime. On platforms without
-        # O_NOFOLLOW (e.g. Windows), os.open() follows symlinks and there is
-        # no kernel-level way to close this race; the preceding
-        # is_symlink() check is the only protection there, so the strength
-        # of the final-open race protection differs by platform.
+        # O_NOFOLLOW (e.g. Windows), os.open() may follow a link introduced
+        # during the open. The pre/post-open reparse-point checks still reject
+        # persistent swaps, but they cannot provide the same kernel-enforced
+        # guarantee as O_NOFOLLOW.
         flags = os.O_RDONLY
         nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
         flags |= nofollow_flag
         try:
             file_descriptor = os.open(file_path, flags)
         except OSError as exc:
-            if nofollow_flag and exc.errno == errno.ELOOP:
+            if (
+                (nofollow_flag and exc.errno == errno.ELOOP)
+                or find_filesystem_link(file_path) is not None
+            ):
                 raise ValueError(
-                    f"Refusing to import Markdown symbolic link: {file_path}"
+                    "Refusing to import Markdown symbolic link or junction: "
+                    f"{file_path}"
                 ) from exc
             raise
 
         try:
+            if find_filesystem_link(file_path) is not None:
+                raise ValueError(
+                    "Refusing to import Markdown symbolic link or junction: "
+                    f"{file_path}"
+                )
             if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
                 raise ValueError(
                     f"Markdown import path is not a regular file: {file_path}"
