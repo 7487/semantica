@@ -493,9 +493,58 @@ class RDFSerializer:
             if include_temporal:
                 owl_lines = self._owl_time_triples_for_rel(rel, idx, time_axis)
                 if owl_lines:
+                    # The interval hangs off the relationship's own IRI, and a
+                    # relationship written as a single triple has no such node
+                    # in the graph. Without this the timestamps are well formed
+                    # and unreachable: no query can get from the edge to its
+                    # validity interval (#1106). The shape matches the JSON-LD
+                    # export, and every term is declared in the vocabulary.
+                    lines.extend(
+                        self._reified_relationship_triples(
+                            rel, idx, source_id, target_id, rel_type
+                        )
+                    )
                     lines.extend(owl_lines)
 
         return "\n".join(lines)
+
+    def _reified_relationship_triples(
+        self,
+        rel: Dict[str, Any],
+        idx: int,
+        source_id: str,
+        target_id: str,
+        rel_type: str,
+    ) -> List[str]:
+        """
+        Emit the reified relationship node that OWL-Time triples hang off.
+
+        The direct triple stays. This adds a subject the interval can attach
+        to, using the same sem:Relationship shape the JSON-LD export already
+        writes, so the two serializations describe relationships the same way.
+        """
+        rel_id = rel.get("id") or mint_relationship_iri(idx, source_id or "", target_id or "")
+
+        # The full predicate, not its local name. Truncating to the fragment
+        # made https://a.example/ns#employs and https://b.example/ns#employs the
+        # same literal, so the temporal node no longer said which predicate it
+        # described, and it disagreed with the direct triple beside it.
+        escaped = (
+            str(rel_type)
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+        )
+
+        predicates = [f"a semantica:Relationship"]
+        if source_id:
+            predicates.append(f"semantica:source <{source_id}>")
+        if target_id:
+            predicates.append(f"semantica:target <{target_id}>")
+        predicates.append(f'semantica:type "{escaped}"')
+
+        return ["", f"<{rel_id}> " + " ;\n    ".join(predicates) + " ."]
 
     def _owl_time_triples_for_rel(
         self, rel: Dict[str, Any], idx: int, time_axis: str
