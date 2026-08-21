@@ -69,6 +69,187 @@ def mint_relationship_iri(index: int, source: Any, target: Any) -> str:
     return f"{SEMANTICA_NS}rel_{index}_{digest}"
 
 
+#: The metadata keys Semantica itself produces, and the terms they are written
+#: as. GraphBuilder.build_graph writes the first five, create_snapshot writes
+#: snapshot_time, and load_from_neo4j writes source / uri / database. These are
+#: Semantica's own vocabulary, so they are minted in the declared namespace and
+#: declared in semantica-ns.ttl.
+#:
+#: A key the caller supplied is a different matter. Which namespace an
+#: arbitrary metadata key belongs in is issue #1146, and until that is settled
+#: the exporter refuses to guess: it warns and skips, and a caller who already
+#: knows the answer passes ``metadata_terms``.
+#:
+#: The map is key -> term rather than key -> namespace because two of the keys
+#: cannot keep their own name. ``source`` on a graph loaded from Neo4j is the
+#: system it came from, while sem:source is already the ObjectProperty holding
+#: the subject of a reified relationship; reusing it would put a string where
+#: an entity belongs.
+DEFAULT_METADATA_TERMS: Dict[str, str] = {
+    "num_entities": f"{SEMANTICA_NS}numEntities",
+    "num_relationships": f"{SEMANTICA_NS}numRelationships",
+    "temporal_enabled": f"{SEMANTICA_NS}temporalEnabled",
+    "entity_resolution_applied": f"{SEMANTICA_NS}entityResolutionApplied",
+    "timestamp": f"{SEMANTICA_NS}builtAt",
+    "snapshot_time": f"{SEMANTICA_NS}snapshotAt",
+    "source": f"{SEMANTICA_NS}sourceSystem",
+    "uri": f"{SEMANTICA_NS}sourceUri",
+    "database": f"{SEMANTICA_NS}sourceDatabase",
+}
+
+#: Terms whose value is a node rather than a string. Everything else stays a
+#: literal: a metadata value that merely looks like a URL is not thereby a
+#: reference to one.
+IRI_VALUED_METADATA_TERMS: Set[str] = {f"{SEMANTICA_NS}sourceUri"}
+
+_XSD_NS = "http://www.w3.org/2001/XMLSchema#"
+
+
+def _escape_literal(value: str) -> str:
+    """Escape a string for a Turtle or N-Triples quoted literal."""
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
+
+def _escape_xml(value: str) -> str:
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _split_iri(iri: str) -> Optional[tuple]:
+    """Split an IRI into (namespace, local name) for RDF/XML's QName syntax."""
+    for sep in ("#", "/"):
+        index = iri.rfind(sep)
+        if index != -1 and index + 1 < len(iri):
+            local = iri[index + 1 :]
+            if local and not local[0].isdigit():
+                return iri[: index + 1], local
+    return None
+
+
+def _metadata_statements(
+    metadata: Any,
+    terms: Dict[str, str],
+    logger: Any,
+) -> List[tuple]:
+    """Resolve a metadata mapping to a list of (term IRI, value) pairs.
+
+    A key with no term is skipped and reported. Silence is the defect this
+    fixes, so an unmapped key must be louder than a mapped one, not quieter.
+    """
+    if not isinstance(metadata, dict):
+        return []
+
+    statements: List[tuple] = []
+    for key, value in metadata.items():
+        term = terms.get(key)
+        if term is None:
+            logger.warning(
+                "Metadata key %r has no term and was not exported. Which "
+                "namespace a caller-supplied key belongs in is issue #1146; "
+                "pass metadata_terms={%r: '<iri>'} to export it now.",
+                key,
+                key,
+            )
+            continue
+        if value is None:
+            continue
+        if isinstance(value, (dict, list, tuple, set)):
+            logger.warning(
+                "Metadata key %r holds a %s, which has no modelled RDF shape "
+                "yet, and was not exported.",
+                key,
+                type(value).__name__,
+            )
+            continue
+        statements.append((term, value))
+    return statements
+
+
+def _resolve_metadata_terms(overrides: Optional[Dict[str, str]]) -> Dict[str, str]:
+    if not overrides:
+        return DEFAULT_METADATA_TERMS
+    return {**DEFAULT_METADATA_TERMS, **overrides}
+
+
+def _typed_literal_parts(term: str, value: Any) -> tuple:
+    """Return (kind, lexical, datatype) for one metadata value.
+
+    kind is "iri" or "literal". The lexical form and datatype are chosen once,
+    here, so that the four serializers cannot disagree about them the way they
+    disagreed about confidence in #1100.
+    """
+    if term in IRI_VALUED_METADATA_TERMS and isinstance(value, str):
+        return "iri", value, None
+    if isinstance(value, bool):
+        return "literal", "true" if value else "false", f"{_XSD_NS}boolean"
+    if isinstance(value, int):
+        return "literal", str(value), f"{_XSD_NS}integer"
+    if isinstance(value, float):
+        return "literal", repr(value), f"{_XSD_NS}decimal"
+    return "literal", str(value), None
+
+
+def _turtle_object(term: str, value: Any) -> str:
+    kind, lexical, datatype = _typed_literal_parts(term, value)
+    if kind == "iri":
+        return f"<{lexical}>"
+    if datatype is None:
+        return f'"{_escape_literal(lexical)}"'
+    return f'"{lexical}"^^<{datatype}>'
+
+
+def _turtle_metadata_clauses(statements: List[tuple]) -> List[str]:
+    return [f"<{term}> {_turtle_object(term, value)}" for term, value in statements]
+
+
+def _ntriples_metadata_lines(subject: str, statements: List[tuple]) -> List[str]:
+    return [
+        f"<{subject}> <{term}> {_turtle_object(term, value)} ."
+        for term, value in statements
+    ]
+
+
+def _rdfxml_metadata_lines(statements: List[tuple], indent: str) -> List[str]:
+    """RDF/XML needs a QName, so an unprefixed term declares its own prefix."""
+    lines: List[str] = []
+    for position, (term, value) in enumerate(statements):
+        split = _split_iri(term)
+        if split is None:
+            continue
+        namespace, local = split
+        kind, lexical, datatype = _typed_literal_parts(term, value)
+        prefix = f"md{position}"
+        opening = f'{indent}<{prefix}:{local} xmlns:{prefix}="{_escape_xml(namespace)}"'
+        if kind == "iri":
+            lines.append(f'{opening} rdf:resource="{_escape_xml(lexical)}"/>')
+            continue
+        if datatype is not None:
+            opening += f' rdf:datatype="{_escape_xml(datatype)}"'
+        lines.append(f"{opening}>{_escape_xml(lexical)}</{prefix}:{local}>")
+    return lines
+
+
+def _jsonld_metadata_entries(statements: List[tuple]) -> Dict[str, Any]:
+    """Absolute IRIs as keys, and explicit @value/@type rather than JSON's own
+    types: JSON's number is xsd:double, which would make the JSON-LD export
+    disagree with the other three about the datatype of an integer."""
+    entries: Dict[str, Any] = {}
+    for term, value in statements:
+        kind, lexical, datatype = _typed_literal_parts(term, value)
+        if kind == "iri":
+            entries[term] = {"@id": lexical}
+        elif datatype is None:
+            entries[term] = lexical
+        else:
+            entries[term] = {"@value": lexical, "@type": datatype}
+    return entries
+
+
 class NamespaceManager:
     """
     RDF namespace management engine.
@@ -364,6 +545,8 @@ class RDFSerializer:
         """
         include_temporal: bool = options.pop("include_temporal", False)
         time_axis: str = options.pop("time_axis", "valid")
+        metadata_terms = _resolve_metadata_terms(options.pop("metadata_terms", None))
+        graph_uri: Optional[str] = options.pop("graph_uri", None)
 
         lines = []
 
@@ -397,9 +580,23 @@ class RDFSerializer:
             text = entity.get("text") or entity.get("label", "")
             confidence = entity.get("confidence", 1.0)
 
-            lines.append(f"<{entity_id}> a <{entity_type}> ;")
-            lines.append(f'    semantica:text "{text}" ;')
-            lines.append(f"    semantica:confidence {confidence} .")
+            clauses = [
+                f"a <{entity_type}>",
+                f'semantica:text "{text}"',
+                f"semantica:confidence {confidence}",
+            ]
+            clauses.extend(
+                _turtle_metadata_clauses(
+                    _metadata_statements(
+                        entity.get("metadata"), metadata_terms, self.logger
+                    )
+                )
+            )
+
+            lines.append(f"<{entity_id}> {clauses[0]} ;")
+            for clause in clauses[1:-1]:
+                lines.append(f"    {clause} ;")
+            lines.append(f"    {clauses[-1]} .")
             lines.append("")
 
         # Convert relationships to RDF triplets
@@ -415,6 +612,30 @@ class RDFSerializer:
                 owl_lines = self._owl_time_triples_for_rel(rel, idx, time_axis)
                 if owl_lines:
                     lines.extend(owl_lines)
+
+        # Graph-level metadata needs a subject, and this serializer has never
+        # minted a document node. Rather than invent one here, it is written
+        # only when the caller names the graph; issue #1147 is where the
+        # default subject comes from once that lands.
+        graph_clauses = (
+            _turtle_metadata_clauses(
+                _metadata_statements(
+                    rdf_data.get("metadata"), metadata_terms, self.logger
+                )
+            )
+            if graph_uri
+            else []
+        )
+        if graph_clauses:
+            lines.append("")
+            lines.append(
+                f"<{graph_uri}> {graph_clauses[0]} "
+                + (";" if len(graph_clauses) > 1 else ".")
+            )
+            for clause in graph_clauses[1:-1]:
+                lines.append(f"    {clause} ;")
+            if len(graph_clauses) > 1:
+                lines.append(f"    {graph_clauses[-1]} .")
 
         return "\n".join(lines)
 
@@ -510,6 +731,9 @@ class RDFSerializer:
             ... }
             >>> rdfxml = serializer.serialize_to_rdfxml(rdf_data)
         """
+        metadata_terms = _resolve_metadata_terms(options.pop("metadata_terms", None))
+        graph_uri: Optional[str] = options.pop("graph_uri", None)
+
         lines = ['<?xml version="1.0" encoding="UTF-8"?>']
         lines.append('<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"')
         lines.append('         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"')
@@ -536,6 +760,14 @@ class RDFSerializer:
             lines.append(
                 f"    <semantica:confidence>{confidence}</semantica:confidence>"
             )
+            lines.extend(
+                _rdfxml_metadata_lines(
+                    _metadata_statements(
+                        entity.get("metadata"), metadata_terms, self.logger
+                    ),
+                    "    ",
+                )
+            )
             lines.append("  </rdf:Description>")
             lines.append("")
 
@@ -549,6 +781,22 @@ class RDFSerializer:
             # Relationship as property on source entity
             lines.append(f'  <rdf:Description rdf:about="{source_id}">')
             lines.append(f'    <{rel_type} rdf:resource="{target_id}"/>')
+            lines.append("  </rdf:Description>")
+            lines.append("")
+
+        graph_lines = (
+            _rdfxml_metadata_lines(
+                _metadata_statements(
+                    rdf_data.get("metadata"), metadata_terms, self.logger
+                ),
+                "    ",
+            )
+            if graph_uri
+            else []
+        )
+        if graph_lines:
+            lines.append(f'  <rdf:Description rdf:about="{_escape_xml(graph_uri)}">')
+            lines.extend(graph_lines)
             lines.append("  </rdf:Description>")
             lines.append("")
 
@@ -582,6 +830,9 @@ class RDFSerializer:
         """
         import json
 
+        metadata_terms = _resolve_metadata_terms(options.pop("metadata_terms", None))
+        graph_uri: Optional[str] = options.pop("graph_uri", None)
+
         # Initialize JSON-LD structure with context
         jsonld = {
             "@context": {
@@ -608,14 +859,20 @@ class RDFSerializer:
             # and was dropped in full by a JSON-LD parser, silently.
             entity_id = entity.get("id") or mint_entity_iri(entity.get("text", ""))
 
-            jsonld["@graph"].append(
-                {
-                    "@id": entity_id,
-                    "@type": entity.get("type", "semantica:Entity"),
-                    "semantica:text": entity.get("text") or entity.get("label", ""),
-                    "semantica:confidence": entity.get("confidence", 1.0),
-                }
+            node = {
+                "@id": entity_id,
+                "@type": entity.get("type", "semantica:Entity"),
+                "semantica:text": entity.get("text") or entity.get("label", ""),
+                "semantica:confidence": entity.get("confidence", 1.0),
+            }
+            node.update(
+                _jsonld_metadata_entries(
+                    _metadata_statements(
+                        entity.get("metadata"), metadata_terms, self.logger
+                    )
+                )
             )
+            jsonld["@graph"].append(node)
 
         # Convert relationships to JSON-LD
         relationships = rdf_data.get("relationships", [])
@@ -639,6 +896,18 @@ class RDFSerializer:
                 }
             )
 
+        graph_entries = (
+            _jsonld_metadata_entries(
+                _metadata_statements(
+                    rdf_data.get("metadata"), metadata_terms, self.logger
+                )
+            )
+            if graph_uri
+            else {}
+        )
+        if graph_entries:
+            jsonld["@graph"].append({"@id": graph_uri, **graph_entries})
+
         return json.dumps(jsonld, indent=2, ensure_ascii=False)
 
     def serialize_to_ntriples(self, rdf_data: Dict[str, Any], **options) -> str:
@@ -655,6 +924,9 @@ class RDFSerializer:
         Returns:
             String containing N-Triples serialization
         """
+        metadata_terms = _resolve_metadata_terms(options.pop("metadata_terms", None))
+        graph_uri: Optional[str] = options.pop("graph_uri", None)
+
         lines = []
 
         def expand_uri(uri: str) -> str:
@@ -704,6 +976,15 @@ class RDFSerializer:
                     f'{subject} {expand_uri("semantica:confidence")} "{confidence}"^^<http://www.w3.org/2001/XMLSchema#float> .'
                 )
 
+            lines.extend(
+                _ntriples_metadata_lines(
+                    subject.strip("<>"),
+                    _metadata_statements(
+                        entity.get("metadata"), metadata_terms, self.logger
+                    ),
+                )
+            )
+
         # Convert relationships
         relationships = rdf_data.get("relationships", [])
         for rel in relationships:
@@ -715,6 +996,16 @@ class RDFSerializer:
                 lines.append(
                     f"{expand_uri(source_id)} {expand_uri(rel_type)} {expand_uri(target_id)} ."
                 )
+
+        if graph_uri:
+            lines.extend(
+                _ntriples_metadata_lines(
+                    graph_uri,
+                    _metadata_statements(
+                        rdf_data.get("metadata"), metadata_terms, self.logger
+                    ),
+                )
+            )
 
         return "\n".join(lines)
 
