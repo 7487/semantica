@@ -8,7 +8,7 @@ icon: "shield-check"
 
 SHACL (Shapes Constraint Language) is a standard for validating graph-based data. While an ontology defines the conceptual *schema* (the "what" exists in your domain), SHACL defines the structural *rules and constraints* (the "how" it should be structured). 
 
-In Semantica, `SHACLGenerator` produces constraint rules (shapes) based on your ontology, and the public `run_shacl_validation` function evaluates your actual data against these rules. If a node violates a rule (e.g., missing a required property or using the wrong datatype), a detailed violation report is generated. The historical `run_shacl_validation` name remains available as a compatibility alias.
+In Semantica, `SHACLGenerator` produces constraint rules (shapes) based on your ontology, and the public `run_shacl_validation` function evaluates your actual data against these rules. If a node violates a rule (e.g., missing a required property or using the wrong datatype), a detailed violation report is generated. The historical `_run_pyshacl` name remains available as a compatibility alias.
 
 ## Why Use SHACL Validation?
 
