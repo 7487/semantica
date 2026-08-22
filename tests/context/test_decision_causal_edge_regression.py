@@ -391,3 +391,64 @@ def test_add_causal_relationship_rejects_non_string_with_value_error():
     for bad_type in (None, 42, ["CAUSED"]):
         with pytest.raises(ValueError):
             graph.add_causal_relationship(cause, effect, relationship_type=bad_type)
+
+
+def test_analyze_decision_influence_sees_lowercase_causal_edge():
+    """Issue #1184 follow-up: influence analysis reads the same edge index as
+    the causal traversal, so lowercase edges must count as direct influence."""
+    graph = ContextGraph(advanced_analytics=True)
+    cause = graph.record_decision(
+        category="a", scenario="upstream", reasoning="r",
+        outcome="x", confidence=0.9,
+    )
+    effect = graph.record_decision(
+        category="b", scenario="downstream", reasoning="r",
+        outcome="y", confidence=0.9,
+    )
+    graph.add_edge(cause, effect, "causes")
+
+    impact = graph.analyze_decision_influence(cause)
+
+    direct_ids = {entry["decision_id"] for entry in impact["direct_influence"]}
+    assert effect in direct_ids
+
+
+def test_trace_decision_causality_sees_lowercase_causal_edge():
+    """Issue #1184 follow-up: the trace must not return an empty audit chain
+    for a decision with an explicit lowercase upstream causal edge."""
+    graph = ContextGraph(advanced_analytics=True)
+    cause = graph.record_decision(
+        category="a", scenario="upstream", reasoning="r",
+        outcome="x", confidence=0.9,
+    )
+    effect = graph.record_decision(
+        category="b", scenario="downstream", reasoning="r",
+        outcome="y", confidence=0.9,
+    )
+    graph.add_edge(cause, effect, "causes")
+
+    trace = graph.trace_decision_causality(effect)
+
+    assert any(
+        hop["from"] == cause and hop["to"] == effect
+        for chain in trace for hop in chain["hops"]
+    ), "lowercase causal edge must appear in the traced chain"
+
+
+def test_find_precedents_sees_lowercase_precedent_edge():
+    """Issue #1184 follow-up: precedent lookup must accept the analyzer's
+    spelling alongside the canonical PRECEDENT_FOR."""
+    graph = ContextGraph(advanced_analytics=True)
+    precedent = graph.record_decision(
+        category="a", scenario="earlier", reasoning="r",
+        outcome="x", confidence=0.9,
+    )
+    later = graph.record_decision(
+        category="b", scenario="later", reasoning="r",
+        outcome="y", confidence=0.9,
+    )
+    graph.add_edge(precedent, later, "precedes")
+
+    precedents = graph.find_precedents(later)
+
+    assert [d.decision_id for d in precedents] == [precedent]

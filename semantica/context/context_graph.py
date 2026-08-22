@@ -2889,10 +2889,13 @@ class ContextGraph:
         Returns:
             List of precedent decisions
         """
-        # Find decisions connected via PRECEDENT_FOR relationships
+        # Find decisions connected via PRECEDENT_FOR relationships, accepting
+        # the analyzer vocabulary's "precedes" spelling as well (issue #1184).
         precedent_ids = []
         for edge in self.edges:
-            if edge.target_id == decision_id and edge.edge_type == "PRECEDENT_FOR":
+            if edge.target_id == decision_id and edge.edge_type.upper() in {
+                "PRECEDENT_FOR", "PRECEDES",
+            }:
                 precedent_ids.append(edge.source_id)
         
         # Convert to Decision objects
@@ -3453,8 +3456,13 @@ class ContextGraph:
 
         # Explicit causal relationships recorded via add_causal_relationship() are
         # ground truth and always count as direct influence, in either direction.
-        for edge_type in _CAUSAL_EDGE_TYPES:
-            for edge in self.edge_type_index.get(edge_type, []):
+        # The index is keyed by the raw edge_type string ("causes" and "CAUSED"
+        # are separate keys), so filter by normalized type instead of iterating
+        # a fixed spelling list.
+        for edge_type, edges in self.edge_type_index.items():
+            if edge_type.upper() not in _CAUSAL_TRAVERSAL_TYPES:
+                continue
+            for edge in edges:
                 if edge.source_id == decision_id and edge.target_id in self._decisions:
                     direct_influence.add(edge.target_id)
                 elif edge.target_id == decision_id and edge.source_id in self._decisions:
@@ -3600,8 +3608,12 @@ class ContextGraph:
             # record_decision() (e.g. a graph restored via from_dict), so only
             # causes with a known decision record are kept.
             incoming_causal_edges = defaultdict(list)
-            for edge_type in _CAUSAL_EDGE_TYPES:
-                for edge in self.edge_type_index.get(edge_type, []):
+            # The index is keyed by the raw edge_type string ("causes" and
+            # "CAUSED" are separate keys), so filter by normalized type.
+            for edge_type, edges in self.edge_type_index.items():
+                if edge_type.upper() not in _CAUSAL_TRAVERSAL_TYPES:
+                    continue
+                for edge in edges:
                     if edge.source_id in self._decisions:
                         incoming_causal_edges[edge.target_id].append(edge)
 
