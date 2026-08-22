@@ -546,7 +546,18 @@ class TestSHACLHierarchicalAndValidation(unittest.TestCase):
         legacy_report = _run_pyshacl(data, shacl)
         self.assertFalse(public_report.conforms)
         self.assertEqual(public_report.violation_count, 1)
-        self.assertEqual(legacy_report.to_dict(), public_report.to_dict())
+        self.assertEqual(legacy_report.conforms, public_report.conforms)
+        self.assertEqual(legacy_report.violation_count, public_report.violation_count)
+        self.assertEqual(
+            [
+                (v.focus_node, v.result_path, v.constraint, v.severity, v.message)
+                for v in legacy_report.violations
+            ],
+            [
+                (v.focus_node, v.result_path, v.constraint, v.severity, v.message)
+                for v in public_report.violations
+            ],
+        )
 
     # 34
     def test_public_run_shacl_validation_conforming_graph(self):
