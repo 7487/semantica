@@ -549,6 +549,30 @@ class TestSHACLHierarchicalAndValidation(unittest.TestCase):
         self.assertEqual(legacy_report.to_dict(), public_report.to_dict())
 
     # 34
+    def test_public_run_shacl_validation_conforming_graph(self):
+        """The public API reports a valid graph without violations."""
+        try:
+            import pyshacl  # noqa: F401
+            import rdflib  # noqa: F401
+        except ImportError:
+            self.skipTest("pyshacl/rdflib not installed")
+        from semantica.ontology import run_shacl_validation
+
+        data = """
+        @prefix ex: <http://example.org/> .
+        ex:alice a ex:Person ; ex:name "Alice" .
+        """
+        shacl = """
+        @prefix ex: <http://example.org/> .
+        @prefix sh: <http://www.w3.org/ns/shacl#> .
+        ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ;
+            sh:property [ sh:path ex:name ; sh:minCount 1 ] .
+        """
+
+        report = run_shacl_validation(data, shacl)
+
+        self.assertTrue(report.conforms)
+        self.assertEqual(report.violation_count, 0)
     def test_shacl_violation_to_dict(self):
         from semantica.ontology.ontology_validator import SHACLViolation
         v = SHACLViolation(
