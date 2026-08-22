@@ -525,6 +525,30 @@ class TestSHACLHierarchicalAndValidation(unittest.TestCase):
             self.assertEqual(mc[0].max_count, 2)
 
     # 33
+    def test_public_run_shacl_validation_api(self):
+        """The public API validates data and retains the legacy alias."""
+        try:
+            import pyshacl  # noqa: F401
+            import rdflib  # noqa: F401
+        except ImportError:
+            self.skipTest("pyshacl/rdflib not installed")
+        from semantica.ontology import run_shacl_validation
+        from semantica.ontology.ontology_validator import _run_pyshacl
+
+        data = "@prefix ex: <http://example.org/> . ex:alice a ex:Person ."
+        shacl = """
+        @prefix ex: <http://example.org/> .
+        @prefix sh: <http://www.w3.org/ns/shacl#> .
+        ex:PersonShape a sh:NodeShape ; sh:targetClass ex:Person ;
+            sh:property [ sh:path ex:name ; sh:minCount 1 ] .
+        """
+        public_report = run_shacl_validation(data, shacl)
+        legacy_report = _run_pyshacl(data, shacl)
+        self.assertFalse(public_report.conforms)
+        self.assertEqual(public_report.violation_count, 1)
+        self.assertEqual(legacy_report.to_dict(), public_report.to_dict())
+
+    # 34
     def test_shacl_violation_to_dict(self):
         from semantica.ontology.ontology_validator import SHACLViolation
         v = SHACLViolation(
