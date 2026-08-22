@@ -323,3 +323,51 @@ def test_entity_based_inference_still_applies_without_explicit_edges():
         hop["from"] == earlier and hop["to"] == later and hop["type"] == "influences"
         for hop in hops
     )
+
+
+def test_get_causal_chain_accepts_lowercase_causal_edge_types():
+    """Issue #1184: edges recorded with the analyzer's lowercase vocabulary
+    must be traversed by get_causal_chain().
+
+    CausalChainAnalyzer documents causal types as lowercase ("causes",
+    "influences", ...) while get_causal_chain() matched only the uppercase
+    spellings, so an edge recorded as "causes" produced an empty audit
+    chain — silent and in the dangerous direction.
+    """
+    graph = ContextGraph(advanced_analytics=True)
+    cause = graph.record_decision(
+        category="a", scenario="upstream", reasoning="r",
+        outcome="x", confidence=0.9,
+    )
+    effect = graph.record_decision(
+        category="b", scenario="downstream", reasoning="r",
+        outcome="y", confidence=0.9,
+    )
+    graph.add_edge(cause, effect, "causes")
+
+    chain = graph.get_causal_chain(effect, direction="upstream")
+
+    assert [decision.decision_id for decision in chain] == [cause]
+
+
+def test_add_causal_relationship_accepts_any_case_and_stores_canonical():
+    """Issue #1184: add_causal_relationship() should accept either spelling
+    and store the canonical uppercase vocabulary."""
+    graph = ContextGraph(advanced_analytics=True)
+    cause = graph.record_decision(
+        category="a", scenario="upstream", reasoning="r",
+        outcome="x", confidence=0.9,
+    )
+    effect = graph.record_decision(
+        category="b", scenario="downstream", reasoning="r",
+        outcome="y", confidence=0.9,
+    )
+
+    graph.add_causal_relationship(cause, effect, relationship_type="causes")
+
+    edges = [
+        edge for edge in graph.edges
+        if edge.source_id == cause and edge.target_id == effect
+    ]
+    assert edges, "add_causal_relationship must store the edge"
+    assert edges[0].edge_type == "CAUSED"

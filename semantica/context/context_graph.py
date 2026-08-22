@@ -438,6 +438,23 @@ _ATTRS_MISSING = object()
 #: entities and timestamps.
 _CAUSAL_EDGE_TYPES = ("CAUSED", "INFLUENCED", "PRECEDENT_FOR")
 
+# Causal edges circulate under two vocabularies: this module's canonical
+# spellings above, and the present-tense spellings CausalChainAnalyzer also
+# accepts ("causes", "influences", "leads_to", "supports"). The present-tense
+# forms normalize onto the canonical types for storage; traversal accepts
+# both vocabularies so an edge recorded either way is never invisible.
+_CAUSAL_EDGE_ALIASES = {
+    "CAUSES": "CAUSED",
+    "CAUSED": "CAUSED",
+    "INFLUENCES": "INFLUENCED",
+    "INFLUENCED": "INFLUENCED",
+    "PRECEDES": "PRECEDENT_FOR",
+    "PRECEDENT_FOR": "PRECEDENT_FOR",
+}
+_CAUSAL_TRAVERSAL_TYPES = frozenset(_CAUSAL_EDGE_ALIASES) | {
+    "LEADS_TO", "LEAD_TO", "SUPPORTS", "SUPPORT",
+}
+
 
 class ContextGraph:
     """
@@ -2745,9 +2762,12 @@ class ContextGraph:
             target_decision_id: Target decision ID
             relationship_type: Type of relationship (CAUSED, INFLUENCED, PRECEDENT_FOR)
         """
-        valid_types = ["CAUSED", "INFLUENCED", "PRECEDENT_FOR"]
-        if relationship_type not in valid_types:
-            raise ValueError(f"Relationship type must be one of: {valid_types}")
+        # Normalize so callers may use either vocabulary's spelling
+        # ("causes" from CausalChainAnalyzer, or "CAUSED" from this module's
+        # canonical constant); the stored form is always canonical.
+        relationship_type = _CAUSAL_EDGE_ALIASES.get(relationship_type.upper())
+        if relationship_type is None:
+            raise ValueError(f"Relationship type must be one of: {_CAUSAL_EDGE_TYPES}")
         
         # Check if decisions exist - if not, skip adding relationship
         if source_decision_id not in self.nodes or target_decision_id not in self.nodes:
@@ -2839,11 +2859,11 @@ class ContextGraph:
             # Find connected decisions
             for edge in self.edges:
                 if direction == "upstream":
-                    if edge.target_id == current_id and edge.edge_type in ["CAUSED", "INFLUENCED", "PRECEDENT_FOR"]:
+                    if edge.target_id == current_id and edge.edge_type.upper() in _CAUSAL_TRAVERSAL_TYPES:
                         if edge.source_id not in visited and depth < max_depth:
                             queue.append((edge.source_id, depth + 1))
                 else:  # downstream
-                    if edge.source_id == current_id and edge.edge_type in ["CAUSED", "INFLUENCED", "PRECEDENT_FOR"]:
+                    if edge.source_id == current_id and edge.edge_type.upper() in _CAUSAL_TRAVERSAL_TYPES:
                         if edge.target_id not in visited and depth < max_depth:
                             queue.append((edge.target_id, depth + 1))
         
