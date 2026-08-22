@@ -7,6 +7,8 @@ extraction found nothing, the chain came back empty even though an explicit
 ``CAUSED`` edge was stored in the graph.
 """
 
+import pytest
+
 from semantica.context import ContextGraph
 from semantica.context.context_graph import ContextEdge
 
@@ -371,3 +373,21 @@ def test_add_causal_relationship_accepts_any_case_and_stores_canonical():
     ]
     assert edges, "add_causal_relationship must store the edge"
     assert edges[0].edge_type == "CAUSED"
+
+
+def test_add_causal_relationship_rejects_non_string_with_value_error():
+    """Invalid relationship types must keep raising ValueError (issue #1184
+    follow-up): normalization must not turn them into AttributeError."""
+    graph = ContextGraph(advanced_analytics=True)
+    cause = graph.record_decision(
+        category="a", scenario="upstream", reasoning="r",
+        outcome="x", confidence=0.9,
+    )
+    effect = graph.record_decision(
+        category="b", scenario="downstream", reasoning="r",
+        outcome="y", confidence=0.9,
+    )
+
+    for bad_type in (None, 42, ["CAUSED"]):
+        with pytest.raises(ValueError):
+            graph.add_causal_relationship(cause, effect, relationship_type=bad_type)

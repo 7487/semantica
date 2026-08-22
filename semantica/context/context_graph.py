@@ -2764,8 +2764,11 @@ class ContextGraph:
         """
         # Normalize so callers may use either vocabulary's spelling
         # ("causes" from CausalChainAnalyzer, or "CAUSED" from this module's
-        # canonical constant); the stored form is always canonical.
-        relationship_type = _CAUSAL_EDGE_ALIASES.get(relationship_type.upper())
+        # canonical constant); the stored form is always canonical. Invalid
+        # inputs keep raising ValueError rather than AttributeError.
+        if not isinstance(relationship_type, str):
+            raise ValueError(f"Relationship type must be one of: {_CAUSAL_EDGE_TYPES}")
+        relationship_type = _CAUSAL_EDGE_ALIASES.get(relationship_type.strip().upper())
         if relationship_type is None:
             raise ValueError(f"Relationship type must be one of: {_CAUSAL_EDGE_TYPES}")
         
