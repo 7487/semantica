@@ -22,6 +22,27 @@ def _make_connected_store():
 CONSTRUCT_QUERY = "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o }"
 
 
+class TestRDF4JStoreInitialization(unittest.TestCase):
+    def test_explicit_repository_id_selects_repository(self):
+        response = MagicMock(status_code=200)
+
+        with patch(
+            "semantica.triplet_store.rdf4j_store.requests.get",
+            return_value=response,
+        ) as mock_get:
+            store = RDF4JStore(
+                endpoint="http://localhost:8080/rdf4j-server/",
+                repository_id="semantica",
+            )
+
+        self.assertEqual(store.repository_id, "semantica")
+        mock_get.assert_called_once_with(
+            "http://localhost:8080/rdf4j-server/repositories/semantica",
+            timeout=30,
+            auth=None,
+        )
+
+
 class TestRDF4JStoreIsConstructQuery(unittest.TestCase):
     def test_detects_uppercase(self):
         self.assertTrue(_make_connected_store()._is_construct_query(

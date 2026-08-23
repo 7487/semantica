@@ -67,7 +67,7 @@ class RDF4JStore:
             self.progress_tracker.enabled = True
 
         self.endpoint = endpoint.rstrip("/")
-        self.repository_id = config.get("repository_id", "default")
+        self.repository_id = repository_id or config.get("repository_id", "default")
         self.username = config.get("username")
         self.password = config.get("password")
         self.timeout = config.get("timeout", 30)
