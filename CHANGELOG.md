@@ -400,6 +400,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Entities and relationships round-trip as memory-local provenance only — Markdown import intentionally does not write into `ContextGraph`, matching the MVP scope agreed on in #765
   - Documented the file contract and workflow in `docs/reference/context.md`; 43 new tests in `tests/context/test_agent_memory_markdown.py` cover round-trip losslessness, idempotency, validation errors, rollback on failure, and vector-store sync ordering
 
+- **Markdown directory round trips for `ContextGraph`** (#852) by @SaurabhScripts
+  - `ContextGraph.save_to_file(..., format="markdown")` and `load_from_file(..., format="markdown")` persist a deterministic `graph.md` relationship manifest plus one human-editable Markdown file per node, preserving graph, node, edge, family, temporal, and cross-graph link identities
+  - Imports validate the complete directory before replacing graph state, rebuild indexes and analytics state atomically, create JSON-compatible stub nodes for dangling edge endpoints, and emit the same granular node/edge audit events as JSON loading
+  - Existing exports are replaced atomically only after their complete canonical layout is validated; untracked files, renamed node files, symlinks, Windows directory junctions, and other reparse points cause a fail-closed error instead of authorizing directory deletion
+  - Added 30 focused tests covering deterministic round trips, manual edits, validation rollback, managed-directory identity, publish rollback, audit-manager compatibility, stale-cache clearing, mocked and real Windows junctions, and missing-path behavior
+
 ### Fixed
 
 - **Markdown import followed filesystem links even though Markdown export already refused to overwrite them** (#851, follow-up to #765, #786) by @SaurabhScripts

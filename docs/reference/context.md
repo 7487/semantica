@@ -435,8 +435,8 @@ print("Nodes: {}, Edges: {}".format(stats["node_count"], stats["edge_count"]))
 | `query(query, skip, limit)` | `List[Dict]` | Full-text search over node content |
 | `stats()` | `Dict` | Node/edge counts, type breakdowns, graph density |
 | `density()` | `float` | Graph density score |
-| `save_to_file(path)` | `None` | Persist graph to JSON |
-| `load_from_file(path)` | `None` | Load graph from JSON |
+| `save_to_file(path, format="json")` | `None` | Persist graph as JSON or a Markdown directory |
+| `load_from_file(path, format="json")` | `None` | Replace graph state from JSON or a Markdown directory |
 | `build_from_conversations(conversations, link_entities)` | `Dict` | Build graph from conversation data |
 | `link_graph(other_graph, source_node_id, target_node_id, link_type)` | `str` | Create cross-graph navigation link; returns `link_id` |
 | `navigate_to(link_id)` | `Tuple` | Follow a cross-graph link to `(target_graph, target_node_id)` |
