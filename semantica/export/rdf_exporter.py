@@ -105,7 +105,11 @@ def normalize_confidence(value: Any) -> Optional[str]:
     # "1e100000000" is eleven characters that expand to a hundred million, and
     # the export path continues past validation errors, so a single malformed
     # field could exhaust memory. Nothing near this magnitude is a confidence.
-    if not -MAX_CONFIDENCE_EXPONENT <= decimal_value.adjusted() <= MAX_CONFIDENCE_EXPONENT:
+    if (
+        not -MAX_CONFIDENCE_EXPONENT
+        <= decimal_value.adjusted()
+        <= MAX_CONFIDENCE_EXPONENT
+    ):
         return None
 
     # `str(Decimal("0.00001"))` gives "0.00001", but a float that has already
@@ -411,13 +415,12 @@ class RDFSerializer:
             prefix, separator, local_name = value.partition(":")
             namespace = (namespaces or self.namespace_manager.namespaces).get(prefix)
             if namespace and separator:
-                return quote(namespace + local_name, safe=":/?#[]@!$&'()*+,;=%")
-            remainder = value[len(prefix) + 1 :]
-            if len(prefix) >= 2 and (
-                remainder.startswith(("//", "/"))
-                or any(token in remainder for token in (":", "/", "@"))
-            ):
-                return quote(value, safe=":/?#[]@!$&'()*+,;=%")
+                return quote(namespace + local_name, safe=":/?#[]@!$&'()*+,;=")
+            # A scheme with at least two characters is an absolute IRI,
+            # including opaque forms such as mailto:foo and isbn:0451450523.
+            # Keep one-character schemes as the existing Windows drive-path case.
+            if len(prefix) >= 2:
+                return quote(value, safe=":/?#[]@!$&'()*+,;=")
         return self._SEMANTICA_NS + quote(value, safe="")
 
     # Design decision — TemporalBound.OPEN in RDF:
@@ -522,7 +525,9 @@ class RDFSerializer:
             )
 
             if include_temporal:
-                owl_lines = self._owl_time_triples_for_rel(rel, idx, time_axis)
+                owl_lines = self._owl_time_triples_for_rel(
+                    rel, idx, time_axis, merged_namespaces
+                )
                 if owl_lines:
                     # The interval hangs off the relationship's own IRI, and a
                     # relationship written as a single triple has no such node
@@ -532,7 +537,7 @@ class RDFSerializer:
                     # export, and every term is declared in the vocabulary.
                     lines.extend(
                         self._reified_relationship_triples(
-                            rel, idx, source_id, target_id, rel_type
+                            rel, idx, source_id, target_id, rel_type, merged_namespaces
                         )
                     )
                     lines.extend(owl_lines)
@@ -546,6 +551,7 @@ class RDFSerializer:
         source_id: str,
         target_id: str,
         rel_type: str,
+        namespaces: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         """
         Emit the reified relationship node that OWL-Time triples hang off.
@@ -554,7 +560,11 @@ class RDFSerializer:
         to, using the same sem:Relationship shape the JSON-LD export already
         writes, so the two serializations describe relationships the same way.
         """
-        rel_id = rel.get("id") or mint_relationship_iri(idx, source_id or "", target_id or "")
+        rel_id = self._as_turtle_iri(
+            rel.get("id")
+            or mint_relationship_iri(idx, source_id or "", target_id or ""),
+            namespaces,
+        )
 
         # The full predicate, not its local name. Truncating to the fragment
         # made https://a.example/ns#employs and https://b.example/ns#employs the
@@ -568,17 +578,25 @@ class RDFSerializer:
             .replace("\r", "\\r")
         )
 
-        predicates = [f"a semantica:Relationship"]
+        predicates = ["a semantica:Relationship"]
         if source_id:
-            predicates.append(f"semantica:source <{source_id}>")
+            predicates.append(
+                f"semantica:source <{self._as_turtle_iri(source_id, namespaces)}>"
+            )
         if target_id:
-            predicates.append(f"semantica:target <{target_id}>")
+            predicates.append(
+                f"semantica:target <{self._as_turtle_iri(target_id, namespaces)}>"
+            )
         predicates.append(f'semantica:type "{escaped}"')
 
         return ["", f"<{rel_id}> " + " ;\n    ".join(predicates) + " ."]
 
     def _owl_time_triples_for_rel(
-        self, rel: Dict[str, Any], idx: int, time_axis: str
+        self,
+        rel: Dict[str, Any],
+        idx: int,
+        time_axis: str,
+        namespaces: Optional[Dict[str, str]] = None,
     ) -> List[str]:
         """
         Emit OWL-Time Turtle triples for a relationship that carries temporal metadata.
@@ -593,7 +611,7 @@ class RDFSerializer:
         def _is_open(v: Any) -> bool:
             if v is None:
                 return False
-            if hasattr(v, "value"):          # TemporalBound enum
+            if hasattr(v, "value"):  # TemporalBound enum
                 return v.value == _OPEN_SENTINEL
             return str(v).strip().upper() == _OPEN_SENTINEL
 
@@ -610,7 +628,10 @@ class RDFSerializer:
         # deterministic IRI.
         source_id = rel.get("source_id") or rel.get("source") or ""
         target_id = rel.get("target_id") or rel.get("target") or ""
-        rel_base_id = rel.get("id") or mint_relationship_iri(idx, source_id, target_id)
+        rel_base_id = self._as_turtle_iri(
+            rel.get("id") or mint_relationship_iri(idx, source_id, target_id),
+            namespaces,
+        )
 
         lines = [""]  # blank separator
         for axis_name, from_val, until_val in axes:
@@ -625,9 +646,7 @@ class RDFSerializer:
             lines.append(f"    time:hasBeginning <{begin_id}> ;")
 
             if _is_open(until_val):
-                lines.append(
-                    '    semantica:openEndedInterval "true"^^xsd:boolean .'
-                )
+                lines.append('    semantica:openEndedInterval "true"^^xsd:boolean .')
             elif until_val is not None:
                 end_id = f"{rel_base_id}__{axis_name}_end"
                 lines.append(f"    time:hasEnd <{end_id}> .")
@@ -636,7 +655,9 @@ class RDFSerializer:
                     f'    time:inXSDDateTimeStamp "{until_val}"^^xsd:dateTimeStamp .'
                 )
             else:
-                lines[-1] = lines[-1].rstrip(" ;") + " ."  # close interval without hasEnd
+                lines[-1] = (
+                    lines[-1].rstrip(" ;") + " ."
+                )  # close interval without hasEnd
 
             lines.append(f"<{begin_id}> a time:Instant ;")
             lines.append(

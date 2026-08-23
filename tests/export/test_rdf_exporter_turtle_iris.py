@@ -10,27 +10,41 @@ def test_turtle_normalizes_graph_builder_default_identifiers():
     """Default GraphBuilder labels with spaces become stable absolute IRIs."""
     source = {
         "entities": [
-            {"id": "Acme Corp", "name": "Acme Corp", "type": "ORG"},
+            {
+                "id": "Kochi, Kerala",
+                "name": "Kochi, Kerala",
+                "type": "LOCATION",
+            },
             {"id": "Jane Doe", "name": "Jane Doe", "type": "PERSON"},
         ],
         "relationships": [
-            {"source": "Jane Doe", "target": "Acme Corp", "type": "works_for"},
+            {
+                "source": "Jane Doe",
+                "target": "Kochi, Kerala",
+                "type": "located_in",
+            },
         ],
     }
     graph_data = GraphBuilder(resolve_conflicts=False).build(sources=[source])
 
     turtle = RDFExporter().export_to_rdf(graph_data, format="turtle")
     parsed = Graph().parse(data=turtle, format="turtle")
+    assert "<Jane Doe>" not in turtle
+    assert "<Kochi, Kerala>" not in turtle
 
-    acme = URIRef("https://semantica.dev/ns#Acme%20Corp")
+    kochi = URIRef("https://semantica.dev/ns#Kochi%2C%20Kerala")
     jane = URIRef("https://semantica.dev/ns#Jane%20Doe")
-    assert (acme, RDF.type, URIRef("https://semantica.dev/ns#ORG")) in parsed
+    assert (
+        kochi,
+        RDF.type,
+        URIRef("https://semantica.dev/ns#LOCATION"),
+    ) in parsed
     jane_type = URIRef("https://semantica.dev/ns#PERSON")
     assert (jane, RDF.type, jane_type) in parsed
     assert (
         jane,
-        URIRef("https://semantica.dev/ns#works_for"),
-        acme,
+        URIRef("https://semantica.dev/ns#located_in"),
+        kochi,
     ) in parsed
 
 
@@ -58,12 +72,14 @@ def test_turtle_preserves_absolute_iris():
     ) in parsed
 
 
-def test_turtle_expands_context_prefixes_and_normalizes_malformed_iris():
-    """Prefixes expand and malformed URI-like values are minted."""
+def test_turtle_preserves_opaque_absolute_iris_and_encodes_bad_percent_escapes():
+    """Opaque schemes remain absolute and malformed percent escapes are encoded."""
     turtle = RDFExporter().export_to_rdf(
         {
-            "@context": {"ex": "https://example.org/"},
-            "entities": [{"id": "http://[invalid", "type": "ex:Person"}],
+            "entities": [
+                {"id": "mailto:foo", "type": "isbn:0451450523"},
+                {"id": "http://example.org/bad%zz", "type": "PERSON"},
+            ],
             "relationships": [],
         },
         format="turtle",
@@ -71,7 +87,62 @@ def test_turtle_expands_context_prefixes_and_normalizes_malformed_iris():
     parsed = Graph().parse(data=turtle, format="turtle")
 
     assert (
-        URIRef("https://semantica.dev/ns#http%3A%2F%2F%5Binvalid"),
+        URIRef("mailto:foo"),
+        RDF.type,
+        URIRef("isbn:0451450523"),
+    ) in parsed
+    assert URIRef("http://example.org/bad%25zz") in parsed.all_nodes()
+
+
+def test_turtle_normalizes_temporal_relationship_endpoints():
+    """Temporal relationship metadata uses the same normalized resource IRIs."""
+    turtle = RDFExporter().export_to_rdf(
+        {
+            "entities": [
+                {"id": "Jane Doe", "type": "PERSON"},
+                {"id": "Kochi, Kerala", "type": "LOCATION"},
+            ],
+            "relationships": [
+                {
+                    "source": "Jane Doe",
+                    "target": "Kochi, Kerala",
+                    "type": "located_in",
+                    "valid_from": "2024-01-01T00:00:00+00:00",
+                    "valid_until": "2024-02-01T00:00:00+00:00",
+                }
+            ],
+        },
+        format="turtle",
+        include_temporal=True,
+    )
+    parsed = Graph().parse(data=turtle, format="turtle")
+
+    assert (
+        None,
+        URIRef("https://semantica.dev/ns#source"),
+        URIRef("https://semantica.dev/ns#Jane%20Doe"),
+    ) in parsed
+    assert (
+        None,
+        URIRef("https://semantica.dev/ns#target"),
+        URIRef("https://semantica.dev/ns#Kochi%2C%20Kerala"),
+    ) in parsed
+
+
+def test_turtle_expands_context_prefixes_and_mints_relative_values():
+    """Context prefixes expand while bare values use the fallback namespace."""
+    turtle = RDFExporter().export_to_rdf(
+        {
+            "@context": {"ex": "https://example.org/"},
+            "entities": [{"id": "ORG", "type": "ex:Person"}],
+            "relationships": [],
+        },
+        format="turtle",
+    )
+    parsed = Graph().parse(data=turtle, format="turtle")
+
+    assert (
+        URIRef("https://semantica.dev/ns#ORG"),
         RDF.type,
         URIRef("https://example.org/Person"),
     ) in parsed
