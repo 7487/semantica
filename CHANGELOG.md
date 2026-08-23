@@ -402,6 +402,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Markdown import followed filesystem links even though Markdown export already refused to overwrite them** (#851, follow-up to #765, #786) by @SaurabhScripts
+  - `AgentMemory._read_markdown_path()` now rejects symlink files, broken symlinks, symlinked directories, Windows directory junctions, and other Windows reparse points supplied directly; linked entries discovered inside an otherwise valid directory are safely skipped, preserving the current directory-import contract
+  - `_read_markdown_file_content()` re-checks the file and parent directory immediately before and after opening, uses `O_NOFOLLOW` where available, and verifies the resulting descriptor is a regular file via `fstat`/`S_ISREG`, so link swaps are rejected rather than silently followed
+  - Junction detection uses `os.path.isjunction()` where available and falls back to the Windows reparse-point file attribute on older Python versions; export applies the same link check before replacing a Markdown file
+  - Documented the import restriction in `docs/reference/context.md`; added 11 tests to `tests/context/test_agent_memory_markdown.py` covering file/directory/broken-symlink rejection, simulated open races, mocked and real Windows junctions, and the reparse-point fallback
+  - Any additional review follow-up commits land in this same PR/entry rather than as a separate changelog item
+
 - **`PipelineWithProvenance` raised `ModuleNotFoundError` on import and `AttributeError` on `.run()`** (#858, closes #858) by @Karunasagar12
   - `from .pipeline import Pipeline` failed because `semantica/pipeline/pipeline.py` does not exist; corrected to `from .pipeline_builder import Pipeline`
   - `.run()` called `self._pipeline.run()` on the `Pipeline` dataclass, which has no such method; replaced with `self._engine.execute_pipeline(self._pipeline, ...)` delegating to `ExecutionEngine`
