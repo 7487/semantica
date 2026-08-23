@@ -146,3 +146,39 @@ def test_turtle_expands_context_prefixes_and_mints_relative_values():
         RDF.type,
         URIRef("https://example.org/Person"),
     ) in parsed
+
+
+def test_rdfxml_normalizes_resource_iris():
+    """RDF/XML resource attributes use the same safe absolute IRIs."""
+    data = {
+        "entities": [
+            {"id": "Acme Corp", "type": "Person"},
+            {"id": "mailto:foo", "type": "isbn:0451450523"},
+        ],
+        "relationships": [
+            {"source": "Jane Doe", "target": "Acme Corp", "type": "knows"}
+        ],
+    }
+    rdfxml = RDFExporter().export_to_rdf(data, format="rdfxml")
+    parsed = Graph().parse(data=rdfxml, format="xml")
+
+    assert URIRef("https://semantica.dev/ns#Acme%20Corp") in parsed.all_nodes()
+    assert URIRef("mailto:foo") in parsed.all_nodes()
+
+
+def test_ntriples_normalizes_resource_iris():
+    """N-Triples resource IRIs reject neither spaces nor opaque schemes."""
+    data = {
+        "entities": [
+            {"id": "Acme Corp", "type": "Person"},
+            {"id": "mailto:foo", "type": "isbn:0451450523"},
+        ],
+        "relationships": [
+            {"source": "Jane Doe", "target": "Acme Corp", "type": "knows"}
+        ],
+    }
+    ntriples = RDFExporter().export_to_rdf(data, format="ntriples")
+    parsed = Graph().parse(data=ntriples, format="nt")
+
+    assert URIRef("https://semantica.dev/ns#Acme%20Corp") in parsed.all_nodes()
+    assert URIRef("mailto:foo") in parsed.all_nodes()

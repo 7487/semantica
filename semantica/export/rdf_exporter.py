@@ -31,6 +31,7 @@ License: MIT
 
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
+from html import escape as xml_escape
 from typing import Any, Dict, List, Optional, Set, Union
 from urllib.parse import quote, urlsplit
 
@@ -696,6 +697,8 @@ class RDFSerializer:
         lines.append('         xmlns:semantica="https://semantica.dev/ns#">')
         lines.append("")
 
+        namespaces = self.namespace_manager.extract_namespaces(rdf_data)
+
         # Convert entities to RDF/XML
         entities = rdf_data.get("entities", [])
         for entity in entities:
@@ -705,13 +708,19 @@ class RDFSerializer:
                 entity_text = entity.get("text", "")
                 entity_id = mint_entity_iri(entity_text)
 
-            entity_type = entity.get("type", DEFAULT_ENTITY_TYPE)
+            entity_type = entity.get("type") or DEFAULT_ENTITY_TYPE
             text = entity.get("text") or entity.get("label", "")
             confidence = normalize_confidence(entity.get("confidence", 1.0))
 
             # RDF/XML syntax: rdf:Description with rdf:about
-            lines.append(f'  <rdf:Description rdf:about="{entity_id}">')
-            lines.append(f'    <rdf:type rdf:resource="{entity_type}"/>')
+            entity_iri = xml_escape(
+                self._as_turtle_iri(entity_id, namespaces), quote=True
+            )
+            entity_type_iri = xml_escape(
+                self._as_turtle_iri(entity_type, namespaces), quote=True
+            )
+            lines.append(f'  <rdf:Description rdf:about="{entity_iri}">')
+            lines.append(f'    <rdf:type rdf:resource="{entity_type_iri}"/>')
             lines.append(f"    <semantica:text>{text}</semantica:text>")
             if confidence is None:
                 self.logger.warning(
@@ -731,11 +740,19 @@ class RDFSerializer:
         for rel in relationships:
             source_id = rel.get("source_id") or rel.get("source")
             target_id = rel.get("target_id") or rel.get("target")
-            rel_type = rel.get("type", "semantica:related_to")
+            # RDF/XML predicates are emitted as QNames, unlike resource
+            # attributes which use the shared absolute-IRI normalizer.
+            rel_type = rel.get("type") or "semantica:related_to"
 
             # Relationship as property on source entity
-            lines.append(f'  <rdf:Description rdf:about="{source_id}">')
-            lines.append(f'    <{rel_type} rdf:resource="{target_id}"/>')
+            source_iri = xml_escape(
+                self._as_turtle_iri(source_id, namespaces), quote=True
+            )
+            target_iri = xml_escape(
+                self._as_turtle_iri(target_id, namespaces), quote=True
+            )
+            lines.append(f'  <rdf:Description rdf:about="{source_iri}">')
+            lines.append(f'    <{rel_type} rdf:resource="{target_iri}"/>')
             lines.append("  </rdf:Description>")
             lines.append("")
 
@@ -855,20 +872,12 @@ class RDFSerializer:
         """
         lines = []
 
+        namespaces = self.namespace_manager.extract_namespaces(rdf_data)
+
         def expand_uri(uri: str) -> str:
             if not uri:
                 return ""
-            if uri.startswith("http"):
-                return f"<{uri}>"
-            if uri.startswith("semantica:"):
-                return f"<https://semantica.dev/ns#{uri.split(':', 1)[1]}>"
-            if uri.startswith("rdf:"):
-                return f"<http://www.w3.org/1999/02/22-rdf-syntax-ns#{uri.split(':', 1)[1]}>"
-            if uri.startswith("rdfs:"):
-                return f"<http://www.w3.org/2000/01/rdf-schema#{uri.split(':', 1)[1]}>"
-            if ":" in uri:
-                return f"<{uri}>"
-            return f"<https://semantica.dev/ns#{uri}>"
+            return f"<{self._as_turtle_iri(uri, namespaces)}>"
 
         # Convert entities
         entities = rdf_data.get("entities", [])
@@ -882,7 +891,7 @@ class RDFSerializer:
             subject = expand_uri(entity_id)
 
             # Type triple
-            entity_type = entity.get("type", "semantica:Entity")
+            entity_type = entity.get("type") or DEFAULT_ENTITY_TYPE
             lines.append(
                 f"{subject} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {expand_uri(entity_type)} ."
             )
@@ -916,7 +925,7 @@ class RDFSerializer:
         for rel in relationships:
             source_id = rel.get("source_id") or rel.get("source")
             target_id = rel.get("target_id") or rel.get("target")
-            rel_type = rel.get("type", "semantica:related_to")
+            rel_type = rel.get("type") or DEFAULT_RELATION_TYPE
 
             if source_id and target_id:
                 lines.append(
