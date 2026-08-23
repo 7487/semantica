@@ -182,3 +182,52 @@ def test_ntriples_normalizes_resource_iris():
 
     assert URIRef("https://semantica.dev/ns#Acme%20Corp") in parsed.all_nodes()
     assert URIRef("mailto:foo") in parsed.all_nodes()
+
+
+def test_turtle_preserves_existing_valid_percent_escapes():
+    """A pre-encoded absolute IRI keeps its escape, instead of %20 -> %2520."""
+    turtle = RDFExporter().export_to_rdf(
+        {
+            "entities": [
+                {
+                    "id": "https://example.org/entities/path%20name",
+                    "type": "PERSON",
+                }
+            ],
+            "relationships": [],
+        },
+        format="turtle",
+    )
+    parsed = Graph().parse(data=turtle, format="turtle")
+
+    assert (
+        URIRef("https://example.org/entities/path%20name"),
+        RDF.type,
+        URIRef("https://semantica.dev/ns#PERSON"),
+    ) in parsed
+    assert "%2520" not in turtle
+
+
+def test_ntriples_and_rdfxml_expand_builtin_prefixes_alongside_context():
+    """A user @context must not shadow built-in prefixes like semantica:."""
+    data = {
+        "@context": {"ex": "https://example.org/"},
+        "entities": [{"id": "ORG", "type": "semantica:Entity"}],
+        "relationships": [],
+    }
+
+    ntriples = RDFExporter().export_to_rdf(data, format="ntriples")
+    nt_parsed = Graph().parse(data=ntriples, format="nt")
+    assert (
+        URIRef("https://semantica.dev/ns#ORG"),
+        RDF.type,
+        URIRef("https://semantica.dev/ns#Entity"),
+    ) in nt_parsed
+
+    rdfxml = RDFExporter().export_to_rdf(data, format="rdfxml")
+    xml_parsed = Graph().parse(data=rdfxml, format="xml")
+    assert (
+        URIRef("https://semantica.dev/ns#ORG"),
+        RDF.type,
+        URIRef("https://semantica.dev/ns#Entity"),
+    ) in xml_parsed

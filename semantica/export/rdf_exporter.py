@@ -29,6 +29,7 @@ Author: Semantica Contributors
 License: MIT
 """
 
+import re
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
 from html import escape as xml_escape
@@ -403,6 +404,30 @@ class RDFSerializer:
     _OWL_TIME_NS = "http://www.w3.org/2006/time#"
     _SEMANTICA_NS = "https://semantica.dev/ns#"
 
+    # Matches an already-valid percent-escape so it can be passed through
+    # unchanged instead of being re-encoded into e.g. %2520.
+    _PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+
+    @classmethod
+    def _quote_preserving_escapes(cls, value: str, safe: str) -> str:
+        """quote() that leaves existing valid %XX escapes untouched.
+
+        Blanket-quoting an absolute IRI double-encodes any percent-escape it
+        already carries (%20 -> %2520), which changes the identity of every
+        previously-valid IRI containing one. Only the spans between existing
+        valid escapes are quoted; a bare '%' that isn't part of a valid
+        escape (e.g. "%zz") still gets encoded to %25, keeping the malformed
+        case handled.
+        """
+        parts = []
+        pos = 0
+        for match in cls._PERCENT_ESCAPE_RE.finditer(value):
+            parts.append(quote(value[pos : match.start()], safe=safe))
+            parts.append(match.group(0))
+            pos = match.end()
+        parts.append(quote(value[pos:], safe=safe))
+        return "".join(parts)
+
     def _as_turtle_iri(
         self, value: Any, namespaces: Optional[Dict[str, str]] = None
     ) -> str:
@@ -414,14 +439,28 @@ class RDFSerializer:
             parsed = urlsplit("")
         if parsed.scheme:
             prefix, separator, local_name = value.partition(":")
-            namespace = (namespaces or self.namespace_manager.namespaces).get(prefix)
+            # Built-in namespaces (semantica:, rdf:, rdfs:, owl:, ...) must
+            # always be resolvable, not only when the caller passes no
+            # namespaces of its own — otherwise a value like "semantica:Foo"
+            # resolves fine with no @context but stops resolving the moment
+            # any @context is present, since callers pass extract_namespaces()
+            # (context-only) here without merging in the built-ins.
+            effective_namespaces = {
+                **self.namespace_manager.namespaces,
+                **(namespaces or {}),
+            }
+            namespace = effective_namespaces.get(prefix)
             if namespace and separator:
-                return quote(namespace + local_name, safe=":/?#[]@!$&'()*+,;=")
+                return self._quote_preserving_escapes(
+                    namespace + local_name, safe=":/?#[]@!$&'()*+,;="
+                )
             # A scheme with at least two characters is an absolute IRI,
             # including opaque forms such as mailto:foo and isbn:0451450523.
             # Keep one-character schemes as the existing Windows drive-path case.
             if len(prefix) >= 2:
-                return quote(value, safe=":/?#[]@!$&'()*+,;=")
+                return self._quote_preserving_escapes(
+                    value, safe=":/?#[]@!$&'()*+,;="
+                )
         return self._SEMANTICA_NS + quote(value, safe="")
 
     # Design decision — TemporalBound.OPEN in RDF:
