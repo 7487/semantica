@@ -351,3 +351,51 @@ def test_a_quote_in_an_attribute_value_cannot_break_the_document():
     from xml.dom.minidom import parseString
 
     parseString(xml)  # well-formedness is the assertion
+
+
+# --- Finding from review of PR #1165 ----------------------------------------
+
+
+@pytest.mark.parametrize("fmt", ["turtle", "ntriples"])
+def test_an_iri_valued_metadata_value_cannot_inject_a_second_triple(fmt):
+    """`sem:sourceUri` (the "uri" key) is the one metadata term written as a
+    node, ``<{value}>``, with no other quoting. Turtle/N-Triples IRIREFs
+    exclude '>' (among other characters) unescaped, so a value shaped like
+    ``<goodIRI> . <injected> <p> <o>`` closed the reference early and let the
+    rest of the string be parsed as an unrelated, attacker-chosen triple.
+    """
+    payload = (
+        "https://evil.example/x> . <https://evil.example/injected> "
+        "<https://evil.example/p> <https://evil.example/o"
+    )
+    data = {
+        "entities": [
+            {"id": ENTITY_IRI, "text": "Acme", "metadata": {"uri": payload}}
+        ],
+        "relationships": [],
+    }
+    g = _serialize(RDFSerializer(), fmt, data)
+    # Exactly the entity's own four statements: type, text, confidence, and
+    # the one metadata triple. No extra subject/triple was injected — the
+    # payload survives only as (a mangled but harmless part of) the single
+    # sourceUri value, never as a standalone subject of its own.
+    assert len(g) == 4
+    assert not list(g.subjects(None, URIRef("https://evil.example/injected")))
+    assert not list(g.subjects(URIRef("https://evil.example/p"), None))
+
+
+@pytest.mark.parametrize("fmt", ["turtle", "ntriples"])
+def test_an_iri_valued_metadata_value_with_control_characters_still_parses(fmt):
+    """A newline or tab in an IRI-valued metadata value is just as
+    unescaped-IRIREF-breaking as '>' — cover the control-character half of
+    the grammar, not only the delimiter characters.
+    """
+    payload = "https://evil.example/x\ninjected line\ttabbed"
+    data = {
+        "entities": [
+            {"id": ENTITY_IRI, "text": "Acme", "metadata": {"uri": payload}}
+        ],
+        "relationships": [],
+    }
+    g = _serialize(RDFSerializer(), fmt, data)
+    assert len(g) == 4

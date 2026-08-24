@@ -193,6 +193,24 @@ def _escape_literal(value: str) -> str:
     )
 
 
+#: Turtle/N-Triples IRIREF grammar excludes these unescaped between `<` and
+#: `>`: control characters, space, and <>"{}|^`\. An IRI-valued metadata
+#: value (currently only sem:sourceUri, from the caller-controlled "uri"
+#: metadata key) is written as `<{value}>` with no other quoting, so a value
+#: containing one of these characters — a ">" followed by a full triple, for
+#: instance — closes the IRIREF early and lets the rest of the string be
+#: parsed as further RDF statements. This is the same shape of defect the
+#: entity/relationship IRIs were hardened against; that hardening resolves
+#: prefixes as well, which a metadata value never needs, so this stays a
+#: narrower, dedicated guard rather than reusing _as_turtle_iri.
+_IRI_REF_UNSAFE_RE = re.compile(r'[\x00-\x20<>"{}|^`\\]')
+
+
+def _safe_iri_ref(value: str) -> str:
+    """Percent-encode the characters an IRIREF may not contain unescaped."""
+    return _IRI_REF_UNSAFE_RE.sub(lambda m: quote(m.group(0), safe=""), value)
+
+
 def _escape_xml(value: str) -> str:
     """Escape a string for either XML element text or an attribute value.
 
@@ -328,7 +346,7 @@ def _typed_literal_parts(term: str, value: Any) -> tuple:
 def _turtle_object(term: str, value: Any) -> str:
     kind, lexical, datatype = _typed_literal_parts(term, value)
     if kind == "iri":
-        return f"<{lexical}>"
+        return f"<{_safe_iri_ref(lexical)}>"
     if datatype is None:
         return f'"{_escape_literal(lexical)}"'
     return f'"{lexical}"^^<{datatype}>'
