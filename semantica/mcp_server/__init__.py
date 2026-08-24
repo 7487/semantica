@@ -417,21 +417,35 @@ def _tool_query_graph(args: dict) -> dict:
                  "direction": "out", "hop": n.get("hop", 1)}
                 for n in (nb or [])
             ]
-            # In-edges (1-hop): scan edges whose target == node_id
+            # In-edges (1-hop): scan edges whose target == node_id.
+            # Deduplicate by source node so that multiple edges between the
+            # same pair of nodes (different edge types) produce one entry.
+            # Stop early once we have already collected `limit` inbound results
+            # (if a limit is set) to avoid scanning the full edge list.
             inb = []
+            seen_inbound = set()
             for e in graph.find_edges():
                 if e.get("target") != node_id:
                     continue
                 if rel_set is not None and e.get("type") not in rel_set:
                     continue
                 src_id = e.get("source")
+                if src_id in seen_inbound:
+                    continue
+                seen_inbound.add(src_id)
                 src = graph.find_node(src_id) or {}
                 inb.append({"id": src_id, "type": src.get("type"),
                             "content": src.get("content"),
                             "relationship": e.get("type"),
                             "direction": "in", "hop": 1})
+                # Early-exit: we already have `limit` inbound results; the
+                # combined list will be truncated to `limit` anyway.
+                if limit is not None and len(inb) >= limit:
+                    break
             neighbors = out + inb
-            if limit:
+            # Apply final limit.  Use ``is not None`` so limit=0 (zero results)
+            # is honoured correctly; ``if limit:`` would treat 0 as falsy.
+            if limit is not None:
                 neighbors = neighbors[:limit]
             return {"node_id": node_id, "depth": depth, "neighbors": neighbors}
 
@@ -444,12 +458,13 @@ def _tool_query_graph(args: dict) -> dict:
             nodes = graph.find_nodes(node_type=node_type) if node_type else graph.find_nodes()
             hits = []
             for n in nodes:
+                # Check limit BEFORE appending so limit=0 returns empty.
+                if len(hits) >= limit:
+                    break
                 blob = f"{n.get('id','')} {n.get('content','')}".lower()
                 if q in blob:
                     hits.append({"id": n.get("id"), "type": n.get("type"),
                                  "content": n.get("content")})
-                if len(hits) >= limit:
-                    break
             return {"query": q, "results": hits, "total": len(hits)}
 
         return {"error": f"unknown mode '{mode}': use node|neighbors|search"}

@@ -16,7 +16,6 @@ router = APIRouter(prefix="/api/decisions", tags=["Decisions"])
 
 def _node_to_decision(node: dict) -> DecisionResponse:
     properties = node.get("properties", {})
-    ts = properties.get("timestamp")
     return DecisionResponse(
         decision_id=node.get("id", ""),
         category=properties.get("category", ""),
@@ -24,7 +23,7 @@ def _node_to_decision(node: dict) -> DecisionResponse:
         reasoning=properties.get("reasoning", ""),
         outcome=properties.get("outcome", ""),
         confidence=float(properties.get("confidence", 0.0) or 0.0),
-        timestamp=ts if isinstance(ts, str) or ts is None else str(ts),
+        timestamp=properties.get("timestamp"),
         metadata=properties,
     )
 
