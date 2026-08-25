@@ -267,9 +267,16 @@ def _tool_get_graph_analytics(args: dict) -> dict:
         return {"error": str(exc)}
 
 
+_EXPORT_GRAPH_FORMATS = ("turtle", "ttl", "nt", "xml", "json-ld", "json")
+
+
 def _tool_export_graph(args: dict) -> dict:
     """Export the current knowledge graph to a serialised format."""
     fmt = args.get("format", "json-ld")
+    if fmt not in _EXPORT_GRAPH_FORMATS:
+        return {
+            "error": f"Unsupported format '{fmt}'. Supported: {', '.join(_EXPORT_GRAPH_FORMATS)}"
+        }
     graph = _get_graph()
     try:
         from semantica.export import RDFExporter
@@ -453,7 +460,7 @@ TOOLS = [
             "properties": {
                 "format": {
                     "type": "string",
-                    "enum": ["turtle", "ttl", "nt", "xml", "json-ld", "json"],
+                    "enum": list(_EXPORT_GRAPH_FORMATS),
                     "description": "Export format (default: json-ld)",
                 }
             },

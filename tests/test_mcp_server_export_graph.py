@@ -70,6 +70,21 @@ class TestExportGraphTool(unittest.TestCase):
     def test_progress_is_disabled_for_the_server_process(self):
         self.assertEqual(os.environ.get("SEMANTICA_DISABLE_PROGRESS"), "1")
 
+    def test_unsupported_format_returns_error_not_mislabeled_json(self):
+        """A format outside the declared enum (typo, unsupported value, or a
+        client that skips schema validation) must error, not silently return
+        JSON data mislabeled with the requested format string."""
+        result = mcp_server._tool_export_graph({"format": "yaml"})
+        self.assertIn("error", result)
+        self.assertIn("yaml", result["error"])
+
+    def test_export_graph_schema_enum_matches_handled_formats(self):
+        """The tool's declared inputSchema enum must not drift from the set
+        of formats the handler actually accepts."""
+        tool = next(t for t in mcp_server.TOOLS if t["name"] == "export_graph")
+        schema_enum = set(tool["inputSchema"]["properties"]["format"]["enum"])
+        self.assertEqual(schema_enum, set(mcp_server._EXPORT_GRAPH_FORMATS))
+
 
 if __name__ == "__main__":
     unittest.main()
