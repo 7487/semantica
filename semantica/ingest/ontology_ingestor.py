@@ -110,9 +110,12 @@ class OntologyIngestor:
             # `@graph` places its terms in a NAMED graph. `Graph.parse()` loads only the
             # default graph and discards the rest without an error, so every class and
             # property in such a document was dropped while the load reported success.
-            # Parsing into a Dataset and flattening the quads keeps both. Same migration
-            # #757 made for JenaStore; the ingest path was not covered by it.
-            ds = Dataset()
+            # Same migration #757 made for JenaStore; the ingest path was not covered by it.
+            # `default_union=True` makes the Dataset itself present triples from every
+            # graph as one merged view (it is an rdflib.Graph subclass, so it satisfies
+            # _convert_to_dict()'s Graph-typed contract directly) instead of copying every
+            # quad into a second in-memory Graph.
+            ds = Dataset(default_union=True)
 
             # Use provided format or let rdflib guess based on extension
             parse_kwargs = kwargs.copy()
@@ -142,9 +145,7 @@ class OntologyIngestor:
                 else:
                     raise e
 
-            g = Graph()
-            for subject, predicate, obj, _context in ds.quads((None, None, None, None)):
-                g.add((subject, predicate, obj))
+            g = ds
 
             self.progress.update_tracking(tracking_id, message="Converting to internal format...")
             
