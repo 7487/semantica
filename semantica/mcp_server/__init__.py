@@ -127,13 +127,16 @@ def _tool_extract_relations(args: dict) -> dict:
     text = args.get("text", "")
     if not text:
         return {"error": "text is required"}
-    from semantica.semantic_extract import RelationExtractor, TripletExtractor
+    from semantica.semantic_extract import NamedEntityRecognizer, RelationExtractor, TripletExtractor
     rel_kwargs = {}
+    ner_kwargs = {}
     for k in ("model", "language"):
         if args.get(k) is not None:
             rel_kwargs[k] = args[k]
+            ner_kwargs[k] = args[k]
     method = args.get("method", "pattern")
-    relations = RelationExtractor(method=method, **rel_kwargs).extract_relations(text)
+    entities = NamedEntityRecognizer(methods=["ml"], **ner_kwargs).extract_entities(text) or []
+    relations = RelationExtractor(method=method, **rel_kwargs).extract_relations(text, entities)
     triplets = TripletExtractor().extract_triplets(text)
     return {
         "relations": [

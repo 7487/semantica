@@ -877,6 +877,22 @@ class TestEntityExtractionSurfaceText(unittest.TestCase):
         result = _tool_extract_relations({})
         self.assertIn("error", result)
 
+    def test_extract_relations_with_text_does_not_raise(self):
+        """extract_relations must not raise TypeError for missing `entities`
+        (RelationExtractor.extract_relations requires an `entities` arg;
+        the tool must supply one, e.g. by running NER first)."""
+        from semantica.mcp_server import _tool_extract_relations
+
+        try:
+            result = _tool_extract_relations({"text": "Apple announced new iPhone"})
+        except Exception as exc:
+            self.fail(f"extract_relations raised unexpectedly: {exc!r}")
+
+        self.assertNotIn("error", result,
+                          "extract_relations should not error on valid text input")
+        self.assertIn("relations", result)
+        self.assertIn("triplets", result)
+
 
 # ---------------------------------------------------------------------------
 # Part 13: query_graph node / search modes
