@@ -4731,6 +4731,7 @@ class ContextGraph:
                 scenario=decision["scenario"],
                 decision_maker=decision.get("decision_maker", ""),
                 reasoning=decision["reasoning"],
+                recorded_at=decision.get("recorded_at", ""),
                 **safe_metadata,
                 **extra_properties,
             )
@@ -5005,14 +5006,38 @@ class ContextGraph:
         chars = "".join(text.lower().split())
         return {chars[i:i + 2] for i in range(len(chars) - 1)}
 
+    @staticmethod
+    def _looks_cjk(text: str) -> bool:
+        """True if text contains CJK/Japanese/Korean script characters.
+
+        Used to gate the character-bigram similarity fallback so it only
+        activates for scripts where whitespace tokenisation doesn't work.
+        """
+        for ch in text:
+            code = ord(ch)
+            if (
+                0x4E00 <= code <= 0x9FFF     # CJK Unified Ideographs
+                or 0x3400 <= code <= 0x4DBF  # CJK Extension A
+                or 0x3040 <= code <= 0x30FF  # Hiragana + Katakana
+                or 0xAC00 <= code <= 0xD7A3  # Hangul Syllables
+                or 0x1100 <= code <= 0x11FF  # Hangul Jamo
+            ):
+                return True
+        return False
+
     def _calculate_decision_content_similarity(self, scenario: str, decision: Dict[str, Any]) -> float:
         """Calculate content similarity between scenario and decision.
 
         Uses word-level Jaccard for space-separated languages.  For text where
-        whitespace tokenisation fails (CJK, single-word queries) a character-
-        bigram Jaccard is computed over the *stripped* character sequences and
-        blended in with a weight that diminishes as the query grows so that it
-        cannot dominate English results.
+        whitespace tokenisation is unreliable (CJK/Japanese/Korean scripts, or
+        a query with no whitespace at all) a character-bigram Jaccard is
+        computed over the *stripped* character sequences instead.
+
+        The bigram fallback only activates when whitespace tokenisation would
+        not help — i.e. the query is CJK-like or has at most one whitespace
+        token — so it never contributes for ordinary multi-word English
+        queries, where incidental bigram overlap between unrelated sentences
+        would otherwise inflate scores.
 
         The bigram side uses *Jaccard* (|A∩B|/|A∪B|), not the overlap
         coefficient, so a 2-character query whose single bigram happens to
@@ -5039,23 +5064,33 @@ class ContextGraph:
             )
 
             # --- character-bigram Jaccard (CJK / very-short-query fallback) ---
-            scenario_bigrams = self._char_bigrams(scenario)
-            decision_bigrams = self._char_bigrams(decision_text)
-
-            # Require at least 3 bigrams in the query before the bigram signal
-            # is used.  A 2-char query produces only 1 bigram; that single
-            # bigram is far too likely to appear as a substring of any English
-            # word and would produce a spuriously high overlap coefficient.
-            # 3 bigrams correspond to a 4-char stripped query (e.g. two CJK
-            # characters produce 1 bigram each → need ≥3 chars stripped).
+            # Only used when whitespace tokenisation can't do the job: CJK-like
+            # scripts, or a query that is a single whitespace token (no spaces
+            # to split on).  Ordinary multi-word English queries rely on
+            # word_sim alone, so incidental bigram overlap between unrelated
+            # sentences can never inflate their score.
             bigram_sim = 0.0
-            if len(scenario_bigrams) >= 3 and decision_bigrams:
-                bigram_union = scenario_bigrams | decision_bigrams
-                bigram_sim = (
-                    len(scenario_bigrams & decision_bigrams) / len(bigram_union)
-                    if bigram_union
-                    else 0.0
-                )
+            needs_bigram_fallback = (
+                self._looks_cjk(scenario) or len(scenario.split()) <= 1
+            )
+            if needs_bigram_fallback:
+                scenario_bigrams = self._char_bigrams(scenario)
+                decision_bigrams = self._char_bigrams(decision_text)
+
+                # Require at least 3 bigrams in the query before the bigram
+                # signal is used.  A 2-char query produces only 1 bigram; that
+                # single bigram is far too likely to appear as a substring of
+                # any English word and would produce a spuriously high overlap
+                # coefficient.  3 bigrams correspond to a 4-char stripped query
+                # (e.g. two CJK characters produce 1 bigram each → need ≥3
+                # chars stripped).
+                if len(scenario_bigrams) >= 3 and decision_bigrams:
+                    bigram_union = scenario_bigrams | decision_bigrams
+                    bigram_sim = (
+                        len(scenario_bigrams & decision_bigrams) / len(bigram_union)
+                        if bigram_union
+                        else 0.0
+                    )
 
             return max(word_sim, bigram_sim)
 

@@ -206,6 +206,9 @@ class TestDecisionMetadataPreservation(unittest.TestCase):
             entities=["trader_X", "instrument_Y"],
             decision_maker="compliance_engine",
         )
+        recorded_at_before = g._decisions[did]["recorded_at"]
+        self.assertTrue(recorded_at_before, "recorded_at must be set at record time")
+
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = f.name
         try:
@@ -221,6 +224,8 @@ class TestDecisionMetadataPreservation(unittest.TestCase):
             self.assertAlmostEqual(dec["confidence"], 0.85, places=3)
             self.assertIn("trader_X", dec["entities"])
             self.assertEqual(dec["decision_maker"], "compliance_engine")
+            self.assertEqual(dec["recorded_at"], recorded_at_before,
+                             "recorded_at must survive a save -> load round trip")
         finally:
             os.unlink(path)
 
@@ -548,6 +553,19 @@ class TestBigramSpikeRegression(unittest.TestCase):
             sim = self._sim(q, "algorithm alignment base rate attention")
             self.assertLess(sim, 0.5,
                             f"2-char query {q!r} must not produce high similarity")
+
+    def test_unrelated_multiword_english_queries_score_zero(self):
+        """The bigram fallback must not activate for ordinary multi-word
+        English queries -- it exists only for CJK/single-token queries where
+        whitespace tokenisation can't help. Unrelated multi-word English
+        sentences must score 0.0, not a nonzero incidental bigram overlap."""
+        sim = self._sim(
+            "employee vacation request approval process",
+            "Server infrastructure migration to cloud provider",
+        )
+        self.assertEqual(sim, 0.0,
+                         "Unrelated multi-word English queries must not "
+                         "receive a nonzero score from bigram overlap")
 
 
 # ---------------------------------------------------------------------------
