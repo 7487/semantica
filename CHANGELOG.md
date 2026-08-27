@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **First-class LangChain integration** (closes #963; recreates #969)
+  - New `pip install semantica[langchain]` extra (`langchain-core>=0.3.0`), included in the `all` bundle
+  - `integrations/langchain/SemanticaRetriever` — LangChain `BaseRetriever` that seeds from `HybridSearch` then walks graph edges (`hops=2` default) for GraphRAG-style retrieval; falls back to `ContextGraph.query` when hybrid search is unavailable
+  - `integrations/langchain/SemanticaVectorStore` — LangChain `VectorStore` adapter over `HybridSearch` (`add_texts`, `similarity_search`, `similarity_search_with_score`, `from_texts`)
+  - `integrations/langchain/SemanticaKGTool` / `SemanticaDecisionTool` — `BaseTool` subclasses with Pydantic `args_schema` (`semantica_query_graph`, `semantica_query_decisions`); `build()` returns the tool, or `None` when langchain-core is absent
+  - Retriever and VectorStore read HybridSearch nested `metadata` (`content`, `node_id`, `node_type`) rather than top-level fields that HybridSearch does not set
+  - All adapters remain importable without langchain-core (`LANGCHAIN_AVAILABLE` flag)
+  - Docs: `docs/integrations/langchain.md`, README native-integration matrix, and `docs.json` nav entry
+
 ## [0.6.6] - 2026-08-20
 
 ### Added
@@ -108,6 +119,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The temporal-evolution `stability` metric was a hardcoded placeholder, not a duration**
+  - `TemporalGraphQuery.analyze_evolution()` documents `stability` as a "relationship duration/stability measure", but the implementation appended a constant `1` for every relationship with both `valid_from` and `valid_until` set (`durations.append(1)  # Placeholder`). The reported stability was therefore always `1.0` when any bounded relationship existed and `0` otherwise — it never reflected how long relationships actually stayed valid, so it could not distinguish a graph of decade-long relationships from one of one-second relationships
+  - `stability` now computes the mean valid-time duration in seconds (`(valid_until - valid_from).total_seconds()`) across relationships that have both bounds set. Relationships with a missing or open `valid_from`/`valid_until` are skipped (their duration is unbounded), and non-positive intervals are clamped to `0`; an empty set still reports `0`
+  - New tests in `tests/kg/test_kg.py` assert the mean-duration result, the skipping of unbounded/half-open intervals, and the empty-graph zero case
+
 - **Every timestamp an export or a provenance record wrote was timezone-naive** (closes #1114) by @fabio-rovai
   - `semantica/export/` stamped with `datetime.now().isoformat()`, which reads the machine's **local** clock; `semantica/provenance/` stamped with `datetime.utcnow().isoformat()`, which reads **UTC**. Both produce a naive value and both serialize identically, so nothing downstream can tell which zone a given timestamp belongs to — the same string means two different instants depending on which module wrote it
   - In RDF the consequence is silent rather than loud. Under XSD 1.1 a value with no timezone compared against one with a timezone is indeterminate whenever the two fall inside the ±14 hour window; SPARQL turns an indeterminate comparison into an error, and `FILTER` discards errors as non-matches. A timezone-qualified query over an Oxigraph store returns an answer with every Semantica-written record quietly absent from it, which is a poor property for `prov:generatedAtTime`, `prov:startedAtTime`, `prov:endedAtTime` and `prov:atTime` to have
@@ -116,6 +132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `tests/export/test_timestamp_timezones.py` and `tests/provenance/test_timestamp_timezones.py`: offset presence on every export and provenance path, PROV-O literals valid as `xsd:dateTimeStamp`, comparison against a timezone-aware instant without `TypeError`, the Oxigraph filter that dropped the naive value (with a bound inside the indeterminate window, so the test cannot pass by accident), and the document `@id` remaining a valid IRI with `+00:00` in it. 11 of the 13 fail on the parent commit
   - **Fixed during review** (Qodo): once new entries carry `+00:00` and stored ones do not, `ProvenanceManager.query_recorded_between` and `audit_log` compared ISO timestamps as raw strings, so they ordered by spelling rather than by instant — an inclusive naive bound naming a stored offset-bearing timestamp sorted *below* it and dropped the record, and a bound written in another offset landed wherever its digits fell (`19:45+05:30` is 14:15Z, but sorted after 14:19Z). Both now compare instants through a new `to_utc_datetime()` helper that reads a missing offset as UTC, which is what the values written before this change actually were; a bound that cannot be read as a timestamp keeps the historical string comparison rather than raising on a call that used to work
   - The remaining 147 naive call sites are in `context/`, `vector_store/`, `seed/` and elsewhere, where timestamps are compared against values parsed from previously stored naive strings. Converting those without a read-side migration would raise `TypeError: can't compare offset-naive and offset-aware datetimes` on existing data, so they are deliberately left for a separate change
+- **`SHACLGenerator` mangles `#`-terminated namespaces into `#/`, so generated shapes target nothing** (#1082) by @changshenhan
+  - `__init__` normalized `base_uri` with `rstrip("/") + "/"`, which turns `http://example.org/manufacturing#` into `...manufacturing#/` — the most common RDF namespace convention. Every generated URI (`sh:targetClass`, `sh:path`, shape URIs) then landed in a different namespace than the instance data, and SHACL validation silently passed because the shapes targeted nothing
+  - `__init__` now preserves a namespace already ending in `/` or `#`, matching the `#`-aware normalization `generate()` already applies; `shapes_uri` inherits the fix
+  - New `test_hash_namespace_base_uri_is_not_mangled` in `tests/ontology/test_ontology_advanced.py` fails on the pre-fix normalization and passes with it; full ontology suite (76 tests) green
 
 - **`split`/chunking paths bypassed the centralized spaCy model cache, reloading the model on every call** (#1042, closes #998) by @Accute9, reviewed by @Sameer6305
   - `semantica/split/methods.py`'s `split_by_sentences()` and `semantica/split/semantic_chunker.py`'s `SemanticChunker.__init__` each called `spacy.load()` directly instead of reusing the process-level cache added in #889/`semantic_extract/methods.py`'s `load_spacy_model()` — every call/construction re-paid the ~120ms model-load cost independently of `NERExtractor`, which already used the cache
@@ -395,7 +415,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Entities and relationships round-trip as memory-local provenance only — Markdown import intentionally does not write into `ContextGraph`, matching the MVP scope agreed on in #765
   - Documented the file contract and workflow in `docs/reference/context.md`; 43 new tests in `tests/context/test_agent_memory_markdown.py` cover round-trip losslessness, idempotency, validation errors, rollback on failure, and vector-store sync ordering
 
+- **Markdown directory round trips for `ContextGraph`** (#852) by @SaurabhScripts
+  - `ContextGraph.save_to_file(..., format="markdown")` and `load_from_file(..., format="markdown")` persist a deterministic `graph.md` relationship manifest plus one human-editable Markdown file per node, preserving graph, node, edge, family, temporal, and cross-graph link identities
+  - Imports validate the complete directory before replacing graph state, rebuild indexes and analytics state atomically, create JSON-compatible stub nodes for dangling edge endpoints, and emit the same granular node/edge audit events as JSON loading
+  - Existing exports are replaced atomically only after their complete canonical layout is validated; untracked files, renamed node files, symlinks, Windows directory junctions, and other reparse points cause a fail-closed error instead of authorizing directory deletion
+  - Added 30 focused tests covering deterministic round trips, manual edits, validation rollback, managed-directory identity, publish rollback, audit-manager compatibility, stale-cache clearing, mocked and real Windows junctions, and missing-path behavior
+
 ### Fixed
+
+- **Markdown import followed filesystem links even though Markdown export already refused to overwrite them** (#851, follow-up to #765, #786) by @SaurabhScripts
+  - `AgentMemory._read_markdown_path()` now rejects symlink files, broken symlinks, symlinked directories, Windows directory junctions, and other Windows reparse points supplied directly; linked entries discovered inside an otherwise valid directory are safely skipped, preserving the current directory-import contract
+  - `_read_markdown_file_content()` re-checks the file and parent directory immediately before and after opening, uses `O_NOFOLLOW` where available, and verifies the resulting descriptor is a regular file via `fstat`/`S_ISREG`, so link swaps are rejected rather than silently followed
+  - Junction detection uses `os.path.isjunction()` where available and falls back to the Windows reparse-point file attribute on older Python versions; export applies the same link check before replacing a Markdown file
+  - Documented the import restriction in `docs/reference/context.md`; added 11 tests to `tests/context/test_agent_memory_markdown.py` covering file/directory/broken-symlink rejection, simulated open races, mocked and real Windows junctions, and the reparse-point fallback
+  - Any additional review follow-up commits land in this same PR/entry rather than as a separate changelog item
 
 - **`PipelineWithProvenance` raised `ModuleNotFoundError` on import and `AttributeError` on `.run()`** (#858, closes #858) by @Karunasagar12
   - `from .pipeline import Pipeline` failed because `semantica/pipeline/pipeline.py` does not exist; corrected to `from .pipeline_builder import Pipeline`
@@ -1513,4 +1546,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-For detailed release notes, see [GitHub Releases](https://github.com/Hawksight-AI/semantica/releases).
+For detailed release notes, see [GitHub Releases](https://github.com/semantica-agi/semantica/releases).
