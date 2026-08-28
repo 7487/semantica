@@ -130,7 +130,10 @@ Example Usage:
 from __future__ import annotations
 
 import importlib
-from typing import Any, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Tuple
+
+if TYPE_CHECKING:
+    from .salesforce_ingestor import SalesforceConnector, SalesforceData, SalesforceIngestor
 
 from .config import IngestConfig, ingest_config
 from .file_ingestor import (

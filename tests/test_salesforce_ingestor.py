@@ -2158,16 +2158,16 @@ class TestReviewFixes:
 
     @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
     @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
-    def test_limit_negative_returns_empty_without_api_call(self, mock_sf_cls):
-        """Negative limit also short-circuits — defence in depth."""
+    def test_limit_negative_raises_validation_error(self, mock_sf_cls):
+        """Negative limit raises ValidationError before any network call."""
         from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
 
         mock_sf_cls.return_value = _make_mock_sf_client()
 
         ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
-        data = ingestor.ingest_sobject("Contact", fields=["Id"], limit=-1)
-
-        assert data.row_count == 0
+        with pytest.raises(ValidationError, match="non-negative"):
+            ingestor.ingest_sobject("Contact", fields=["Id"], limit=-1)
         mock_sf_cls.assert_not_called()
 
     def test_build_soql_limit_zero_not_embedded(self):
@@ -3316,3 +3316,283 @@ class TestCredentialIsolation:
         assert "security_token" not in stored, (
             f"kwarg security_token leaked into global config: {stored}"
         )
+
+
+# ===========================================================================
+# Fix 1 — limit validation (focused tests per review requirement)
+# ===========================================================================
+
+class TestLimitValidation:
+    """Fix 1: limit must be validated as a non-negative int before any
+    comparison, query construction, slicing, or network activity."""
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_none_is_valid(self, mock_sf_cls):
+        """limit=None does not raise."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+
+        mock_client = _make_mock_sf_client()
+        mock_sf_cls.return_value = mock_client
+        mock_client.query.return_value = _make_query_result([], total_size=0)
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        data = ingestor.ingest_sobject("Account", fields=["Id"], limit=None)
+        assert data.row_count == 0
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_zero_is_valid_empty_shortcircuit(self, mock_sf_cls):
+        """limit=0 is the empty-result shortcut — returns empty without API call."""
+        from semantica.ingest.salesforce_ingestor import SalesforceData, SalesforceIngestor
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        data = ingestor.ingest_sobject("Account", fields=["Id"], limit=0)
+        assert isinstance(data, SalesforceData)
+        assert data.row_count == 0
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_positive_int_is_valid(self, mock_sf_cls):
+        """Positive integer limit does not raise."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+
+        mock_client = _make_mock_sf_client()
+        mock_sf_cls.return_value = mock_client
+        mock_client.query.return_value = _make_query_result([], total_size=0)
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        data = ingestor.ingest_sobject("Account", fields=["Id"], limit=10)
+        assert data.row_count == 0
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_negative_raises_validation_error_focused(self, mock_sf_cls):
+        """Negative integer raises ValidationError before network activity."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=["Id"], limit=-5)
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_true_raises_validation_error(self, mock_sf_cls):
+        """True (bool) raises ValidationError even though bool subclasses int."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=["Id"], limit=True)
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_false_raises_validation_error(self, mock_sf_cls):
+        """False (bool) raises ValidationError."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=["Id"], limit=False)
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_float_fractional_raises_validation_error(self, mock_sf_cls):
+        """Float 0.5 raises ValidationError."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=["Id"], limit=0.5)
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_float_whole_raises_validation_error(self, mock_sf_cls):
+        """Float 2.0 raises ValidationError even though it is a whole number."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=["Id"], limit=2.0)
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_limit_string_raises_validation_error(self, mock_sf_cls):
+        """String '10' raises ValidationError."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=["Id"], limit="10")
+        mock_sf_cls.assert_not_called()
+
+
+# ===========================================================================
+# Fix 4 — ORDER BY dotted field path validation (focused tests)
+# ===========================================================================
+
+class TestOrderByDottedValidation:
+    """Fix 4: ORDER BY validation uses _validate_field_name component-wise
+    so double-dots and other malformed paths are caught."""
+
+    def test_valid_simple_field(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        assert _validate_order_by("Name") == "Name"
+
+    def test_valid_dotted_field_asc(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        assert _validate_order_by("Owner.Name ASC") == "Owner.Name ASC"
+
+    def test_valid_dotted_field_desc_nulls_first(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        result = _validate_order_by("Owner.Name DESC NULLS FIRST")
+        assert "NULLS FIRST" in result
+
+    def test_valid_multi_column_with_dotted(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        result = _validate_order_by("Name ASC, Owner.Name DESC")
+        assert result == "Name ASC, Owner.Name DESC"
+
+    def test_invalid_double_dot_raises(self):
+        """Name.Owner..Name ASC must be rejected (double dot is not valid)."""
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        from semantica.utils.exceptions import ValidationError
+        with pytest.raises(ValidationError):
+            _validate_order_by("Name.Owner..Name ASC")
+
+    def test_invalid_leading_dot_raises(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        from semantica.utils.exceptions import ValidationError
+        with pytest.raises(ValidationError):
+            _validate_order_by(".Name ASC")
+
+    def test_invalid_trailing_dot_raises(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        from semantica.utils.exceptions import ValidationError
+        with pytest.raises(ValidationError):
+            _validate_order_by("Name. ASC")
+
+    def test_invalid_injection_still_blocked(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        from semantica.utils.exceptions import ValidationError
+        with pytest.raises(ValidationError):
+            _validate_order_by("Name; DROP TABLE Account")
+
+    def test_invalid_empty_expression_between_commas(self):
+        from semantica.ingest.salesforce_ingestor import _validate_order_by
+        from semantica.utils.exceptions import ValidationError
+        with pytest.raises(ValidationError):
+            _validate_order_by("Name ASC,,CreatedDate DESC")
+
+
+# ===========================================================================
+# Fix 5 — fields validation (focused tests)
+# ===========================================================================
+
+class TestFieldsValidation:
+    """Fix 5: explicit fields must be a non-empty list of valid field-name
+    strings; None retains the schema-discovery behavior."""
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_fields_none_triggers_describe(self, mock_sf_cls):
+        """fields=None causes describe() and returns valid data."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+
+        mock_client = _make_mock_sf_client()
+        mock_sf_cls.return_value = mock_client
+        mock_sftype = Mock()
+        mock_sftype.describe.return_value = {
+            "name": "Account",
+            "fields": [{"name": "Id", "type": "id"}, {"name": "Name", "type": "string"}],
+        }
+        mock_client.Account = mock_sftype
+        mock_client.query.return_value = _make_query_result([], total_size=0)
+
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        data = ingestor.ingest_sobject("Account")  # fields=None
+        mock_sftype.describe.assert_called_once()
+        assert data.row_count == 0
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_fields_valid_list_accepted(self, mock_sf_cls):
+        """fields=["Id", "Name"] is valid."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+
+        mock_client = _make_mock_sf_client()
+        mock_sf_cls.return_value = mock_client
+        mock_client.query.return_value = _make_query_result([], total_size=0)
+
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        data = ingestor.ingest_sobject("Account", fields=["Id", "Name"])
+        assert data.row_count == 0
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_fields_empty_list_raises(self, mock_sf_cls):
+        """fields=[] raises ValidationError before any network call."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError, match="non-empty|empty"):
+            ingestor.ingest_sobject("Account", fields=[])
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_fields_string_raises(self, mock_sf_cls):
+        """fields='Id' (string, not list) raises ValidationError."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields="Id")
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_fields_tuple_raises(self, mock_sf_cls):
+        """fields=('Id',) (tuple, not list) raises ValidationError."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=("Id",))
+        mock_sf_cls.assert_not_called()
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_fields_invalid_element_raises(self, mock_sf_cls):
+        """Invalid field name inside a valid list raises ValidationError."""
+        from semantica.ingest.salesforce_ingestor import SalesforceIngestor
+        from semantica.utils.exceptions import ValidationError
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+        ingestor = SalesforceIngestor(username="u", password="p", security_token="t")
+        with pytest.raises(ValidationError):
+            ingestor.ingest_sobject("Account", fields=["Id", "Bad Field!"])
+        mock_sf_cls.assert_not_called()

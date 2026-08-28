@@ -1638,7 +1638,7 @@ def ingest(
     elif source_type == "mcp":
         return {"data": ingest_mcp(sources, method=method or "resources", **kwargs)}
     elif source_type == "salesforce":
-        return {"data": ingest_salesforce(sources if isinstance(sources, dict) else None,
+        return {"data": ingest_salesforce(sources,
                                           method=method or "sobject", **kwargs)}
     else:
         raise ProcessingError(f"Unknown source type: {source_type}")

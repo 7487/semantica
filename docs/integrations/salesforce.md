@@ -4,11 +4,7 @@ description: "Ingest CRM records from Salesforce sObjects and SOQL queries into 
 icon: "cloud"
 ---
 
-> Extract Accounts, Contacts, Opportunities, and custom objects from Salesforce into Semantica with username/password/security-token or session-based authentication.
-
-<Note>
-**JWT Bearer** and **Bulk API 2.0** authentication are not yet implemented. Use username/password/security-token for server-side integrations, or pass a pre-existing `session_id` + `instance_url` if your environment already manages OAuth tokens.
-</Note>
+> Extract Accounts, Contacts, Opportunities, and custom objects from Salesforce into Semantica with username/password/security-token, JWT bearer, or session-based authentication.
 
 
 ## Installation
@@ -70,6 +66,33 @@ Use environment variables (or a `.env` file with `python-dotenv`) to keep creden
     password during Salesforce SOAP login. Generate or reset it under
     **Settings → My Personal Information → Reset My Security Token**.
   </Tab>
+  <Tab title="JWT Bearer (Recommended for CI/CD)">
+    ```python
+    import os
+    from semantica.ingest import SalesforceIngestor
+
+    ingestor = SalesforceIngestor(
+        username=os.getenv("SALESFORCE_USERNAME"),
+        consumer_key=os.getenv("SALESFORCE_CONSUMER_KEY"),
+        privatekey_file=os.getenv("SALESFORCE_PRIVATE_KEY_FILE"),
+        domain="login",   # or "test" for sandbox
+    )
+    ```
+    ```bash
+    export SALESFORCE_USERNAME="your-username@example.com"
+    export SALESFORCE_CONSUMER_KEY="your-connected-app-consumer-key"
+    export SALESFORCE_PRIVATE_KEY_FILE="/path/to/server.key"
+    ```
+    The JWT bearer flow authenticates with a signed token — no password
+    is transmitted. Ideal for server-to-server integrations and CI/CD
+    pipelines. Requires a Salesforce connected app configured with
+    **Use digital signatures** and the pre-authorised user listed under
+    **Manage → Profiles / Permission Sets**.
+
+    If you prefer to pass the key material as a string instead of a file
+    path, use `SALESFORCE_PRIVATE_KEY` (the PEM contents) in place of
+    `SALESFORCE_PRIVATE_KEY_FILE`.
+  </Tab>
   <Tab title="Session ID + Instance URL">
     ```python
     ingestor = SalesforceIngestor(
@@ -119,6 +142,9 @@ All constructor parameters have environment-variable fallbacks:
 | `SALESFORCE_DOMAIN` | `domain` | `"login"` |
 | `SALESFORCE_INSTANCE_URL` | `instance_url` | — |
 | `SALESFORCE_SESSION_ID` | `session_id` | — |
+| `SALESFORCE_CONSUMER_KEY` | `consumer_key` | — |
+| `SALESFORCE_PRIVATE_KEY_FILE` | `privatekey_file` | — |
+| `SALESFORCE_PRIVATE_KEY` | `privatekey` | — |
 | `SALESFORCE_API_VERSION` | `api_version` | library default (`59.0`) |
 
 

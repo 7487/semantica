@@ -65,11 +65,6 @@ try:
     from simple_salesforce.exceptions import (
         SalesforceAuthenticationFailed as _SalesforceAuthenticationFailed,
         SalesforceError as _SalesforceError,
-        SalesforceExpiredSession as _SalesforceExpiredSession,
-        SalesforceGeneralError as _SalesforceGeneralError,
-        SalesforceMalformedRequest as _SalesforceMalformedRequest,
-        SalesforceRefusedRequest as _SalesforceRefusedRequest,
-        SalesforceResourceNotFound as _SalesforceResourceNotFound,
     )
 
     SALESFORCE_AVAILABLE = True
@@ -77,11 +72,6 @@ except (ImportError, OSError):
     _SimpleSalesforce = None  # type: ignore[assignment,misc]
     _SalesforceAuthenticationFailed = None  # type: ignore[assignment,misc]
     _SalesforceError = None  # type: ignore[assignment,misc]
-    _SalesforceExpiredSession = None  # type: ignore[assignment,misc]
-    _SalesforceGeneralError = None  # type: ignore[assignment,misc]
-    _SalesforceMalformedRequest = None  # type: ignore[assignment,misc]
-    _SalesforceRefusedRequest = None  # type: ignore[assignment,misc]
-    _SalesforceResourceNotFound = None  # type: ignore[assignment,misc]
     SALESFORCE_AVAILABLE = False
 
 
@@ -213,6 +203,13 @@ def _validate_soql_where(fragment: str) -> str:
 def _validate_order_by(fragment: str) -> str:
     """Validate a SOQL ORDER BY clause fragment.
 
+    Each comma-separated expression is parsed into:
+      ``field_path [ASC|DESC] [NULLS FIRST|NULLS LAST]``
+
+    The field-path component is validated with :func:`_validate_field_name`
+    so dotted paths like ``Owner.Name`` are accepted while malformed paths
+    such as ``Name.Owner..Name`` are rejected.
+
     Args:
         fragment: The ORDER BY expression (without the ``ORDER BY`` keyword),
             e.g. ``Name ASC, CreatedDate DESC NULLS LAST``.
@@ -221,17 +218,34 @@ def _validate_order_by(fragment: str) -> str:
         The unchanged fragment if valid.
 
     Raises:
-        ValidationError: If the fragment contains unexpected characters or
-            keywords.
+        ValidationError: If the fragment is empty, a field name component is
+            invalid, or the modifiers are malformed.
     """
     if not isinstance(fragment, str) or not fragment.strip():
         raise ValidationError("ORDER BY clause must be a non-empty string.")
-    if not _SAFE_ORDER_RE.match(fragment.strip()):
-        raise ValidationError(
-            f"Invalid ORDER BY clause: {fragment!r}. "
-            "Only field names (with optional dot-notation), ASC/DESC, and "
-            "NULLS FIRST/LAST are permitted."
-        )
+
+    # Each comma-separated expression: field_path [ASC|DESC] [NULLS FIRST|LAST]
+    _MODIFIER_RE = re.compile(
+        r"^(?P<field>[A-Za-z][A-Za-z0-9_.]*)(?P<mod>(?:\s+(?:ASC|DESC))?(?:\s+NULLS\s+(?:FIRST|LAST))?)$",
+        re.IGNORECASE,
+    )
+
+    for raw_expr in fragment.split(","):
+        expr = raw_expr.strip()
+        if not expr:
+            raise ValidationError(
+                f"Invalid ORDER BY clause: {fragment!r}. "
+                "Empty expression between commas."
+            )
+        m = _MODIFIER_RE.match(expr)
+        if not m:
+            raise ValidationError(
+                f"Invalid ORDER BY clause: {fragment!r}. "
+                "Each expression must be: field_path [ASC|DESC] [NULLS FIRST|LAST]."
+            )
+        # Validate the field path component-wise (catches double-dots, etc.)
+        _validate_field_name(m.group("field"))
+
     return fragment
 
 
@@ -319,6 +333,19 @@ class SalesforceConnector:
             domain="login",     # or "test" for sandbox
         )
 
+    **JWT Bearer** (service-to-service — no interactive login)::
+
+        import os
+        from semantica.ingest import SalesforceConnector
+
+        connector = SalesforceConnector(
+            username=os.getenv("SALESFORCE_USERNAME"),
+            consumer_key=os.getenv("SALESFORCE_CONSUMER_KEY"),
+            privatekey_file=os.getenv("SALESFORCE_PRIVATE_KEY_FILE"),
+            # OR: privatekey=os.getenv("SALESFORCE_PRIVATE_KEY"),
+            domain="login",
+        )
+
     **Session ID + Instance URL** (pre-authenticated OAuth session)::
 
         import os
@@ -329,15 +356,6 @@ class SalesforceConnector:
             instance_url=os.getenv("SALESFORCE_INSTANCE_URL"),
         )
 
-    .. note::
-        **JWT Bearer authentication** (``consumer_key`` + ``privatekey`` /
-        ``privatekey_file``) is supported by ``simple-salesforce`` but is not
-        implemented in this connector.  It requires a separate key-management
-        flow and will be added in a later stage when the full lifecycle
-        (key loading, passphrase handling, token refresh) can be validated
-        end-to-end.  Until then, pass ``session_id`` + ``instance_url`` if
-        you already hold a JWT-derived token from your own auth layer.
-
     Environment Variables
     ----------------------
     Every constructor parameter has an environment-variable fallback:
@@ -345,9 +363,12 @@ class SalesforceConnector:
     * ``SALESFORCE_USERNAME``
     * ``SALESFORCE_PASSWORD``
     * ``SALESFORCE_SECURITY_TOKEN``
-    * ``SALESFORCE_DOMAIN``      (default: ``"login"``)
+    * ``SALESFORCE_DOMAIN``           (default: ``"login"``)
     * ``SALESFORCE_INSTANCE_URL``
     * ``SALESFORCE_SESSION_ID``
+    * ``SALESFORCE_CONSUMER_KEY``
+    * ``SALESFORCE_PRIVATE_KEY_FILE`` (path to PEM file)
+    * ``SALESFORCE_PRIVATE_KEY``      (PEM string — prefer file)
     * ``SALESFORCE_API_VERSION``
 
     Raises:
@@ -363,6 +384,9 @@ class SalesforceConnector:
         domain: Optional[str] = None,
         instance_url: Optional[str] = None,
         session_id: Optional[str] = None,
+        consumer_key: Optional[str] = None,
+        privatekey_file: Optional[str] = None,
+        privatekey: Optional[str] = None,
         api_version: Optional[str] = None,
         **config: Any,
     ) -> None:
@@ -370,17 +394,24 @@ class SalesforceConnector:
 
         Args:
             username: Salesforce login username.
-            password: Salesforce login password.
+            password: Salesforce login password (username/password flow).
             security_token: Salesforce security token appended to the password
-                during SOAP authentication.
+                during SOAP authentication (username/password flow).
             domain: Login domain — ``"login"`` for production (default),
                 ``"test"`` for sandbox, or a custom My Domain value.
             instance_url: Full Salesforce instance URL for session-based auth
                 (e.g. ``"https://myorg.my.salesforce.com"``).
             session_id: Pre-existing Salesforce session / OAuth access token.
+            consumer_key: Connected-app consumer key (required for JWT bearer
+                authentication).
+            privatekey_file: Path to the PEM-encoded private key file used to
+                sign JWT bearer tokens.  Supply either this or *privatekey*,
+                not both.
+            privatekey: PEM-encoded private key string used to sign JWT bearer
+                tokens.  Prefer *privatekey_file* in production so the key
+                material is never embedded in source code.
             api_version: Salesforce REST API version string, e.g. ``"59.0"``.
-                Defaults to ``simple-salesforce``'s built-in default (currently
-                ``"59.0"``).
+                Defaults to ``simple-salesforce``'s built-in default.
             **config: Extra keyword arguments forwarded verbatim to
                 ``simple_salesforce.Salesforce()`` (e.g. ``proxies``,
                 ``session``).
@@ -422,8 +453,17 @@ class SalesforceConnector:
         self.api_version: Optional[str] = (
             api_version or os.getenv("SALESFORCE_API_VERSION")
         )
-
-        # Extra kwargs forwarded to simple-salesforce (e.g. proxies, session)
+        # JWT Bearer credentials — stored under private attrs; never logged.
+        self.consumer_key: Optional[str] = (
+            consumer_key or os.getenv("SALESFORCE_CONSUMER_KEY")
+        )
+        self._privatekey_file: Optional[str] = (
+            privatekey_file or os.getenv("SALESFORCE_PRIVATE_KEY_FILE")
+        )
+        # Raw PEM string — prefer _privatekey_file in production.
+        self._privatekey: Optional[str] = (
+            privatekey or os.getenv("SALESFORCE_PRIVATE_KEY")
+        )
         self._extra_config: Dict[str, Any] = config
 
         # Internal client reference — None until connect() is called.
@@ -432,11 +472,13 @@ class SalesforceConnector:
         # Validate that at least one viable auth path is fully configured.
         self._validate_auth()
 
-        # Safe to log: username (not a secret) and domain.
+        # Safe to log: username (not a secret), domain, and consumer_key
+        # (the consumer key is a public app identifier, not a secret).
         self.logger.debug(
-            "Salesforce connector initialised: username=%s domain=%s",
+            "Salesforce connector initialised: username=%s domain=%s consumer_key=%s",
             self.username or "<session-id auth>",
             self.domain,
+            self.consumer_key or "<none>",
         )
 
     # ------------------------------------------------------------------
@@ -447,26 +489,36 @@ class SalesforceConnector:
         """Raise :class:`~semantica.utils.exceptions.ValidationError` if no
         usable authentication path is present.
 
-        Two valid modes are recognised:
+        Three valid modes are recognised:
 
         1. **Username / password / security token** — all three required.
-        2. **Session ID + instance URL** — both required.
+        2. **JWT Bearer** — ``username`` + ``consumer_key`` + (``privatekey_file``
+           or ``privatekey``) required.
+        3. **Session ID + instance URL** — both required.
 
         Raises:
-            ValidationError: When neither mode has all required fields.
+            ValidationError: When no mode has all required fields.
         """
         has_upw = bool(
             self.username and self._password and self._security_token
         )
+        has_jwt = bool(
+            self.username
+            and self.consumer_key
+            and (self._privatekey_file or self._privatekey)
+        )
         has_session = bool(self._session_id and self.instance_url)
 
-        if not has_upw and not has_session:
+        if not has_upw and not has_jwt and not has_session:
             raise ValidationError(
-                "Salesforce authentication is required. Provide either:\n"
+                "Salesforce authentication is required. Provide one of:\n"
                 "  (a) username + password + security_token "
                 "(env: SALESFORCE_USERNAME / SALESFORCE_PASSWORD / "
                 "SALESFORCE_SECURITY_TOKEN), or\n"
-                "  (b) session_id + instance_url "
+                "  (b) username + consumer_key + privatekey_file or privatekey "
+                "(env: SALESFORCE_USERNAME / SALESFORCE_CONSUMER_KEY / "
+                "SALESFORCE_PRIVATE_KEY_FILE or SALESFORCE_PRIVATE_KEY), or\n"
+                "  (c) session_id + instance_url "
                 "(env: SALESFORCE_SESSION_ID / SALESFORCE_INSTANCE_URL)."
             )
 
@@ -490,6 +542,19 @@ class SalesforceConnector:
             # Direct / pre-authenticated session — no network call during init.
             kwargs["session_id"] = self._session_id
             kwargs["instance_url"] = self.instance_url
+        elif self.consumer_key and (self._privatekey_file or self._privatekey):
+            # JWT Bearer — simple-salesforce performs a signed-token login.
+            # consumer_key is a public app identifier; privatekey material
+            # is forwarded directly and never logged.
+            kwargs["username"] = self.username
+            kwargs["consumer_key"] = self.consumer_key
+            kwargs["domain"] = self.domain
+            if self.instance_url:
+                kwargs["instance_url"] = self.instance_url
+            if self._privatekey_file:
+                kwargs["privatekey_file"] = self._privatekey_file
+            else:
+                kwargs["privatekey"] = self._privatekey
         else:
             # Username + password + security token (SOAP login).
             kwargs["username"] = self.username
@@ -593,13 +658,15 @@ class SalesforceConnector:
         except Exception as exc:
             # Unexpected error (network timeout, DNS failure, etc.).
             # Log without credentials; re-raise with a generic message.
+            # Do not chain the original exception — it may contain credential
+            # material from the authentication layer.
             self.logger.error(
                 "Unexpected error connecting to Salesforce: %s",
                 type(exc).__name__,
             )
             raise ProcessingError(
                 f"Failed to connect to Salesforce: {type(exc).__name__}"
-            ) from exc
+            ) from None
 
     def disconnect(self) -> None:
         """Release the Salesforce client and its underlying requests session.
@@ -708,6 +775,9 @@ class SalesforceIngestor:
         domain: Optional[str] = None,
         instance_url: Optional[str] = None,
         session_id: Optional[str] = None,
+        consumer_key: Optional[str] = None,
+        privatekey_file: Optional[str] = None,
+        privatekey: Optional[str] = None,
         api_version: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -726,6 +796,9 @@ class SalesforceIngestor:
             domain=domain,
             instance_url=instance_url,
             session_id=session_id,
+            consumer_key=consumer_key,
+            privatekey_file=privatekey_file,
+            privatekey=privatekey,
             api_version=api_version,
             **self.config,
         )
@@ -813,12 +886,40 @@ class SalesforceIngestor:
         """
         _validate_sobject_name(sobject_name)
 
+        # Validate limit before any comparison, query construction, or network
+        # activity.  bool subclasses int but is not a valid row count.
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int):
+                raise ValidationError(
+                    f"limit must be a non-negative integer or None; got {limit!r}."
+                )
+            if limit < 0:
+                raise ValidationError(
+                    f"limit must be a non-negative integer or None; got {limit!r}."
+                )
+
         # Validate WHERE and ORDER BY early — before connecting — so bad
         # input raises ValidationError without making any network call.
         if where:
             _validate_soql_where(where)
         if order_by:
             _validate_order_by(order_by)
+
+        # Validate fields early — before connecting — so bad input raises
+        # ValidationError without making any network call.
+        if fields is not None:
+            if isinstance(fields, bool) or not isinstance(fields, list):
+                raise ValidationError(
+                    f"fields must be a list of field-name strings or None; "
+                    f"got {type(fields).__name__!r}."
+                )
+            if not fields:
+                raise ValidationError(
+                    "fields must not be empty; provide at least one field name, "
+                    "or pass fields=None to fetch all selectable fields via describe()."
+                )
+            for f in fields:
+                _validate_field_name(f)
 
         # limit=0 is a valid, well-defined request: "give me no records".
         # Returning immediately avoids generating an invalid ``LIMIT 0`` SOQL
@@ -854,9 +955,11 @@ class SalesforceIngestor:
                         tracking_id, message="Fetching sObject schema…"
                     )
                     fields = self._get_all_field_names(client, sobject_name)
-                else:
-                    for f in fields:
-                        _validate_field_name(f)
+                    if not fields:
+                        raise ProcessingError(
+                            f"describe() returned no selectable fields for "
+                            f"sObject '{sobject_name}'."
+                        )
 
                 soql = self._build_soql(
                     sobject_name=sobject_name,
