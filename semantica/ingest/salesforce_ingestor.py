@@ -93,13 +93,7 @@ _SOBJECT_RE = re.compile(
 # each component must individually match the base pattern.
 _FIELD_COMPONENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(__c|__r)?$")
 
-# ORDER BY: one or more comma-separated ``FieldName [ASC|DESC] [NULLS FIRST|LAST]``
-# clauses.  Relationship dot-notation is supported (e.g. ``Owner.Name ASC``).
-_SAFE_ORDER_RE = re.compile(
-    r"^[A-Za-z][A-Za-z0-9_.]*(\s+(ASC|DESC))?(\s+NULLS\s+(FIRST|LAST))?"
-    r"(\s*,\s*[A-Za-z][A-Za-z0-9_.]*(\s+(ASC|DESC))?(\s+NULLS\s+(FIRST|LAST))?)*$",
-    re.IGNORECASE,
-)
+# ORDER BY validation is now done component-wise using _validate_field_name().
 
 # WHERE-clause fragment blocklist — reused from db_ingestor's approach.
 # SOQL has no UNION, INSERT, DROP, etc., but we still block statement

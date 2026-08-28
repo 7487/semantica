@@ -379,6 +379,53 @@ class TestSalesforceConnectorConnect:
         assert "session_id" not in call_kwargs
 
     @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    def test_init_jwt_bearer_with_privatekey_file(self):
+        """Connector accepts JWT Bearer credentials with privatekey_file."""
+        from semantica.ingest.salesforce_ingestor import SalesforceConnector
+
+        conn = SalesforceConnector(
+            username="jwt_user@org.com",
+            consumer_key="3MVG9test_consumer_key",
+            privatekey_file="/path/to/fake_key.pem",
+        )
+
+        assert conn.username == "jwt_user@org.com"
+        assert conn.consumer_key == "3MVG9test_consumer_key"
+        assert conn._privatekey_file == "/path/to/fake_key.pem"
+        assert conn._privatekey is None
+        assert conn._client is None
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
+    @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
+    def test_connect_jwt_bearer_auth_calls_simple_salesforce(self, mock_sf_cls):
+        """connect() constructs JWT Bearer client with correct kwargs."""
+        from semantica.ingest.salesforce_ingestor import SalesforceConnector
+
+        mock_sf_cls.return_value = _make_mock_sf_client()
+
+        # Fake PEM private key for testing only
+        fake_pem = """-----BEGIN RSA PRIVATE KEY-----
+MIICXAIBAAKBgQC0fake_key_data_for_testing_only
+-----END RSA PRIVATE KEY-----"""
+
+        conn = SalesforceConnector(
+            username="jwt_user@org.com",
+            consumer_key="3MVG9test_consumer_key",
+            privatekey=fake_pem,
+        )
+        client = conn.connect()
+
+        assert client is mock_sf_cls.return_value
+        call_kwargs = mock_sf_cls.call_args[1]
+        assert call_kwargs["username"] == "jwt_user@org.com"
+        assert call_kwargs["consumer_key"] == "3MVG9test_consumer_key"
+        assert call_kwargs["privatekey"] == fake_pem
+        assert call_kwargs["domain"] == "login"
+        # Password/token should not be present for JWT auth
+        assert "password" not in call_kwargs
+        assert "security_token" not in call_kwargs
+
+    @patch("semantica.ingest.salesforce_ingestor.SALESFORCE_AVAILABLE", True)
     @patch("semantica.ingest.salesforce_ingestor._SimpleSalesforce")
     def test_connect_sandbox_domain_forwarded(self, mock_sf_cls):
         """domain='test' is forwarded to simple-salesforce."""
@@ -966,9 +1013,18 @@ class TestImportBehaviourWithoutLib:
 
     def test_salesforce_available_is_false_without_lib(self):
         """SALESFORCE_AVAILABLE reflects library presence."""
-        from semantica.ingest.salesforce_ingestor import SALESFORCE_AVAILABLE
-        # SALESFORCE_AVAILABLE should match whether the lib is actually installed.
-        assert SALESFORCE_AVAILABLE is SALESFORCE_LIB_AVAILABLE
+        # Test that SALESFORCE_AVAILABLE matches actual import capability.
+        # The autouse fixture may have injected a mock, so we check the current
+        # state: can we import simple_salesforce right now?
+        try:
+            import simple_salesforce  # noqa: F401
+            lib_available_now = True
+        except ImportError:
+            lib_available_now = False
+
+        import semantica.ingest.salesforce_ingestor as _sf_mod
+        # SALESFORCE_AVAILABLE should match the current import capability
+        assert _sf_mod.SALESFORCE_AVAILABLE is lib_available_now
 
     def test_semantica_ingest_imports_cleanly_without_lib(self):
         """semantica.ingest imports successfully even without simple-salesforce."""
