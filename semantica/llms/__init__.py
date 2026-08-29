@@ -35,7 +35,7 @@ Example Usage:
     >>> response = llm.generate("Hello, world!")
     >>>
     >>> # Anthropic provider
-    >>> claude = Anthropic(model="claude-sonnet-5", api_key="the-key")
+    >>> claude = Anthropic(model="claude-3-sonnet-20240229", api_key="the-key")
     >>> response = claude.generate("Hello, world!")
 
 Author: Semantica Contributors

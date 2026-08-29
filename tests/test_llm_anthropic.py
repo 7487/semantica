@@ -10,13 +10,20 @@ from semantica.utils.exceptions import ProcessingError
 
 def test_construction_stores_model_and_api_key():
     """Anthropic(...) should not crash and should remember what it was given."""
-    claude = Anthropic(model="claude-sonnet-5", api_key="fake-key")
-    assert claude.model == "claude-sonnet-5"
+    claude = Anthropic(model="claude-3-sonnet-20240229", api_key="fake-key")
+    assert claude.model == "claude-3-sonnet-20240229"
     assert claude.api_key == "fake-key"
 
 
-def test_is_available_false_with_no_key():
-    """Without a real key/package, is_available() must be a real False, not truthy junk."""
+def test_is_available_false_with_no_key(monkeypatch):
+    """Without a real key, is_available() must be a real False, not truthy junk.
+
+    api_key=None alone isn't enough to prove this: AnthropicProvider falls
+    back to the ANTHROPIC_API_KEY environment variable, so this test has to
+    clear it too or it would pass/fail depending on whoever's machine or CI
+    runner happens to run it.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     claude = Anthropic(api_key=None)
     assert claude.is_available() is False
 

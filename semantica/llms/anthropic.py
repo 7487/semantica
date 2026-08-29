@@ -4,7 +4,7 @@ Anthropic LLM Provider
 Wrapper for Anthropic Claude API provider with clean interface
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from ..semantic_extract.providers import AnthropicProvider
 from ..utils.exceptions import ProcessingError
@@ -20,13 +20,13 @@ class Anthropic:
 
     Example:
         >>> from semantica.llms import Anthropic
-        >>> claude = Anthropic(model="claude-sonnet-5", api_key="the-key")
+        >>> claude = Anthropic(model="claude-3-sonnet-20240229", api_key="the-key")
         >>> response = claude.generate("What is API key?")
     """
 
     def __init__(
             self,
-            model: str = "claude-sonnet-5",
+            model: str = "claude-3-sonnet-20240229",
             api_key: Optional[str] = None,
             **kwargs
     ):
@@ -34,7 +34,7 @@ class Anthropic:
         Init Anthropic provider.
 
         Args:
-            model: Model name(default is sonnet 5)
+            model: Model name (default: claude-3-sonnet-20240229)
             api_key: Anthropic API key (default: from ANTHROPIC_API_KEY env var)
             **kwargs: Addition provider options
         """
@@ -68,17 +68,18 @@ class Anthropic:
             )
         return self.provider.generate(prompt, **kwargs)
 
-    def generate_structured(self, prompt: str, **kwargs) -> Dict [str, Any]:
+    def generate_structured(self, prompt: str, **kwargs) -> Union[Dict[str, Any], List[Any]]:
         """
         Generates structured JSON output.
 
         Args:
             prompt: Input prompt text
             **kwargs: Generation options
-        
+
         Returns:
-            An instance of `schema`, populated from the model's response
-        
+            Parsed JSON response. A dict for a top-level JSON object, or a
+            list if the model returns a top-level JSON array.
+
         Raises:
             ProcessingError: If provider is not available or generation fails
         """
