@@ -20,20 +20,44 @@ import pytest
 
 
 @pytest.fixture
-def progress_module(monkeypatch):
+def progress_module():
     """Import the real progress_tracker, bypassing a mocked sys.modules entry.
 
     tests/test_extractors_dispatch.py assigns a MagicMock over
     'semantica.utils.progress_tracker' at import time and never restores it, so
     a plain module-level import here returns mocks when that file has already
-    run. Dropping the cached entry via monkeypatch re-imports the real module
-    and restores whatever was there afterwards.
+    run. Dropping the cached entry re-imports the real module.
+
+    Both bindings are restored afterwards: importing a submodule also rebinds it
+    as an attribute of its parent package, so restoring only the sys.modules
+    entry would leave `semantica.utils.progress_tracker` and
+    `sys.modules["semantica.utils.progress_tracker"]` pointing at different
+    objects for every test that follows.
     """
     name = "semantica.utils.progress_tracker"
-    monkeypatch.delitem(sys.modules, name, raising=False)
-    module = importlib.import_module(name)
-    assert hasattr(module, "__file__"), "expected the real module, got a stand-in"
-    return module
+    attr = name.rsplit(".", 1)[1]
+    parent = importlib.import_module("semantica.utils")
+
+    missing = object()
+    saved_entry = sys.modules.get(name, missing)
+    saved_attr = getattr(parent, attr, missing)
+
+    sys.modules.pop(name, None)
+    try:
+        module = importlib.import_module(name)
+        assert hasattr(module, "__file__"), "expected the real module, got a stand-in"
+        yield module
+    finally:
+        if saved_entry is missing:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = saved_entry
+
+        if saved_attr is missing:
+            if hasattr(parent, attr):
+                delattr(parent, attr)
+        else:
+            setattr(parent, attr, saved_attr)
 
 
 @pytest.fixture
