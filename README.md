@@ -87,7 +87,7 @@ Semantica sits underneath your LLM, vector store, and agent framework as a deter
 - **Graph Analytics:** Centrality, community detection, link prediction, and shortest-path queries over the graph you just built
 - **Polyglot Graph Storage:** Native RDF (embedded Oxigraph, Blazegraph, Apache Jena, Eclipse RDF4J via SPARQL) and Labeled Property Graphs (Neo4j, FalkorDB, Apache AGE, AWS Neptune via Cypher), plus vector stores, all swappable without touching your code
 - **Visualization:** Explore any graph, ontology, or timeline in an interactive browser workbench
-- **Drop-in Integrations:** Native Agno and CrewAI support, a full-featured MCP server, a comprehensive CLI, a REST API, and plugins across major editors
+- **Drop-in Integrations:** Native Agno, CrewAI, and LangChain support, a full-featured MCP server, a comprehensive CLI, a REST API, and plugins across major editors
 
 ---
 
@@ -142,7 +142,7 @@ compliant = graph.check_decision_rules({"category": "vendor_selection"})  # poli
 ```bash
 semantica doctor
 # Python 3.11.9         pass
-# semantica 0.6.6       pass
+# semantica 0.6.7       pass
 # faiss vector store    pass
 # Config file           pass    ~/.semantica/config.yaml
 ```
@@ -1188,7 +1188,7 @@ Start with `semantica`, verify with `doctor`, build a graph, and explore the com
 
 ## Integrations
 
-Native plugin bundles for Claude Code, Cursor, Codex, Windsurf, Cline, Continue, VS Code, and OpenClaw; a full-featured MCP server for any MCP-compatible client; a comprehensive REST API; and first-class Agno and CrewAI support for agentic frameworks. Every major LLM provider is already supported via `semantica.llms` and LiteLLM: OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Azure, Bedrock, Ollama, DeepSeek, HuggingFace, and more.
+Native plugin bundles for Claude Code, Cursor, Codex, Windsurf, Cline, Continue, VS Code, and OpenClaw; a full-featured MCP server for any MCP-compatible client; a comprehensive REST API; and first-class Agno, CrewAI, and LangChain support for agentic frameworks. Every major LLM provider is already supported via `semantica.llms` and LiteLLM: OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Azure, Bedrock, Ollama, DeepSeek, HuggingFace, and more.
 
 MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 
@@ -1307,16 +1307,16 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <strong>CrewAI</strong><br/>
 <sub>First-class · <code>pip install semantica[crewai]</code></sub>
 </td>
+<td align="center" width="12.5%">
+<a href="https://github.com/langchain-ai/langchain"><img src="https://github.com/langchain-ai.png?size=120" alt="LangChain" width="48" height="48" /></a><br/>
+<strong>LangChain</strong><br/>
+<sub>First-class · <code>pip install semantica[langchain]</code></sub>
+</td>
 </tr>
 <tr>
 <th colspan="8" align="left">Already Supported via REST API &amp; MCP</th>
 </tr>
 <tr>
-<td align="center" width="12.5%">
-<a href="https://github.com/langchain-ai/langchain"><img src="https://github.com/langchain-ai.png?size=120" alt="LangChain" width="48" height="48" /></a><br/>
-<strong>LangChain</strong><br/>
-<sub>REST API · MCP</sub>
-</td>
 <td align="center" width="12.5%">
 <a href="https://github.com/langchain-ai/langgraph"><img src="https://github.com/langchain-ai.png?size=120" alt="LangGraph" width="48" height="48" /></a><br/>
 <strong>LangGraph</strong><br/>
@@ -1347,11 +1347,6 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <th colspan="8" align="left">Native SDK Integration (Coming Soon)</th>
 </tr>
 <tr>
-<td align="center" width="12.5%">
-<a href="https://github.com/langchain-ai/langchain"><img src="https://github.com/langchain-ai.png?size=120" alt="LangChain" width="48" height="48" /></a><br/>
-<strong>LangChain</strong><br/>
-<sub>Dedicated toolkit</sub>
-</td>
 <td align="center" width="12.5%">
 <a href="https://github.com/run-llama/llama_index"><img src="https://github.com/run-llama.png?size=120" alt="LlamaIndex" width="48" height="48" /></a><br/>
 <strong>LlamaIndex</strong><br/>
@@ -1468,18 +1463,18 @@ For contributor / dev-server setup: **[explorer/README.md: Local Setup Guide](ex
 
 ---
 
-## What's New in v0.6.6
+## What's New in v0.6.7
 
-**Security release — upgrading is strongly recommended.** Fixes for a privately disclosed batch of vulnerabilities spanning backup/restore, database export, outbound requests, and triplet-store backends, plus SSRF hardening across ingestion:
+**Feature release**, plus one SSRF hardening fix and a large batch of correctness fixes across the RDF/ontology export pipeline:
 
-- **Tarball restore path traversal**: `semantica backup restore` now validates every archive member for path containment and rejects symlink/hardlink escapes before extraction
-- **Latent SQL injection in `DataExporter.export_table_data()`**: table/schema names are now identifier-allowlisted and `where`/`order_by` fragments are blocklist-checked
-- **DNS-rebinding TOCTOU in the shared SSRF guard**: the resolved IP that passes validation is now the one the connection is pinned to, closing the check-then-use race (also closes the `100.64.0.0/10` CGNAT gap)
-- **Stored XSS in HTML report generation** and **unvalidated SPARQL object IRIs in AnzoStore** (SPARQL injection): both now escape/validate before interpolation
-- **`Authorization`/`Proxy-Authorization` credential leakage across redirects**, plus **SSRF gaps in `FeedIngestor`/`FeedMonitor`, `RepoIngestor`, and the MCP/public-API ingest paths**: all now route through the shared, redirect-safe SSRF guard
-- **HTTP response header injection and an unbounded-memory DoS** in the Explorer API, and a **`fastapi`/`python-multipart` ReDoS** (PYSEC-2024-38): floors raised, inputs sanitized, candidate pools capped
+- **First-class LangChain integration** (`semantica[langchain]`): a `BaseRetriever` and `VectorStore` over `HybridSearch`, plus graph/decision-query tools
+- **SAP OData ingestor** (`semantica[ingest-sap]`): OAuth2/Basic-auth, SSRF-guarded ingestion for Business Partners and Sales Orders, following the existing Snowflake/Databricks connector pattern
+- **`ContextGraph` gains deterministic, human-editable Markdown round-trip persistence** alongside the existing JSON API, and the Explorer graph inspector gains a read-only Markdown content viewer
+- **`reasoning` gains a structured Action layer**: rule-driven `Assert`/`Retract`/`Call`/`EmitEvent` actions with optional provenance, turning the reasoner into a production-rule system
+- **`run_shacl_validation` is now a public, documented API**, and a dozen ontology/RDF export correctness fixes land: OWL property/class export, SHACL target-namespace resolution, one canonical confidence datatype across all four RDF formats, reachable OWL-Time reification, JSON-LD default-graph and content-derived document identity, and full metadata passthrough on every RDF serializer
+- **Security**: Agno's `AgnoKnowledgeGraph.load_urls()` and OpenClaw's MCP tool now route outbound requests through the shared SSRF guard
 
-Also ships: **first-class CrewAI integration** (`semantica[crewai]`, extraction/decision tools + a knowledge source), **`ContextGraph` retraction and purge** (GDPR-style erasure without a full `clear()`), a declared **Semantica RDF vocabulary with deterministic entity/relationship IRIs** (stable, diffable exports), and **timezone-aware timestamps** across `export/` and `provenance/`.
+Also fixes: `PipelineBuilder.set_parallelism()` now actually parallelizes independent pipeline steps, `flatten_dict()` no longer silently drops data on a key collision, `Config.get()` honors boolean environment overrides, and the MCP server's `export_graph` tool works again on every format.
 
 → [Full release notes](RELEASE_NOTES.md) · [Changelog](CHANGELOG.md)
 
@@ -1511,6 +1506,7 @@ pip install semantica[all]      # everything
 ```bash
 pip install semantica[agno]                 # Agno multi-agent integration
 pip install semantica[crewai]               # CrewAI integration
+pip install semantica[langchain]            # LangChain / LangGraph integration
 pip install semantica[llm-litellm]          # OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Bedrock, Ollama, DeepSeek, and more
 pip install semantica[graph-neo4j]          # Neo4j graph store (LPG)
 pip install semantica[graph-falkordb]       # FalkorDB graph store (LPG)

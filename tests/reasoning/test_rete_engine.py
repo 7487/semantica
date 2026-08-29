@@ -317,7 +317,7 @@ class TestThreeConditionChain(unittest.TestCase):
         ]
 
         # Reasoner works over stringified facts and returns
-        # (conclusion, matched_facts) tuples from self.facts.
+        # (conclusion, matched_facts, bindings) tuples from self.facts.
         reasoner = Reasoner()
         for fact in facts:
             reasoner.add_fact(str(fact))
@@ -337,7 +337,7 @@ class TestThreeConditionChain(unittest.TestCase):
             {"x": "John", "y": "Mary", "z": "Paris"},
         )
         # The RETE match must carry the instantiated conclusion facts too.
-        conclusion, _ = reasoner_matches[0]
+        conclusion, _, _ = reasoner_matches[0]
         self.assertEqual(conclusion, "LivesNear(John, Paris)")
 
     def test_reset_clears_all_token_memory(self):
