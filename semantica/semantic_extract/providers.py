@@ -733,15 +733,29 @@ class GeminiProvider(BaseProvider):
             raise ProcessingError("Gemini client not initialized.")
 
         json_prompt = f"{prompt}\n\nReturn the response as valid JSON only."
+
+        config = {}
+        self._add_if_set(config, kwargs, "temperature", "top_p", "top_k", "stop_sequences", "candidate_count")
+        if "max_tokens" in kwargs:
+            config["max_output_tokens"] = kwargs["max_tokens"]
+
         if self._use_new_genai:
             model = kwargs.get("model", self.model)
-            resp = self.client.models.generate_content(model=model, contents=json_prompt)
+            resp = self.client.models.generate_content(
+                model=model, contents=json_prompt, config=config or None
+            )
             try:
                 return self._parse_json(self._resp_text(resp))
             except Exception as e:
                 raise ProcessingError(f"Failed to parse JSON from Gemini response: {e}")
         else:
-            response = self.client.generate_content(json_prompt)
+            requested_model = kwargs.get("model", self.model)
+            if requested_model != self.model:
+                import google.generativeai as old_genai
+                client = old_genai.GenerativeModel(requested_model)
+            else:
+                client = self.client
+            response = client.generate_content(json_prompt, generation_config=config or None)
             try:
                 return self._parse_json(self._resp_text(response))
             except Exception as e:
@@ -967,6 +981,8 @@ class OllamaProvider(BaseProvider):
 
     def is_available(self) -> bool:
         """Check if provider is available."""
+        if self.client is None:
+            self._init_client()
         return self.client is not None
 
     def _build_options(self, kwargs: dict) -> Optional[dict]:
@@ -1058,6 +1074,7 @@ class DeepSeekProvider(BaseProvider):
         create_kwargs = {
             "model": kwargs.get("model", self.model),
             "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
         }
         self._add_if_set(create_kwargs, kwargs, "temperature", "max_tokens")
 

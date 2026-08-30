@@ -4,7 +4,7 @@ Ollama LLM Provider
 Wrapper for local Ollama models with clean interface.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from ..semantic_extract.providers import OllamaProvider
 from ..utils.exceptions import ProcessingError
