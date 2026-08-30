@@ -31,13 +31,17 @@ runs:
 
     - name: Install semantica
       shell: bash
+      env:
+        SEMANTICA_EXTRAS: ${{ inputs.extras }}
+        SEMANTICA_VERSION: ${{ inputs.version }}
       run: |
         python -m pip install --upgrade pip
-        if [ -n "${{ inputs.extras }}" ]; then
-          pip install "semantica[${{ inputs.extras }}]${{ inputs.version }}"
+        if [ -n "$SEMANTICA_EXTRAS" ]; then
+          spec="semantica[$SEMANTICA_EXTRAS]$SEMANTICA_VERSION"
         else
-          pip install "semantica${{ inputs.version }}"
+          spec="semantica$SEMANTICA_VERSION"
         fi
+        python -m pip install -- "$spec"
 
     - name: Verify install
       id: verify

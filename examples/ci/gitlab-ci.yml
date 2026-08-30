@@ -9,7 +9,10 @@ semantica-test:
   script:
     - pip install --upgrade pip
     - pip install semantica
-    - pip install -r requirements.txt  # your project's own dependencies
+    # Install your own project's dependencies however your project declares
+    # them - adjust this to match, e.g. `pip install -e .` for pyproject.toml
+    # / setup.cfg, or `poetry install`.
+    - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - python -c "import semantica; print('semantica', semantica.__version__)"
     - pytest
   rules:

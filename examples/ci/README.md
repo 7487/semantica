@@ -3,7 +3,9 @@
 Copy-paste starting points for wiring `semantica` into your own project's CI. Each file is a
 complete, working config — rename it into your project (see the comment at the top of each file
 for the target path) and swap the smoke-test / test step for whatever your project does with
-Semantica.
+Semantica. Each template installs `semantica` unconditionally and your own project's dependencies
+only if a `requirements.txt` is present; if your project uses `pyproject.toml`, Poetry, or Pipenv
+instead, adjust the marked install line (each file calls it out inline).
 
 | File | Target path in your repo |
 | ---- | ------------------------- |
@@ -21,6 +23,13 @@ Semantica's reusable composite action instead:
     # extras: 'explorer,all'   # optional
     # version: '==0.6.7'       # optional, pin an exact release
 ```
+
+`@main` always tracks this repo's default branch, which is convenient but — like any mutable
+ref — can change out from under you between runs. For production CI, pin it to a commit SHA
+instead (find one via `git rev-parse` against a tagged release, or the commit history for
+[`.github/actions/setup-semantica/`](../../.github/actions/setup-semantica/)) and update the pin
+deliberately when you want to pick up changes, the same way this repo's own workflows are pinned
+(see [`verify-action-pins.yml`](../../.github/workflows/verify-action-pins.yml)).
 
 It installs Python, caches pip, installs `semantica`, and verifies the import — see
 [`.github/actions/setup-semantica/action.yml`](../../.github/actions/setup-semantica/action.yml).

@@ -6,12 +6,19 @@ permissions:
 on:
   schedule:
     - cron: '0 6 * * 1'  # weekly, catches upstream dependency breakage between releases
-  release:
-    types: [published]
+  workflow_run:
+    # The Release workflow publishes the GitHub release *before* it uploads to
+    # PyPI (see release.yml), so triggering on `release: published` would race
+    # the PyPI upload and could pass by silently installing the prior version.
+    # workflow_run fires only after the whole Release workflow - including the
+    # PyPI publish step - has finished.
+    workflows: ['Release']
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   verify-install:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     name: pip install semantica (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -21,7 +28,8 @@ jobs:
         python-version: ['3.9', '3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: ./.github/actions/setup-semantica
+      - id: setup-semantica
+        uses: ./.github/actions/setup-semantica
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -32,3 +40,16 @@ jobs:
           import semantica
           print('semantica', semantica.__version__, 'installed and importable')
           "
+
+      - name: Verify version matches the release that triggered this run
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        env:
+          EXPECTED_TAG: ${{ github.event.workflow_run.head_branch }}
+          INSTALLED_VERSION: ${{ steps.setup-semantica.outputs.version }}
+        run: |
+          expected="${EXPECTED_TAG#v}"
+          if [ -n "$expected" ] && [ "$expected" != "$INSTALLED_VERSION" ]; then
+            echo "::error::pip installed semantica $INSTALLED_VERSION but the release that triggered this run was $EXPECTED_TAG - PyPI may still be propagating, or the publish failed."
+            exit 1
+          fi
