@@ -1,0 +1,33 @@
+# Drop this in as .circleci/config.yml in your own project.
+version: 2.1
+
+jobs:
+  test:
+    docker:
+      - image: cimg/python:3.11
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - pip-cache-{{ checksum "requirements.txt" }}
+      - run:
+          name: Install dependencies
+          command: |
+            pip install --upgrade pip
+            pip install semantica
+            pip install -r requirements.txt  # your project's own dependencies
+      - save_cache:
+          key: pip-cache-{{ checksum "requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Smoke test
+          command: python -c "import semantica; print('semantica', semantica.__version__)"
+      - run:
+          name: Run tests
+          command: pytest
+
+workflows:
+  test:
+    jobs:
+      - test

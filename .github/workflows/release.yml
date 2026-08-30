@@ -63,6 +63,10 @@ jobs:
 
           print("Explorer frontend is packaged")
           PY
+      - name: Verify PyPI long-description will render
+        run: |
+          pip install twine==7.0.0
+          twine check dist/*
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:

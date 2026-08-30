@@ -1,0 +1,48 @@
+name: 'Setup Semantica'
+description: 'Install Python, cache pip, and install the semantica package into a workflow'
+author: 'Semantica'
+
+inputs:
+  python-version:
+    description: 'Python version to set up'
+    required: false
+    default: '3.11'
+  version:
+    description: 'Version constraint to append to the pip spec, e.g. "==0.6.7" or ">=0.6,<0.7". Leave empty for the latest release.'
+    required: false
+    default: ''
+  extras:
+    description: 'Comma-separated extras to install, e.g. "explorer,all"'
+    required: false
+    default: ''
+
+outputs:
+  version:
+    description: 'The installed semantica version'
+    value: ${{ steps.verify.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: 'pip'
+
+    - name: Install semantica
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        if [ -n "${{ inputs.extras }}" ]; then
+          pip install "semantica[${{ inputs.extras }}]${{ inputs.version }}"
+        else
+          pip install "semantica${{ inputs.version }}"
+        fi
+
+    - name: Verify install
+      id: verify
+      shell: bash
+      run: |
+        VERSION=$(python -c "import semantica; print(semantica.__version__)")
+        echo "Installed semantica $VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
