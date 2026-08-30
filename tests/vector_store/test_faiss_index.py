@@ -173,3 +173,37 @@ def test_scan_vectors_zero_limit_returns_empty_list():
 def test_scan_vectors_offset_past_end_returns_empty_list():
     store = _store_with_fake_index(["a"])
     assert store.scan_vectors(offset=100, limit=10) == []
+
+
+def test_add_vectors_retry_with_same_ids_does_not_duplicate():
+    """Re-running add_vectors with ids already in the index (e.g. retrying
+    an interrupted migration) must not create a second physical vector
+    under the same id."""
+    backend_index = MagicMock()
+    store = FAISSStore(dimension=3)
+    store.index = FAISSIndex(backend_index, dimension=3)
+
+    vectors = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]], dtype=np.float32)
+    ids = ["a", "b", "c", "d"]
+
+    store.add_vectors(vectors, ids=ids, metadata=[{"i": i} for i in range(4)])
+    assert store.count() == 4
+
+    store.add_vectors(vectors, ids=ids, metadata=[{"i": i} for i in range(4)])
+
+    assert store.count() == 4
+    assert store.index.vector_ids == ids
+
+
+def test_add_vectors_retry_with_partial_overlap_only_adds_new_ids():
+    backend_index = MagicMock()
+    store = FAISSStore(dimension=3)
+    store.index = FAISSIndex(backend_index, dimension=3)
+
+    store.add_vectors(np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32), ids=["a", "b"])
+    store.add_vectors(np.array([[1, 2, 3], [7, 8, 9]], dtype=np.float32), ids=["a", "c"])
+
+    assert store.index.vector_ids == ["a", "b", "c"]
+    second_call_vectors = backend_index.add.call_args[0][0]
+    assert second_call_vectors.shape[0] == 1
+    np.testing.assert_array_equal(second_call_vectors[0], np.array([7, 8, 9], dtype=np.float32))
