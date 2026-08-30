@@ -867,12 +867,25 @@ class VectorStore:
         """
         Iterate over every stored vector, one page at a time.
 
+        Backends whose native pagination is cursor based (Qdrant, Pinecone,
+        Milvus, Weaviate) cannot honestly implement the positional
+        scan_vectors(offset, limit) contract, so they expose iter_all()
+        instead and it is preferred here when present. Backends with real
+        positional access (inmemory, FAISS, SQLite-vec, PgVector) fall
+        through to the offset loop below.
+
         Args:
-            batch_size: Number of vectors to fetch per underlying scan_vectors() call
+            batch_size: Number of vectors to fetch per underlying call
 
         Yields:
             Result dicts with 'id', 'metadata', and 'vector', in scan order
         """
+        if self.backend != "inmemory" and self._backend_store is not None:
+            iter_all = getattr(self._backend_store, "iter_all", None)
+            if callable(iter_all):
+                yield from iter_all(batch_size=batch_size)
+                return
+
         offset = 0
         while True:
             page = self.scan_vectors(offset=offset, limit=batch_size)

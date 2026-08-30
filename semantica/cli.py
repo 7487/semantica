@@ -5,6 +5,7 @@ This module provides the command-line interface for the Semantica framework,
 enabling users to interact with the framework via terminal commands.
 """
 
+import itertools
 import json
 import os
 import sys
@@ -3714,7 +3715,7 @@ def store_stats(cli_ctx: CLIContext, backend: str, fmt: str, local_json: bool) -
     _run_with_error_handling(_action)
 
 
-_MIGRATE_SUPPORTED_BACKENDS = {"faiss", "sqlite", "pgvector"}
+_MIGRATE_SUPPORTED_BACKENDS = {"faiss", "sqlite", "pgvector", "qdrant"}
 _MIGRATE_BATCH_SIZE = 500
 
 
@@ -3759,12 +3760,10 @@ def store_migrate(cli_ctx: CLIContext, from_backend: str, to_backend: str,
                   namespace: Optional[str], local_dry: bool, local_json: bool) -> None:
     """Migrate data between backends.
 
-    Direct migration is only wired up between faiss, sqlite, and pgvector -
-    these are the backends whose storage contract supports paging through
-    every stored vector. Migrating to or from qdrant, pinecone, milvus, or
-    weaviate still needs the export/reindex workaround below, since each of
-    those needs its own enumeration design (Qdrant scroll, Pinecone list,
-    etc.) that hasn't been built yet.
+    Wired up between faiss, sqlite, pgvector and qdrant. Migrating to or from
+    pinecone, milvus or weaviate still needs the export/reindex workaround
+    below, since each of those needs its own enumeration design (Pinecone
+    list, Milvus query_iterator, Weaviate cursor) that is not built yet.
 
     \b
     Example:
@@ -3804,7 +3803,18 @@ def store_migrate(cli_ctx: CLIContext, from_backend: str, to_backend: str,
         if source_index_path:
             source._backend_store.load_index(source_index_path)
 
+        # Pull the first record before building the destination: qdrant, milvus
+        # and weaviate expose no `dimension` attribute, so without this the
+        # destination falls back to the default 768 and rejects every insert.
+        # The data itself is the reliable source of truth.
+        source_iter = source.iter_vectors(batch_size=_MIGRATE_BATCH_SIZE)
+        first_item = next(source_iter, None)
+
         source_dimension = getattr(source._backend_store, "dimension", None)
+        if not source_dimension and first_item is not None:
+            first_vector = first_item.get("vector")
+            if first_vector is not None:
+                source_dimension = len(first_vector)
         if source_dimension and "dimension" not in dest_cfg:
             dest_cfg["dimension"] = source_dimension
 
@@ -3827,7 +3837,12 @@ def store_migrate(cli_ctx: CLIContext, from_backend: str, to_backend: str,
             metadata_batch.clear()
             ids_batch.clear()
 
-        for item in source.iter_vectors(batch_size=_MIGRATE_BATCH_SIZE):
+        items = (
+            source_iter
+            if first_item is None
+            else itertools.chain([first_item], source_iter)
+        )
+        for item in items:
             meta = dict(item.get("metadata") or {})
             if namespace and "namespace" not in meta:
                 meta["namespace"] = namespace
