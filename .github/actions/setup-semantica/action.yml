@@ -15,6 +15,10 @@ inputs:
     description: 'Comma-separated extras to install, e.g. "explorer,all"'
     required: false
     default: ''
+  cache:
+    description: 'Pip cache mode passed straight to actions/setup-python ("pip" to enable). Left empty (disabled) by default because this action is meant to run standalone in any caller repo, and actions/setup-python errors out if it cannot find a requirements.txt/pyproject.toml/setup.py/poetry.lock to key the cache on. Opt in only when the caller repo has one of those files.'
+    required: false
+    default: ''
 
 outputs:
   version:
@@ -27,7 +31,7 @@ runs:
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: ${{ inputs.python-version }}
-        cache: 'pip'
+        cache: ${{ inputs.cache }}
 
     - name: Install semantica
       shell: bash

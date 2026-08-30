@@ -28,10 +28,27 @@ jobs:
         python-version: ['3.9', '3.10', '3.11', '3.12']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Pin expected version for release-triggered runs
+        id: expected-version
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        env:
+          EXPECTED_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          expected="${EXPECTED_TAG#v}"
+          if [ -z "$expected" ]; then
+            echo "::error::Could not determine a release tag from the triggering workflow run (head_branch was empty)."
+            exit 1
+          fi
+          echo "constraint===$expected" >> "$GITHUB_OUTPUT"
+
       - id: setup-semantica
         uses: ./.github/actions/setup-semantica
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          version: ${{ steps.expected-version.outputs.constraint }}
 
       - name: Smoke test import
         shell: bash
@@ -40,16 +57,3 @@ jobs:
           import semantica
           print('semantica', semantica.__version__, 'installed and importable')
           "
-
-      - name: Verify version matches the release that triggered this run
-        if: github.event_name == 'workflow_run'
-        shell: bash
-        env:
-          EXPECTED_TAG: ${{ github.event.workflow_run.head_branch }}
-          INSTALLED_VERSION: ${{ steps.setup-semantica.outputs.version }}
-        run: |
-          expected="${EXPECTED_TAG#v}"
-          if [ -n "$expected" ] && [ "$expected" != "$INSTALLED_VERSION" ]; then
-            echo "::error::pip installed semantica $INSTALLED_VERSION but the release that triggered this run was $EXPECTED_TAG - PyPI may still be propagating, or the publish failed."
-            exit 1
-          fi

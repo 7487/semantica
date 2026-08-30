@@ -22,6 +22,7 @@ Semantica's reusable composite action instead:
     python-version: '3.11'
     # extras: 'explorer,all'   # optional
     # version: '==0.6.7'       # optional, pin an exact release
+    # cache: 'pip'             # optional, only if your repo has a requirements.txt/pyproject.toml/etc.
 ```
 
 `@main` always tracks this repo's default branch, which is convenient but — like any mutable
@@ -31,5 +32,5 @@ instead (find one via `git rev-parse` against a tagged release, or the commit hi
 deliberately when you want to pick up changes, the same way this repo's own workflows are pinned
 (see [`verify-action-pins.yml`](../../.github/workflows/verify-action-pins.yml)).
 
-It installs Python, caches pip, installs `semantica`, and verifies the import — see
+It installs Python, installs `semantica`, and verifies the import (pip caching is opt-in via `cache: 'pip'`, since not every caller repo has a requirements file to key the cache on) — see
 [`.github/actions/setup-semantica/action.yml`](../../.github/actions/setup-semantica/action.yml).
