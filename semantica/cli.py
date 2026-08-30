@@ -3718,6 +3718,36 @@ _MIGRATE_SUPPORTED_BACKENDS = {"faiss", "sqlite", "pgvector"}
 _MIGRATE_BATCH_SIZE = 500
 
 
+def _migrate_backend_config(vs_cfg: Dict[str, Any], backend: str) -> Dict[str, Any]:
+    """Resolve per-backend config out of the vector_store config section.
+
+    Supports both a per-backend nested shape (``vector_store.faiss.dimension``)
+    and the common flat single-backend shape (``vector_store.backend`` +
+    sibling keys), since either can appear depending on how many backends a
+    user has configured.
+    """
+    nested = vs_cfg.get(backend)
+    if isinstance(nested, dict):
+        return dict(nested)
+    if vs_cfg.get("backend") == backend:
+        return {k: v for k, v in vs_cfg.items() if k != "backend"}
+    return {}
+
+
+def _require_faiss_index_path(cfg: Dict[str, Any], role: str) -> str:
+    """FAISS has no server to hold state between commands: a fresh FAISSStore
+    starts empty and nothing outside the process persists it, so migration
+    needs an explicit on-disk index to read from or write to."""
+    index_path = cfg.get("index_path")
+    if not index_path:
+        raise click.ClickException(
+            f"faiss as migration {role} requires 'index_path' in the vector_store "
+            f"config (vector_store.faiss.index_path or vector_store.index_path "
+            f"when faiss is the configured backend)."
+        )
+    return index_path
+
+
 @store.command("migrate")
 @click.option("--from", "from_backend", required=True)
 @click.option("--to", "to_backend", required=True)
@@ -3759,9 +3789,28 @@ def store_migrate(cli_ctx: CLIContext, from_backend: str, to_backend: str,
 
         from .vector_store import VectorStore
 
-        store_cfg = cli_ctx.config.to_dict().get("store", {})
-        source = VectorStore(backend=from_backend, config=dict(store_cfg.get(from_backend, {})))
-        dest = VectorStore(backend=to_backend, config=dict(store_cfg.get(to_backend, {})))
+        vs_cfg = cli_ctx.config.to_dict().get("vector_store", {}) or {}
+        source_cfg = _migrate_backend_config(vs_cfg, from_backend)
+        dest_cfg = _migrate_backend_config(vs_cfg, to_backend)
+
+        source_index_path = None
+        if from_backend == "faiss":
+            source_index_path = _require_faiss_index_path(source_cfg, "source")
+        dest_index_path = None
+        if to_backend == "faiss":
+            dest_index_path = _require_faiss_index_path(dest_cfg, "destination")
+
+        source = VectorStore(backend=from_backend, config=source_cfg)
+        if source_index_path:
+            source._backend_store.load_index(source_index_path)
+
+        source_dimension = getattr(source._backend_store, "dimension", None)
+        if source_dimension and "dimension" not in dest_cfg:
+            dest_cfg["dimension"] = source_dimension
+
+        dest = VectorStore(backend=to_backend, config=dest_cfg)
+        if dest_index_path and Path(dest_index_path).exists():
+            dest._backend_store.load_index(dest_index_path)
 
         migrated = 0
         vectors_batch: List[Any] = []
@@ -3788,6 +3837,9 @@ def store_migrate(cli_ctx: CLIContext, from_backend: str, to_backend: str,
             if len(vectors_batch) >= _MIGRATE_BATCH_SIZE:
                 _flush()
         _flush()
+
+        if dest_index_path and migrated:
+            dest._backend_store.save_index(dest_index_path)
 
         result = {"from": from_backend, "to": to_backend, "migrated": migrated}
         if _is_json(cli_ctx, local_json):

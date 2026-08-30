@@ -696,7 +696,7 @@ class PgVectorStore:
                     results.append({
                         "id": vec_id,
                         "metadata": meta if isinstance(meta, dict) else json.loads(meta) if meta else {},
-                        "vector": np.array(vec) if vec else None,
+                        "vector": np.array(vec) if vec is not None else None,
                     })
                 return results
             except Exception as e:
