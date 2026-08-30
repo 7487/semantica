@@ -3,14 +3,18 @@ name: Container Security Scan
 on:
   push:
     branches: [main]
+    # Mirrors .dockerignore's opt-in list exactly - anything not listed there
+    # can't reach the build context, so it can't change the built image.
     paths:
       - 'Dockerfile'
+      - '.dockerignore'
       - 'pyproject.toml'
-      - 'requirements*.txt'
-      - 'explorer/package.json'
-      - 'explorer/package-lock.json'
+      - 'README.md'
+      - 'LICENSE'
+      - 'MANIFEST.in'
       - 'semantica/**'
       - 'integrations/**'
+      - 'explorer/**'
       - '.github/workflows/container-scan.yml'
   schedule:
     - cron: '30 2 * * 1'  # weekly, catches new CVEs published against the base image between pushes
