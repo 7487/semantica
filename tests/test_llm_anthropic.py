@@ -10,8 +10,8 @@ from semantica.utils.exceptions import ProcessingError
 
 def test_construction_stores_model_and_api_key():
     """Anthropic(...) should not crash and should remember what it was given."""
-    claude = Anthropic(model="claude-3-sonnet-20240229", api_key="fake-key")
-    assert claude.model == "claude-3-sonnet-20240229"
+    claude = Anthropic(model="claude-sonnet-4-6", api_key="fake-key")
+    assert claude.model == "claude-sonnet-4-6"
     assert claude.api_key == "fake-key"
 
 
@@ -28,8 +28,13 @@ def test_is_available_false_with_no_key(monkeypatch):
     assert claude.is_available() is False
 
 
-def test_generate_raises_clear_error_when_unavailable():
-    """generate() must fail loudly."""
+def test_generate_raises_clear_error_when_unavailable(monkeypatch):
+    """generate() must fail loudly.
+
+    Clears ANTHROPIC_API_KEY for the same reason as test_is_available_false_with_no_key:
+    otherwise this test flakes depending on whether the runner's environment has a key set.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     claude = Anthropic(api_key=None)
     with pytest.raises(ProcessingError, match="Anthropic provider not available"):
         claude.generate("hello")
@@ -65,7 +70,7 @@ def test_generate_typed_forwards_schema_and_max_retries():
     claude = Anthropic(api_key="fake-key")
     claude.provider = MagicMock()
     claude.provider.is_available.return_value = True
-    fake_schema = object() 
+    fake_schema = object()
     claude.provider.generate_typed.return_value = "typed result"
 
     result = claude.generate_typed("hello", fake_schema, max_retries=5)
@@ -74,3 +79,19 @@ def test_generate_typed_forwards_schema_and_max_retries():
     claude.provider.generate_typed.assert_called_once_with(
         "hello", fake_schema, max_retries=5
     )
+
+
+def test_generate_structured_raises_clear_error_when_unavailable(monkeypatch):
+    """generate_structured() must fail loudly, same as generate()."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    claude = Anthropic(api_key=None)
+    with pytest.raises(ProcessingError, match="Anthropic provider not available"):
+        claude.generate_structured("hello")
+
+
+def test_generate_typed_raises_clear_error_when_unavailable(monkeypatch):
+    """generate_typed() must fail loudly, same as generate() and generate_structured()."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    claude = Anthropic(api_key=None)
+    with pytest.raises(ProcessingError, match="Anthropic provider not available"):
+        claude.generate_typed("hello", object())
