@@ -4,7 +4,7 @@ Ollama LLM Provider
 Wrapper for local Ollama models with clean interface.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Union
 
 from ..semantic_extract.providers import OllamaProvider
 from ..utils.exceptions import ProcessingError
@@ -70,7 +70,7 @@ class Ollama:
             )
         return self.provider.generate(prompt, **kwargs)
 
-    def generate_structured(self, prompt: str, **kwargs) -> Dict[str, Any]:
+    def generate_structured(self, prompt: str, **kwargs) -> Union[Dict[str, Any], List[Any]]:
         """
         Generate structured JSON output.
 
@@ -79,7 +79,8 @@ class Ollama:
             **kwargs: Generation options
 
         Returns:
-            Parsed JSON response as dictionary
+            Parsed JSON response. A dict for a top-level JSON object, or a
+            list if the model returns a top-level JSON array.
 
         Raises:
             ProcessingError: If provider is not available or parsing fails
