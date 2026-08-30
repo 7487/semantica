@@ -526,6 +526,30 @@ class FAISSStore:
 
         return results
 
+    def scan_vectors(self, offset: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Page through stored vectors in insertion order.
+
+        Args:
+            offset: Number of vectors to skip
+            limit: Maximum number of vectors to return
+
+        Returns:
+            List of result dicts with 'id', 'metadata', and 'vector'
+        """
+        if self.index is None or limit <= 0:
+            return []
+
+        ids_page = self.index.vector_ids[offset:offset + limit]
+        return [
+            {
+                "id": vector_id,
+                "metadata": self.get_metadata(vector_id) or {},
+                "vector": self.get_vector(vector_id),
+            }
+            for vector_id in ids_page
+        ]
+
     def get_stats(self) -> Dict[str, Any]:
         """Get index statistics."""
         if self.index is None:

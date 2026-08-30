@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from semantica.vector_store.faiss_store import FAISSIndex
+from semantica.vector_store.faiss_store import FAISSIndex, FAISSStore
 
 
 def test_get_vector_reconstructs_from_flat_l2_index():
@@ -120,3 +120,56 @@ def test_get_vector_reconstructs_from_real_ivfflat_index_without_prior_direct_ma
     result = index.get_vector("vec_target")
 
     np.testing.assert_allclose(result, vectors[3], atol=1e-6)
+
+
+def _store_with_fake_index(ids, metadata_by_id=None):
+    backend_index = MagicMock()
+    backend_index.reconstruct.side_effect = lambda idx: [float(idx)] * 3
+    index = FAISSIndex(backend_index, dimension=3)
+    index.vector_ids = list(ids)
+    index.metadata = dict(metadata_by_id or {})
+
+    store = FAISSStore(dimension=3)
+    store.index = index
+    return store
+
+
+def test_scan_vectors_returns_all_across_pages():
+    store = _store_with_fake_index(["a", "b", "c", "d", "e"])
+
+    seen_ids = []
+    offset = 0
+    while True:
+        page = store.scan_vectors(offset=offset, limit=2)
+        if not page:
+            break
+        seen_ids.extend(p["id"] for p in page)
+        offset += len(page)
+
+    assert seen_ids == ["a", "b", "c", "d", "e"]
+
+
+def test_scan_vectors_includes_vector_and_metadata():
+    store = _store_with_fake_index(["a"], {"a": {"tag": "only"}})
+
+    page = store.scan_vectors(offset=0, limit=10)
+
+    assert len(page) == 1
+    assert page[0]["id"] == "a"
+    assert page[0]["metadata"] == {"tag": "only"}
+    np.testing.assert_array_equal(page[0]["vector"], np.array([0.0, 0.0, 0.0], dtype=np.float32))
+
+
+def test_scan_vectors_no_index_returns_empty_list():
+    store = FAISSStore(dimension=3)
+    assert store.scan_vectors(offset=0, limit=10) == []
+
+
+def test_scan_vectors_zero_limit_returns_empty_list():
+    store = _store_with_fake_index(["a"])
+    assert store.scan_vectors(offset=0, limit=0) == []
+
+
+def test_scan_vectors_offset_past_end_returns_empty_list():
+    store = _store_with_fake_index(["a"])
+    assert store.scan_vectors(offset=100, limit=10) == []

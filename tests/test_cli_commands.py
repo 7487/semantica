@@ -1359,6 +1359,62 @@ class TestStore:
         result = runner.invoke(cli_module.main, ["store", "migrate", "--from", "faiss"])
         assert result.exit_code != 0
 
+    def test_migrate_refuses_unsupported_backend_pair(self, runner):
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "faiss", "--to", "qdrant"])
+        assert result.exit_code != 0
+        assert "faiss, pgvector, sqlite" in result.output
+
+    def test_migrate_runs_between_supported_backends(self, runner, monkeypatch):
+        source_items = [
+            {"id": "a", "vector": [0.1, 0.2], "metadata": {"tag": "x"}},
+            {"id": "b", "vector": [0.3, 0.4], "metadata": {}},
+        ]
+        stored = {}
+
+        class _FakeStore:
+            def __init__(self, backend, config=None, **kw):
+                self.backend = backend
+
+            def iter_vectors(self, batch_size=500):
+                assert self.backend == "faiss"
+                yield from source_items
+
+            def store_vectors(self, vectors, metadata, ids=None):
+                assert self.backend == "sqlite"
+                for vec_id, meta in zip(ids, metadata):
+                    stored[vec_id] = meta
+
+        fake_vs = _fake_module(VectorStore=_FakeStore)
+        monkeypatch.setitem(__import__("sys").modules, "semantica.vector_store", fake_vs)
+
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "faiss", "--to", "sqlite",
+                                      "--namespace", "prod", "--json"])
+        _ok(result)
+        data = _json_output(result)
+        assert data == {"from": "faiss", "to": "sqlite", "migrated": 2}
+        assert stored == {"a": {"tag": "x", "namespace": "prod"}, "b": {"namespace": "prod"}}
+
+    def test_migrate_reports_zero_for_empty_source(self, runner, monkeypatch):
+        class _FakeStore:
+            def __init__(self, backend, config=None, **kw):
+                self.backend = backend
+
+            def iter_vectors(self, batch_size=500):
+                return iter(())
+
+            def store_vectors(self, vectors, metadata, ids=None):
+                raise AssertionError("store_vectors should not be called for an empty source")
+
+        fake_vs = _fake_module(VectorStore=_FakeStore)
+        monkeypatch.setitem(__import__("sys").modules, "semantica.vector_store", fake_vs)
+
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "sqlite", "--to", "pgvector", "--json"])
+        _ok(result)
+        assert _json_output(result)["migrated"] == 0
+
     def test_flush_requires_confirm(self, runner):
         result = runner.invoke(cli_module.main, ["store", "flush"])
         assert result.exit_code != 0
