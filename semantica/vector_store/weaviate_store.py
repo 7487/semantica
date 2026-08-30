@@ -611,6 +611,100 @@ class WeaviateStore:
             self.logger.warning(f"Failed to fetch Weaviate objects by metadata filter: {e}")
             return results if results else []
 
+    def iter_all(self, batch_size: int = 500):
+        """
+        Iterate over every stored object using Weaviate's native cursor.
+
+        Weaviate paginates by the UUID of the last object seen (``after``),
+        not by row offset, so this is exposed instead of
+        scan_vectors(offset, limit): a row number such as 100000 cannot be
+        translated into the correct UUID without walking there.
+        VectorStore.iter_vectors() prefers this method when it is present.
+
+        Assumes a single unnamed vector per object, matching how get_vector()
+        and filter_by_metadata() already read them back. Collections
+        configured with named vectors return a mapping here and are not
+        handled.
+
+        Args:
+            batch_size: Objects to request per fetch_objects() call
+
+        Yields:
+            Result dicts with 'id', 'metadata', and 'vector', in cursor order
+
+        Raises:
+            ProcessingError: If the collection is not initialized. Errors are
+                raised rather than swallowed because a scan that silently
+                yields nothing is indistinguishable from an empty source,
+                which would let a caller such as `store migrate` report
+                success having copied nothing (issue #1083).
+        """
+        if self.collection is None or not WEAVIATE_AVAILABLE:
+            raise ProcessingError(
+                "Collection not initialized. Call get_collection() first."
+            )
+
+        after_cursor = None
+        scanned_count = 0
+        use_after_cursor = True
+
+        while True:
+            kwargs = {"limit": batch_size, "include_vector": True}
+            if use_after_cursor and after_cursor is not None:
+                kwargs["after"] = after_cursor
+
+            try:
+                objs = self.collection.query.fetch_objects(**kwargs)
+            except TypeError:
+                # Client versions without `after` fall back to numeric offset,
+                # then to no pagination argument at all. Mirrors the
+                # degradation chain in filter_by_metadata().
+                if "after" not in kwargs:
+                    raise
+                use_after_cursor = False
+                kwargs.pop("after", None)
+                try:
+                    objs = self.collection.query.fetch_objects(
+                        offset=scanned_count, **kwargs
+                    )
+                except TypeError:
+                    objs = self.collection.query.fetch_objects(**kwargs)
+
+            batch_objects = getattr(objs, "objects", None) if objs else None
+            if not batch_objects:
+                return
+
+            for obj in batch_objects:
+                obj_uuid = getattr(obj, "uuid", None)
+                raw_vector = getattr(obj, "vector", None)
+                yield {
+                    "id": str(obj_uuid) if obj_uuid is not None else None,
+                    "metadata": getattr(obj, "properties", None) or {},
+                    "vector": (
+                        np.array(raw_vector)
+                        if raw_vector is not None and len(raw_vector) > 0
+                        else None
+                    ),
+                }
+
+            scanned_count += len(batch_objects)
+
+            # A short page means the collection is exhausted.
+            if len(batch_objects) < batch_size:
+                return
+
+            last_uuid = getattr(batch_objects[-1], "uuid", None)
+            if last_uuid is None:
+                return
+
+            next_cursor = str(last_uuid)
+            # There is no result cap on a full scan, so a cursor that stops
+            # advancing would loop forever. Stop instead of re-reading the
+            # same page.
+            if use_after_cursor and next_cursor == after_cursor:
+                return
+            after_cursor = next_cursor
+
 
     def query_vectors(
         self,
