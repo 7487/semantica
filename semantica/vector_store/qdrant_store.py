@@ -604,6 +604,62 @@ class QdrantStore:
             self.logger.warning(f"Failed to scroll Qdrant points by metadata filter: {e}")
             return []
 
+    def iter_all(self, batch_size: int = 500):
+        """
+        Iterate over every stored point using Qdrant's native scroll cursor.
+
+        Qdrant paginates by point-ID cursor, not by row offset, so this is
+        exposed instead of scan_vectors(offset, limit). An integer passed to
+        scroll()'s offset is a point ID rather than a rank, so there is no way
+        to seek to "the Nth record" without walking from the start.
+        VectorStore.iter_vectors() prefers this method when it is present.
+
+        Assumes a single unnamed vector per point, matching how insert_vectors()
+        writes them and how get_vector() reads them back. Collections configured
+        with named or multi-vectors are not handled here.
+
+        Args:
+            batch_size: Points to request per scroll call
+
+        Yields:
+            Result dicts with 'id', 'metadata', and 'vector', in scroll order
+
+        Raises:
+            ProcessingError: If the collection or client is not initialized.
+                Errors are raised rather than swallowed because a scan that
+                silently yields nothing is indistinguishable from an empty
+                source, which would let a caller such as `store migrate`
+                report success having copied nothing (issue #1083).
+        """
+        if self.collection is None or self.client is None or not QDRANT_AVAILABLE:
+            raise ProcessingError(
+                "Collection not initialized. Call create_collection() or get_collection() first."
+            )
+
+        next_offset = None
+        while True:
+            records, next_offset = self.client.scroll(
+                collection_name=self.collection.collection_name,
+                limit=batch_size,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+
+            for rec in records:
+                yield {
+                    "id": str(rec.id),
+                    "metadata": rec.payload or {},
+                    "vector": np.array(rec.vector) if rec.vector is not None else None,
+                }
+
+            # The final page can carry records while already reporting no next
+            # cursor, so those records are yielded above before stopping here.
+            # Calling scroll() again with offset=None would restart from the
+            # beginning rather than continue past the end.
+            if next_offset is None or not records:
+                return
+
     def delete_vectors(
         self, point_ids: List[Union[str, int]], **options
     ) -> Dict[str, Any]:
