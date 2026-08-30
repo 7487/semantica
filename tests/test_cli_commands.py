@@ -1360,10 +1360,11 @@ class TestStore:
         assert result.exit_code != 0
 
     def test_migrate_refuses_unsupported_backend_pair(self, runner):
+        # qdrant is wired up now, so weaviate stands in as the unsupported side.
         result = runner.invoke(cli_module.main, ["store", "migrate",
-                                      "--from", "faiss", "--to", "qdrant"])
+                                      "--from", "faiss", "--to", "weaviate"])
         assert result.exit_code != 0
-        assert "faiss, pgvector, sqlite" in result.output
+        assert "faiss, pgvector, qdrant, sqlite" in result.output
 
     def _fake_migrate_store_module(self, source_items, stored, dest_configs=None):
         class _FakeBackendStore:
@@ -1444,6 +1445,97 @@ class TestStore:
                                       "--from", "faiss", "--to", "sqlite"])
         assert result.exit_code != 0
         assert "index_path" in result.output
+
+    def _fake_dimensionless_store_module(self, source_items, dest_configs, stored):
+        """Fake VectorStore whose backend store has NO `dimension` attribute.
+
+        Matches qdrant/milvus/weaviate, none of which expose one.
+        """
+
+        class _DimensionlessBackendStore:
+            pass
+
+        class _FakeStore:
+            def __init__(self, backend, config=None, **kw):
+                self.backend = backend
+                self._config = config or {}
+                self._backend_store = _DimensionlessBackendStore()
+                dest_configs[backend] = dict(self._config)
+
+            def iter_vectors(self, batch_size=500):
+                if self.backend == "qdrant":
+                    yield from source_items
+                    return
+                return
+                yield  # pragma: no cover - makes this a generator
+
+            def store_vectors(self, vectors, metadata, ids=None):
+                for vec_id, vec in zip(ids, vectors):
+                    stored[vec_id] = vec
+
+        return _fake_module(VectorStore=_FakeStore)
+
+    def test_migrate_infers_dimension_from_first_vector(self, runner, monkeypatch):
+        source_items = [
+            {"id": "a", "vector": [0.1, 0.2, 0.3], "metadata": {}},
+            {"id": "b", "vector": [0.4, 0.5, 0.6], "metadata": {}},
+        ]
+        dest_configs, stored = {}, {}
+        fake_vs = self._fake_dimensionless_store_module(source_items, dest_configs, stored)
+        monkeypatch.setitem(__import__("sys").modules, "semantica.vector_store", fake_vs)
+
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "qdrant", "--to", "sqlite", "--json"])
+        _ok(result)
+        assert dest_configs["sqlite"].get("dimension") == 3
+
+    def test_migrate_does_not_drop_the_peeked_first_record(self, runner, monkeypatch):
+        """The first record is consumed to infer dimension, so it must be
+        chained back into the migration loop rather than lost."""
+        source_items = [
+            {"id": "a", "vector": [0.1, 0.2, 0.3], "metadata": {}},
+            {"id": "b", "vector": [0.4, 0.5, 0.6], "metadata": {}},
+        ]
+        dest_configs, stored = {}, {}
+        fake_vs = self._fake_dimensionless_store_module(source_items, dest_configs, stored)
+        monkeypatch.setitem(__import__("sys").modules, "semantica.vector_store", fake_vs)
+
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "qdrant", "--to", "sqlite", "--json"])
+        _ok(result)
+        assert _json_output(result)["migrated"] == 2
+        assert sorted(stored) == ["a", "b"]
+
+    def test_migrate_keeps_explicit_dest_dimension_over_inference(self, runner, monkeypatch):
+        source_items = [{"id": "a", "vector": [0.1, 0.2, 0.3], "metadata": {}}]
+        dest_configs, stored = {}, {}
+        fake_vs = self._fake_dimensionless_store_module(source_items, dest_configs, stored)
+        monkeypatch.setitem(__import__("sys").modules, "semantica.vector_store", fake_vs)
+        monkeypatch.setattr(
+            cli_module.Config, "to_dict",
+            lambda self: {"vector_store": {"qdrant": {}, "sqlite": {"dimension": 128}}},
+        )
+
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "qdrant", "--to", "sqlite", "--json"])
+        _ok(result)
+        assert dest_configs["sqlite"]["dimension"] == 128
+
+    def test_migrate_qdrant_is_now_supported(self, runner, monkeypatch):
+        dest_configs, stored = {}, {}
+        fake_vs = self._fake_dimensionless_store_module([], dest_configs, stored)
+        monkeypatch.setitem(__import__("sys").modules, "semantica.vector_store", fake_vs)
+
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "qdrant", "--to", "pgvector", "--json"])
+        _ok(result)
+        assert _json_output(result)["migrated"] == 0
+
+    def test_migrate_still_refuses_milvus(self, runner):
+        result = runner.invoke(cli_module.main, ["store", "migrate",
+                                      "--from", "qdrant", "--to", "milvus"])
+        assert result.exit_code != 0
+        assert "milvus" in result.output
 
     def test_migrate_faiss_dest_requires_index_path(self, runner, monkeypatch):
         fake_vs = _fake_module(VectorStore=lambda **kw: MagicMock())
