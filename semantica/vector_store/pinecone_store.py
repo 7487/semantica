@@ -299,6 +299,45 @@ class PineconeSearch:
         )
 
 
+def _pinecone_listed_ids(response: Any) -> List[str]:
+    """Extract vector IDs from a list_paginated() response.
+
+    What listing returns has changed across pinecone SDK major versions, so
+    this accepts record objects, plain id strings and dicts rather than
+    committing to one shape.
+    """
+    records = getattr(response, "vectors", None)
+    if records is None and isinstance(response, dict):
+        records = response.get("vectors")
+
+    ids: List[str] = []
+    for record in records or []:
+        if isinstance(record, str):
+            ids.append(record)
+        elif isinstance(record, dict):
+            if record.get("id") is not None:
+                ids.append(record["id"])
+        else:
+            record_id = getattr(record, "id", None)
+            if record_id is not None:
+                ids.append(record_id)
+    return ids
+
+
+def _pinecone_next_token(response: Any) -> Optional[str]:
+    """Return the continuation token, or None when the listing is exhausted."""
+    pagination = getattr(response, "pagination", None)
+    if pagination is None and isinstance(response, dict):
+        pagination = response.get("pagination")
+    if pagination is None:
+        return None
+
+    token = getattr(pagination, "next", None)
+    if token is None and isinstance(pagination, dict):
+        token = pagination.get("next")
+    return token or None
+
+
 class PineconeStore:
     """
     Pinecone store for vector storage and similarity search.
@@ -734,6 +773,86 @@ class PineconeStore:
         except Exception as e:
             self.logger.warning(f"Failed to filter Pinecone vectors by metadata: {e}")
             return []
+
+    def iter_all(self, batch_size: int = 500, namespace: str = ""):
+        """
+        Iterate over every stored vector by listing IDs then fetching them.
+
+        Pinecone paginates with an opaque continuation token, so this is
+        exposed instead of scan_vectors(offset, limit): there is no way to
+        construct the token for logical page N without walking there.
+        VectorStore.iter_vectors() prefers this method when it is present.
+
+        Unlike the other backends this needs two calls per page. Listing
+        returns IDs only, so each page is hydrated with a fetch(). Both calls
+        are namespace scoped and must agree, and listing covers one namespace
+        rather than the whole index, so a store whose data lives outside the
+        default namespace has to pass it explicitly.
+
+        Args:
+            batch_size: IDs to request per list_paginated() call
+            namespace: Namespace to enumerate (default: the default namespace)
+
+        Yields:
+            Result dicts with 'id', 'metadata', and 'vector', in listing order
+
+        Raises:
+            ProcessingError: If the index is not initialized, or the installed
+                SDK does not expose list_paginated(). Errors are raised rather
+                than swallowed because a scan that silently yields nothing is
+                indistinguishable from an empty source, which would let a
+                caller such as `store migrate` report success having copied
+                nothing (issue #1083).
+        """
+        if self.index is None or not PINECONE_AVAILABLE:
+            raise ProcessingError(
+                "Index not initialized. Call create_index() or get_index() first."
+            )
+
+        # list_paginated() is used rather than list(): in current SDKs list()
+        # is an auto-paging iterator over response objects, while older
+        # examples read as though it yields plain id lists. Threading the
+        # token explicitly is unambiguous across versions.
+        list_paginated = getattr(self.index.index, "list_paginated", None)
+        if not callable(list_paginated):
+            raise ProcessingError(
+                "This pinecone SDK version does not expose Index.list_paginated(), "
+                "which full enumeration requires."
+            )
+
+        token = None
+        while True:
+            kwargs: Dict[str, Any] = {"limit": batch_size, "namespace": namespace}
+            if token is not None:
+                kwargs["pagination_token"] = token
+
+            response = list_paginated(**kwargs)
+            vector_ids = _pinecone_listed_ids(response)
+            if not vector_ids:
+                return
+
+            fetched = self.index.fetch_vectors(vector_ids, namespace=namespace)
+            vectors = fetched.get("vectors") or {}
+
+            for vector_id in vector_ids:
+                entry = vectors.get(vector_id)
+                if entry is None:
+                    # Fetch omits ids it cannot find, so this one was deleted
+                    # between the list call and the fetch call.
+                    continue
+                values = entry.get("values")
+                yield {
+                    "id": vector_id,
+                    "metadata": entry.get("metadata") or {},
+                    "vector": np.array(values) if values is not None else None,
+                }
+
+            next_token = _pinecone_next_token(response)
+            # A token that repeats means the listing is not advancing; stop
+            # rather than re-reading the same page forever.
+            if not next_token or next_token == token:
+                return
+            token = next_token
 
     def fetch_vectors(
         self, vector_ids: List[str], namespace: str = "", **options
