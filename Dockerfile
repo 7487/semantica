@@ -33,27 +33,22 @@ WORKDIR /app
 RUN groupadd --system semantica \
     && useradd --system --gid semantica --home-dir /app --shell /usr/sbin/nologin semantica
 
-COPY pyproject.toml README.md LICENSE MANIFEST.in requirements-ci.txt ./
+COPY pyproject.toml README.md LICENSE MANIFEST.in .github/requirements/explorer-extra.txt ./
 COPY semantica/ ./semantica/
 COPY integrations/ ./integrations/
 COPY --from=frontend-builder /app/semantica/static ./semantica/static
 
-# The base image ships an outdated setuptools (CVE-2025-47273); upgrade it
-# explicitly since nothing in our own dependency tree otherwise pulls a
-# newer copy. Pinned to the exact version requirements-ci.txt/pyproject.toml
-# already build against, rather than a floor, per terrascan AC_DOCKER_0010.
-# requirements-ci.txt itself carries the audited, CVE-checked pins for every
-# transitive dependency (see security-scan.yml / security.yml) - feed them
-# in as an unhashed constraints file (pip's hash-checking mode rejects the
-# unhashable local source directory this installs) so the image lands on
-# the same patched versions CI verified, e.g. msgpack>=1.2.1, rather than
-# letting pip freely re-resolve and pick up an unpatched transitive version.
-# (Extracted with Python's re module rather than sed/grep so there's no
-# line-continuation-backslash stripping to get subtly wrong.)
-RUN pip install --no-cache-dir "setuptools==84.0.0" \
-    && python -c "import re, pathlib; pins = re.findall(r'^([A-Za-z0-9._-]+==\S+)', pathlib.Path('requirements-ci.txt').read_text(), re.M); pathlib.Path('/tmp/constraints.txt').write_text('\n'.join(pins))" \
-    && pip install --no-cache-dir -c /tmp/constraints.txt ".[explorer]" \
-    && rm -f /tmp/constraints.txt requirements-ci.txt \
+# explorer-extra.txt is `uv pip compile pyproject.toml --extra explorer
+# --constraint requirements-ci.txt --generate-hashes` (see ci.yml) - every
+# fetched package is hash-verified (Scorecard Pinned-Dependencies) and
+# pinned to the same versions CI audited, e.g. msgpack==1.2.1 and
+# setuptools==84.0.0 (which also replaces the base image's vulnerable
+# 70.3.0, CVE-2025-47273 - nothing else in the tree pulls a newer copy).
+# --no-deps on the local package itself: it's our own source tree, not a
+# fetch, so there's nothing to hash-pin there.
+RUN pip install --no-cache-dir -r explorer-extra.txt --require-hashes \
+    && pip install --no-cache-dir --no-deps . \
+    && rm -f explorer-extra.txt \
     && chown -R semantica:semantica /app
 
 USER semantica

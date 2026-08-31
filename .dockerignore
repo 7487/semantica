@@ -6,7 +6,6 @@
 !README.md
 !LICENSE
 !MANIFEST.in
-!requirements-ci.txt
 !semantica/
 !semantica/**
 !integrations/
@@ -19,6 +18,8 @@
 .git/**
 .github
 .github/**
+!.github/requirements/
+!.github/requirements/explorer-extra.txt
 .claude
 .claude/**
 .codex
