@@ -19,15 +19,39 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Pick up any Debian security-repo package fixes published after this base
+# image tag was built (e.g. CVE-2026-14456's openssl fix, which as of this
+# writing is still in trixie-proposed-updates and not yet promoted to
+# trixie-security - this step is a no-op today but will pick it up on the
+# next image rebuild once Debian ships it, without needing a Dockerfile
+# change). Note CVE-2026-14456 is a DoS in OpenSSL's QUIC *server* code path;
+# this image only serves plain HTTP via uvicorn and never opens a QUIC
+# listener, so it isn't reachable here even before the fix lands upstream.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system semantica \
     && useradd --system --gid semantica --home-dir /app --shell /usr/sbin/nologin semantica
 
-COPY pyproject.toml README.md LICENSE MANIFEST.in ./
+COPY pyproject.toml README.md LICENSE MANIFEST.in requirements-ci.txt ./
 COPY semantica/ ./semantica/
 COPY integrations/ ./integrations/
 COPY --from=frontend-builder /app/semantica/static ./semantica/static
 
-RUN pip install --no-cache-dir ".[explorer]" \
+# The base image ships an outdated setuptools (CVE-2025-47273); upgrade it
+# explicitly since nothing in our own dependency tree otherwise pulls a
+# newer copy. requirements-ci.txt carries the audited, CVE-checked pins for
+# every transitive dependency (see security-scan.yml / security.yml) - feed
+# them in as an unhashed constraints file (pip's hash-checking mode rejects
+# the unhashable local source directory this installs) so the image lands
+# on the same patched versions CI verified, e.g. msgpack>=1.2.1, rather than
+# letting pip freely re-resolve and pick up an unpatched transitive version.
+RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" \
+    && grep -E '^[A-Za-z0-9._-]+==' requirements-ci.txt | sed 's/ *[\]$//' > /tmp/constraints.txt \
+    && pip install --no-cache-dir -c /tmp/constraints.txt ".[explorer]" \
+    && rm -f /tmp/constraints.txt requirements-ci.txt \
     && chown -R semantica:semantica /app
 
 USER semantica
