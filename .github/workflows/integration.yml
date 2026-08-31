@@ -1,9 +1,7 @@
 name: Integration Tests
 
-# Runs the suites that need a real server rather than a mock. Deliberately
-# separate from ci.yml: ci.yml is a required check, and a slow image pull or a
-# flaky container must not block unrelated merges. Same reasoning as
-# install-matrix.yml being its own workflow.
+# Separate from ci.yml, which is a required check: a slow image pull or a
+# container flake must not block unrelated merges.
 
 permissions:
   contents: read
@@ -15,7 +13,7 @@ on:
       - 'docs_check.py'
       - '**/*.md'
   schedule:
-    - cron: '0 5 * * 1'  # weekly, catches upstream image and driver drift
+    - cron: '0 5 * * 1'
   workflow_dispatch:
 
 jobs:
@@ -26,15 +24,15 @@ jobs:
 
     services:
       postgres:
-        # Pinned by digest rather than tag, matching how this repo pins its
-        # GitHub Actions. This is pgvector/pgvector:pg16 as published on
-        # 2026-08-13; verify-action-pins.sh only inspects `uses:` lines, so
-        # keeping this immutable is on us.
+        # pgvector/pgvector:pg16 as published 2026-08-13. Pinned by digest like
+        # the action pins, though verify-action-pins.sh does not check images.
         image: pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
           POSTGRES_DB: test
+          # Throwaway container reachable only from this job, so trust auth
+          # avoids putting a credential in the workflow at all.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -44,10 +42,7 @@ jobs:
           --health-retries 10
 
     env:
-      # tests/vector_store/test_pgvector_store.py falls back to this same value,
-      # but set it explicitly so the workflow is not relying on a default it
-      # does not control.
-      TEST_PGVECTOR_URL: postgresql://postgres:postgres@localhost:5432/test
+      TEST_PGVECTOR_URL: postgresql://postgres@localhost:5432/test
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -63,19 +58,14 @@ jobs:
           pip install -e ".[vectorstore-pgvector]" pytest==9.1.1
 
       - name: Create the vector extension
-        # PgVectorStore._verify_pgvector_extension() checks for this and raises
-        # if absent; it deliberately does not auto-create it. This step doubles
-        # as the connectivity gate: if Postgres is unreachable the job fails
-        # here rather than further on with every test silently skipped.
+        # PgVectorStore._verify_pgvector_extension() requires it and refuses to
+        # create it. Doubles as the connectivity gate.
         run: |
           python - <<'PY'
           import os
 
           import psycopg
 
-          # Read from the environment rather than interpolating ${{ }} into the
-          # script body: same reason the setup-semantica action does, keeping
-          # workflow values out of the generated source.
           with psycopg.connect(os.environ["TEST_PGVECTOR_URL"]) as conn:
               conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
               conn.commit()
@@ -83,6 +73,27 @@ jobs:
           PY
 
       - name: Run the live pgvector suite
-        # -rs reports skip reasons, so a run that passes by skipping everything
-        # is visible in the log rather than looking green.
-        run: pytest tests/vector_store/test_pgvector_store.py -v -rs
+        run: |
+          pytest tests/vector_store/test_pgvector_store.py -v -rs \
+            --junit-xml=junit.xml
+
+      - name: Fail if the suite skipped instead of running
+        # The suite skips itself when it cannot reach Postgres, so pytest would
+        # exit 0 having run nothing. Without this the job is green either way.
+        if: always()
+        run: |
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("junit.xml").getroot()
+          suites = root.findall("testsuite") or [root]
+          total = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+
+          if total == 0:
+              sys.exit("no tests were collected")
+          if skipped:
+              sys.exit(f"{skipped} of {total} tests skipped; the live suite did not run")
+          print(f"{total} tests ran, none skipped")
+          PY
