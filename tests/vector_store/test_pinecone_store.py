@@ -253,7 +253,7 @@ class TestPineconeIterAll(unittest.TestCase):
     """PineconeStore.iter_all() list-then-fetch enumeration."""
 
     def _page(self, ids, next_token):
-        """Stand-in for a list_paginated() ListResponse."""
+        """Stand-in for a list_paginated() response."""
         response = MagicMock()
         response.vectors = [MagicMock(id=vector_id) for vector_id in ids]
         response.pagination = MagicMock(next=next_token)
@@ -289,7 +289,7 @@ class TestPineconeIterAll(unittest.TestCase):
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_hydrates_listed_ids_with_a_fetch(self):
-        """Listing returns ids only, so each page needs a second call."""
+        """Listing returns ids only, so each page needs a fetch()."""
         store, wrapper, _ = self._store(
             [self._page(["a"], None)],
             [{"vectors": {"a": {"values": [0.1, 0.2], "metadata": {"tag": "x"}}}}],
@@ -316,7 +316,7 @@ class TestPineconeIterAll(unittest.TestCase):
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_skips_ids_deleted_between_list_and_fetch(self):
-        """Fetch omits ids it cannot find rather than returning empty entries."""
+        """fetch() omits ids it cannot find rather than returning blanks."""
         store, _, _ = self._store(
             [self._page(["a", "gone"], None)],
             [{"vectors": {"a": {"values": [0.1], "metadata": {}}}}],
@@ -328,13 +328,8 @@ class TestPineconeIterAll(unittest.TestCase):
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_raises_when_pagination_token_repeats(self):
-        """A token that stops advancing must not loop forever, and must not
-        quietly return a partial scan either.
-
-        Truncating silently is indistinguishable from a complete enumeration,
-        which would let store migrate copy part of an index and report success
-        (issue #1083).
-        """
+        """A stalled token must not loop forever, nor quietly return a partial
+        scan that reads as a complete one."""
         store, _, raw_index = self._store(
             [self._page(["a"], "same"), self._page(["b"], "same")],
             [
@@ -357,7 +352,7 @@ class TestPineconeIterAll(unittest.TestCase):
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_accepts_plain_string_ids_from_listing(self):
-        """SDK generations differ on what listing yields, so bare ids work too."""
+        """SDK generations differ on what listing yields."""
         store, _, _ = self._store(
             [self._page([], None)],
             [{"vectors": {"a": {"values": [0.1], "metadata": {}}}}],
@@ -393,8 +388,7 @@ class TestPineconeIterAll(unittest.TestCase):
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_raises_when_index_not_initialized(self):
-        """Must fail loudly, not yield nothing: an empty scan is
-        indistinguishable from an empty source (issue #1083)."""
+        """Must fail loudly: an empty scan reads the same as an empty source."""
         with self.assertRaises(ProcessingError):
             list(PineconeStore().iter_all())
 

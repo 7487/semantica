@@ -302,9 +302,8 @@ class PineconeSearch:
 def _pinecone_listed_ids(response: Any) -> List[str]:
     """Extract vector IDs from a list_paginated() response.
 
-    What listing returns has changed across pinecone SDK major versions, so
-    this accepts record objects, plain id strings and dicts rather than
-    committing to one shape.
+    Accepts record objects, bare id strings and dicts, since what listing
+    returns has changed across pinecone SDK major versions.
     """
     records = getattr(response, "vectors", None)
     if records is None and isinstance(response, dict):
@@ -778,16 +777,13 @@ class PineconeStore:
         """
         Iterate over every stored vector by listing IDs then fetching them.
 
-        Pinecone paginates with an opaque continuation token, so this is
-        exposed instead of scan_vectors(offset, limit): there is no way to
-        construct the token for logical page N without walking there.
-        VectorStore.iter_vectors() prefers this method when it is present.
+        Paginates with an opaque continuation token, which is why this exists
+        instead of scan_vectors(offset, limit): the token for page N cannot be
+        constructed without walking there.
 
-        Unlike the other backends this needs two calls per page. Listing
-        returns IDs only, so each page is hydrated with a fetch(). Both calls
-        are namespace scoped and must agree, and listing covers one namespace
-        rather than the whole index, so a store whose data lives outside the
-        default namespace has to pass it explicitly.
+        Needs two calls per page, unlike the other backends, because listing
+        returns IDs only. Both calls are namespace scoped and must agree, and
+        listing covers one namespace rather than the whole index.
 
         Args:
             batch_size: IDs to request per list_paginated() call
@@ -797,22 +793,18 @@ class PineconeStore:
             Result dicts with 'id', 'metadata', and 'vector', in listing order
 
         Raises:
-            ProcessingError: If the index is not initialized, or the installed
-                SDK does not expose list_paginated(). Errors are raised rather
-                than swallowed because a scan that silently yields nothing is
-                indistinguishable from an empty source, which would let a
-                caller such as `store migrate` report success having copied
-                nothing (issue #1083).
+            ProcessingError: If the index is not initialized, if the installed
+                SDK does not expose list_paginated(), or if the listing stops
+                advancing.
         """
         if self.index is None or not PINECONE_AVAILABLE:
             raise ProcessingError(
                 "Index not initialized. Call create_index() or get_index() first."
             )
 
-        # list_paginated() is used rather than list(): in current SDKs list()
-        # is an auto-paging iterator over response objects, while older
-        # examples read as though it yields plain id lists. Threading the
-        # token explicitly is unambiguous across versions.
+        # list_paginated() rather than list(): list() is an auto-paging
+        # iterator in current SDKs but reads as plain id lists in older
+        # examples. Threading the token explicitly is version-agnostic.
         list_paginated = getattr(self.index.index, "list_paginated", None)
         if not callable(list_paginated):
             raise ProcessingError(
@@ -837,8 +829,7 @@ class PineconeStore:
             for vector_id in vector_ids:
                 entry = vectors.get(vector_id)
                 if entry is None:
-                    # Fetch omits ids it cannot find, so this one was deleted
-                    # between the list call and the fetch call.
+                    # fetch() omits ids it cannot find: deleted since listing.
                     continue
                 values = entry.get("values")
                 yield {
@@ -851,10 +842,8 @@ class PineconeStore:
             if not next_token:
                 return
             if next_token == token:
-                # Distinct from exhaustion above: the listing is not advancing.
-                # Returning here would yield a partial scan that a caller cannot
-                # tell apart from a complete one, and `store migrate` would flush
-                # it and report success having copied only part of the index.
+                # Distinct from exhaustion above: a partial scan here would be
+                # indistinguishable from a complete one.
                 raise ProcessingError(
                     "Pinecone returned the same pagination token twice, so the "
                     "listing is not advancing. Refusing to return a truncated "
