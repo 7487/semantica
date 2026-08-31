@@ -140,11 +140,7 @@ class _NonScanningBackendStore:
 
 
 class _IterAllBackendStore:
-    """Fake cursor-based backend store exposing iter_all() but not scan_vectors().
-
-    Mirrors qdrant/pinecone/milvus/weaviate, which cannot honour a positional
-    offset and therefore expose native iteration instead.
-    """
+    """Fake cursor-based store: iter_all() only, no usable scan_vectors()."""
 
     def __init__(self, items):
         self._items = items
@@ -230,12 +226,7 @@ class VectorStoreScanVectorsTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class VectorStoreIterAllDispatchTests(unittest.TestCase):
-    """iter_vectors() prefers a backend's native iter_all() when present.
-
-    Cursor-based backends cannot implement scan_vectors(offset, limit)
-    honestly, so they expose iter_all() instead and iter_vectors() routes to
-    it rather than walking offsets.
-    """
+    """iter_vectors() prefers a backend's native iter_all() when present."""
 
     def _persistent_store(self, backend_store, backend_name="qdrant"):
         store = VectorStore(backend="inmemory", dimension=2)
@@ -268,9 +259,7 @@ class VectorStoreIterAllDispatchTests(unittest.TestCase):
         self.assertEqual(list(store.iter_vectors(batch_size=2)), items)
 
     def test_iter_vectors_falls_back_when_iter_all_not_callable(self):
-        # A mis-shaped adapter exposing a non-callable ``iter_all`` must not be
-        # invoked; the offset path still has to work. Mirrors the count()
-        # precedent in _MisShapedBackendStore.
+        # Mirrors the count() precedent in _MisShapedBackendStore.
         items = [{"id": "a", "vector": None, "metadata": {}}]
         store = self._persistent_store(_MisShapedIterAllBackendStore(items))
 
@@ -286,9 +275,7 @@ class VectorStoreIterAllDispatchTests(unittest.TestCase):
         self.assertEqual([item["metadata"] for item in collected], [{"type": "a"}])
 
     def test_iter_vectors_propagates_iter_all_errors(self):
-        # A scan that silently yields nothing is indistinguishable from an
-        # empty source, which would let `store migrate` report success having
-        # copied nothing (issue #1083).
+        # Silently yielding nothing would read as an empty source (#1083).
         class _FailingIterAll:
             def iter_all(self, batch_size=500):
                 raise ProcessingError("backend unreachable")
