@@ -606,17 +606,15 @@ class QdrantStore:
 
     def iter_all(self, batch_size: int = 500):
         """
-        Iterate over every stored point using Qdrant's native scroll cursor.
+        Iterate over every stored point using Qdrant's scroll cursor.
 
-        Qdrant paginates by point-ID cursor, not by row offset, so this is
-        exposed instead of scan_vectors(offset, limit). An integer passed to
-        scroll()'s offset is a point ID rather than a rank, so there is no way
-        to seek to "the Nth record" without walking from the start.
-        VectorStore.iter_vectors() prefers this method when it is present.
+        Paginates by point-ID cursor rather than row offset, which is why this
+        exists instead of scan_vectors(offset, limit). An integer offset is a
+        point ID, not a rank.
 
-        Assumes a single unnamed vector per point, matching how insert_vectors()
-        writes them and how get_vector() reads them back. Collections configured
-        with named or multi-vectors are not handled here.
+        Assumes a single unnamed vector per point, as insert_vectors() and
+        get_vector() already do. Named and multi-vector collections are not
+        handled.
 
         Args:
             batch_size: Points to request per scroll call
@@ -625,11 +623,8 @@ class QdrantStore:
             Result dicts with 'id', 'metadata', and 'vector', in scroll order
 
         Raises:
-            ProcessingError: If the collection or client is not initialized.
-                Errors are raised rather than swallowed because a scan that
-                silently yields nothing is indistinguishable from an empty
-                source, which would let a caller such as `store migrate`
-                report success having copied nothing (issue #1083).
+            ProcessingError: If the collection or client is not initialized, or
+                if the scan cannot advance past a full page.
         """
         if self.collection is None or self.client is None or not QDRANT_AVAILABLE:
             raise ProcessingError(
@@ -653,12 +648,20 @@ class QdrantStore:
                     "vector": np.array(rec.vector) if rec.vector is not None else None,
                 }
 
-            # The final page can carry records while already reporting no next
-            # cursor, so those records are yielded above before stopping here.
-            # Calling scroll() again with offset=None would restart from the
-            # beginning rather than continue past the end.
-            if next_offset is None or not records:
+            # A final page can carry records alongside a null cursor, so they
+            # are yielded above before stopping. Passing offset=None back to
+            # scroll() would restart from the beginning, not continue.
+            if next_offset is None:
                 return
+
+            # A cursor without records means the scan cannot advance, which is
+            # truncation rather than completion.
+            if not records:
+                raise ProcessingError(
+                    "Qdrant returned an empty page alongside a continuation "
+                    "cursor, so the scan cannot advance. Refusing to return a "
+                    "truncated scan."
+                )
 
     def delete_vectors(
         self, point_ids: List[Union[str, int]], **options
