@@ -48,8 +48,10 @@ COPY --from=frontend-builder /app/semantica/static ./semantica/static
 # the unhashable local source directory this installs) so the image lands
 # on the same patched versions CI verified, e.g. msgpack>=1.2.1, rather than
 # letting pip freely re-resolve and pick up an unpatched transitive version.
+# (Extracted with Python's re module rather than sed/grep so there's no
+# line-continuation-backslash stripping to get subtly wrong.)
 RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" \
-    && grep -E '^[A-Za-z0-9._-]+==' requirements-ci.txt | sed 's/ *[\]$//' > /tmp/constraints.txt \
+    && python -c "import re, pathlib; pins = re.findall(r'^([A-Za-z0-9._-]+==\S+)', pathlib.Path('requirements-ci.txt').read_text(), re.M); pathlib.Path('/tmp/constraints.txt').write_text('\n'.join(pins))" \
     && pip install --no-cache-dir -c /tmp/constraints.txt ".[explorer]" \
     && rm -f /tmp/constraints.txt requirements-ci.txt \
     && chown -R semantica:semantica /app
