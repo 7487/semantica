@@ -10,7 +10,7 @@ To run these tests locally with Docker:
         -e POSTGRES_PASSWORD=postgres \
         -e POSTGRES_DB=test \
         -p 5432:5432 \
-        ankane/pgvector:latest
+        pgvector/pgvector:pg16
 
     pytest tests/vector_store/test_pgvector_store.py -v
 
@@ -191,7 +191,9 @@ class TestPgVectorStoreAdd:
         ids = store.add(vectors, metadata)
 
         assert len(ids) == 5
-        assert all(id.startswith("vec_") for id in ids)
+        assert len(set(ids)) == 5
+        # add() assigns uuid4 identifiers, not a "vec_" prefix
+        assert all(uuid.UUID(vector_id) for vector_id in ids)
 
     def test_add_auto_generate_ids(self, store):
         """Test that IDs are auto-generated if not provided."""
@@ -290,19 +292,37 @@ class TestPgVectorStoreSearch:
         if not pg_available:
             pytest.skip("PostgreSQL not available")
 
-        from semantica.vector_store.pgvector_store import PgVectorStore
+        from semantica.vector_store.pgvector_store import PgVectorStore, psycopg_sql
 
+        # setup_vectors is autouse and seeds unique_table_name, and fixtures are
+        # cached per test, so this needs a table of its own to be empty at all.
+        empty_table = f"{unique_table_name}_empty"
         empty_store = PgVectorStore(
             connection_string=TEST_CONNECTION_STRING,
-            table_name=unique_table_name,
+            table_name=empty_table,
             dimension=128,
             distance_metric="cosine",
         )
 
-        query = np.random.rand(128).astype(np.float32)
-        results = empty_store.search(query, top_k=5)
+        try:
+            query = np.random.rand(128).astype(np.float32)
+            results = empty_store.search(query, top_k=5)
 
-        assert len(results) == 0
+            assert len(results) == 0
+        finally:
+            try:
+                with empty_store._get_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        psycopg_sql.SQL("DROP TABLE IF EXISTS {}").format(
+                            psycopg_sql.Identifier(empty_table)
+                        )
+                    )
+                    conn.commit()
+                    cur.close()
+                empty_store.close()
+            except Exception:
+                pass
 
         # Cleanup: Drop test table after test completes
         # Uses best-effort cleanup - failures are silently ignored since
