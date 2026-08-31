@@ -17,8 +17,7 @@ from semantica.vector_store.milvus_store import MilvusStore
 def _store_with_batches(*batches):
     """MilvusStore whose query_iterator yields the given batches then stops.
 
-    Mirrors the real attribute path, which is doubled: the store holds a
-    MilvusCollection wrapper, and the pymilvus Collection sits at
+    The attribute path is doubled here: the pymilvus Collection sits at
     wrapper.collection.
     """
     store = MilvusStore()
@@ -34,7 +33,7 @@ def _store_with_batches(*batches):
 
 @patch("semantica.vector_store.milvus_store.MILVUS_AVAILABLE", True)
 def test_iter_all_yields_batches_until_exhausted():
-    """The iterator signals exhaustion with an empty list, not StopIteration."""
+    """Exhaustion is an empty list, not StopIteration."""
     store, _, _, iterator = _store_with_batches(
         [{"id": 1, "vector": [0.1], "metadata": {}}],
         [{"id": 2, "vector": [0.2], "metadata": {}}],
@@ -81,8 +80,7 @@ def test_iter_all_closes_the_iterator_on_exhaustion():
 
 @patch("semantica.vector_store.milvus_store.MILVUS_AVAILABLE", True)
 def test_iter_all_closes_the_iterator_when_consumer_stops_early():
-    """The iterator holds server-side state, so abandoning the generator part
-    way through must still release it."""
+    """Abandoning the generator early must still release the iterator."""
     store, _, _, iterator = _store_with_batches(
         [{"id": 1, "vector": [0.1], "metadata": {}}],
         [{"id": 2, "vector": [0.2], "metadata": {}}],
@@ -129,9 +127,8 @@ def test_iter_all_empty_collection_yields_nothing():
 
 @patch("semantica.vector_store.milvus_store.MILVUS_AVAILABLE", True)
 def test_iter_all_raises_when_query_iterator_is_unavailable():
-    """Older pymilvus lacks query_iterator. Falling back to query(offset=...)
-    would silently truncate at the 16384 result window, so this fails loudly
-    instead."""
+    """Older pymilvus lacks query_iterator; falling back to query(offset=...)
+    would truncate at the 16384 window."""
     store = MilvusStore()
     wrapper = MagicMock()
     wrapper.collection = MagicMock(spec=["query"])
@@ -143,11 +140,7 @@ def test_iter_all_raises_when_query_iterator_is_unavailable():
 
 @patch("semantica.vector_store.milvus_store.MILVUS_AVAILABLE", True)
 def test_iter_all_raises_when_collection_not_initialized():
-    """Must fail loudly, not yield nothing.
-
-    An empty scan is indistinguishable from an empty source, which would let
-    `store migrate` report success having copied nothing (issue #1083).
-    """
+    """Must fail loudly: an empty scan reads the same as an empty source."""
     store = MilvusStore()
 
     with pytest.raises(ProcessingError, match="Collection not initialized"):

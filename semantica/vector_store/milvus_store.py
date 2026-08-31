@@ -684,12 +684,16 @@ class MilvusStore:
         """
         Iterate over every stored entity using Milvus's query iterator.
 
-        Milvus paginates large result sets with a primary-key cursor rather
-        than a row offset, so this is exposed instead of
-        scan_vectors(offset, limit). Plain query(offset=...) is bounded by the
-        16384 result window, which would silently truncate any collection
-        larger than that. VectorStore.iter_vectors() prefers this method when
-        it is present.
+        Paginates by primary-key cursor rather than row offset, which is why
+        this exists instead of scan_vectors(offset, limit). query(offset=...)
+        is capped by the 16384 result window and would truncate anything
+        larger.
+
+        Assumes the schema create_collection() builds: a VARCHAR `id` primary
+        key plus vector and metadata fields, as get_vector() and
+        filter_by_metadata() already do. get_collection() does not validate
+        schema, so a collection with an integer key or no metadata field fails
+        here.
 
         Args:
             batch_size: Entities to request per iterator batch
@@ -699,11 +703,7 @@ class MilvusStore:
 
         Raises:
             ProcessingError: If the collection is not initialized, or the
-                installed pymilvus does not expose query_iterator(). Errors are
-                raised rather than swallowed because a scan that silently
-                yields nothing is indistinguishable from an empty source,
-                which would let a caller such as `store migrate` report
-                success having copied nothing (issue #1083).
+                installed pymilvus does not expose query_iterator().
         """
         if self.collection is None or not MILVUS_AVAILABLE:
             raise ProcessingError(
@@ -719,12 +719,12 @@ class MilvusStore:
                 "silently truncate a larger collection."
             )
 
-        # Query operations require the collection to be loaded. load() is
-        # idempotent, and this runs once per scan rather than per batch.
+        # Query operations need a loaded collection. Idempotent, and once per
+        # scan rather than per batch.
         self.collection.load()
 
-        # Milvus rejects an empty expression, so this is the match-everything
-        # form already used by filter_by_metadata().
+        # Milvus rejects an empty expression; this match-all form is what
+        # filter_by_metadata() already uses.
         iterator = query_iterator(
             batch_size=batch_size,
             expr="id != ''",
@@ -744,8 +744,7 @@ class MilvusStore:
                         "vector": np.array(vec) if vec is not None else None,
                     }
         finally:
-            # The iterator holds server-side state; release it even if the
-            # consumer abandons iteration part way through.
+            # Release the server-side iterator even if the consumer stops early.
             close = getattr(iterator, "close", None)
             if callable(close):
                 close()
