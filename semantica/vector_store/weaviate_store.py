@@ -613,18 +613,14 @@ class WeaviateStore:
 
     def iter_all(self, batch_size: int = 500):
         """
-        Iterate over every stored object using Weaviate's native cursor.
+        Iterate over every stored object using Weaviate's UUID cursor.
 
-        Weaviate paginates by the UUID of the last object seen (``after``),
-        not by row offset, so this is exposed instead of
-        scan_vectors(offset, limit): a row number such as 100000 cannot be
-        translated into the correct UUID without walking there.
-        VectorStore.iter_vectors() prefers this method when it is present.
+        Paginates by the last object's UUID rather than a row offset, which is
+        why this exists instead of scan_vectors(offset, limit).
 
-        Assumes a single unnamed vector per object, matching how get_vector()
-        and filter_by_metadata() already read them back. Collections
-        configured with named vectors return a mapping here and are not
-        handled.
+        Assumes a single unnamed vector per object, as get_vector() and
+        filter_by_metadata() already do. Named-vector collections return a
+        mapping and are not handled.
 
         Args:
             batch_size: Objects to request per fetch_objects() call
@@ -633,11 +629,8 @@ class WeaviateStore:
             Result dicts with 'id', 'metadata', and 'vector', in cursor order
 
         Raises:
-            ProcessingError: If the collection is not initialized. Errors are
-                raised rather than swallowed because a scan that silently
-                yields nothing is indistinguishable from an empty source,
-                which would let a caller such as `store migrate` report
-                success having copied nothing (issue #1083).
+            ProcessingError: If the collection is not initialized, or if the
+                scan cannot advance past a full page.
         """
         if self.collection is None or not WEAVIATE_AVAILABLE:
             raise ProcessingError(
@@ -646,29 +639,37 @@ class WeaviateStore:
 
         after_cursor = None
         scanned_count = 0
-        use_after_cursor = True
+        # Degrades cursor -> offset -> single_page as the client rejects each
+        # form. Tracked across iterations, not just inside the except branch,
+        # or later pages go out with no pagination argument at all.
+        mode = "cursor"
 
         while True:
             kwargs = {"limit": batch_size, "include_vector": True}
-            if use_after_cursor and after_cursor is not None:
+            if mode == "cursor" and after_cursor is not None:
                 kwargs["after"] = after_cursor
+            elif mode == "offset":
+                kwargs["offset"] = scanned_count
 
             try:
                 objs = self.collection.query.fetch_objects(**kwargs)
             except TypeError:
-                # Client versions without `after` fall back to numeric offset,
-                # then to no pagination argument at all. Mirrors the
-                # degradation chain in filter_by_metadata().
-                if "after" not in kwargs:
-                    raise
-                use_after_cursor = False
-                kwargs.pop("after", None)
-                try:
-                    objs = self.collection.query.fetch_objects(
-                        offset=scanned_count, **kwargs
-                    )
-                except TypeError:
+                if mode == "cursor" and "after" in kwargs:
+                    mode = "offset"
+                    kwargs.pop("after", None)
+                    kwargs["offset"] = scanned_count
+                    try:
+                        objs = self.collection.query.fetch_objects(**kwargs)
+                    except TypeError:
+                        mode = "single_page"
+                        kwargs.pop("offset", None)
+                        objs = self.collection.query.fetch_objects(**kwargs)
+                elif mode == "offset":
+                    mode = "single_page"
+                    kwargs.pop("offset", None)
                     objs = self.collection.query.fetch_objects(**kwargs)
+                else:
+                    raise
 
             batch_objects = getattr(objs, "objects", None) if objs else None
             if not batch_objects:
@@ -689,20 +690,34 @@ class WeaviateStore:
 
             scanned_count += len(batch_objects)
 
-            # A short page means the collection is exhausted.
+            # Past this point the page was full, so failing to advance is
+            # truncation rather than completion.
             if len(batch_objects) < batch_size:
                 return
 
+            if mode == "single_page":
+                raise ProcessingError(
+                    "This Weaviate client accepts neither an `after` cursor nor a "
+                    "numeric offset, so the scan cannot advance past the first "
+                    "page. Refusing to return a truncated scan."
+                )
+
+            if mode == "offset":
+                continue
+
             last_uuid = getattr(batch_objects[-1], "uuid", None)
             if last_uuid is None:
-                return
+                raise ProcessingError(
+                    "The last object of a full Weaviate page has no uuid, so the "
+                    "cursor cannot advance. Refusing to return a truncated scan."
+                )
 
             next_cursor = str(last_uuid)
-            # There is no result cap on a full scan, so a cursor that stops
-            # advancing would loop forever. Stop instead of re-reading the
-            # same page.
-            if use_after_cursor and next_cursor == after_cursor:
-                return
+            if next_cursor == after_cursor:
+                raise ProcessingError(
+                    "The Weaviate cursor stopped advancing, so the listing is "
+                    "repeating a page. Refusing to return a truncated scan."
+                )
             after_cursor = next_cursor
 
 

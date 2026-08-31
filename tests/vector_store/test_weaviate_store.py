@@ -65,22 +65,61 @@ def test_iter_all_stops_on_short_page():
 
 
 @patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
-def test_iter_all_stops_when_cursor_stops_advancing():
-    """A full scan has no result cap, so a stalled cursor would loop forever.
-
-    Pathological rather than expected from a real server, but termination is
-    the property that matters: this must not hang.
-    """
+def test_iter_all_raises_when_cursor_stops_advancing():
+    """A stalled cursor must terminate, but not quietly: a partial scan reads
+    as a complete one."""
     store = WeaviateStore()
     store.collection = MagicMock()
     store.collection.query.fetch_objects.return_value = _page(
         [_obj("same-uuid"), _obj("same-uuid")]
     )
 
-    result = list(store.iter_all(batch_size=2))
+    with pytest.raises(ProcessingError, match="stopped advancing"):
+        list(store.iter_all(batch_size=2))
 
-    assert store.collection.query.fetch_objects.call_count == 2
-    assert len(result) == 4
+
+@patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
+def test_iter_all_offset_fallback_advances_across_pages():
+    """Regression: the offset was only set inside the except branch, so pages
+    after the fallback went out with no pagination at all and the scan
+    restarted from page one."""
+    store = WeaviateStore()
+    store.collection = MagicMock()
+    calls = []
+
+    def _fetch(**kwargs):
+        calls.append(dict(kwargs))
+        if "after" in kwargs:
+            raise TypeError("unexpected keyword argument 'after'")
+        page_number = len(calls)
+        if page_number < 4:
+            return _page([_obj(f"u{page_number}a"), _obj(f"u{page_number}b")])
+        return _page([_obj("last")])
+
+    store.collection.query.fetch_objects.side_effect = _fetch
+
+    ids = [item["id"] for item in store.iter_all(batch_size=2)]
+
+    assert len(set(ids)) == len(ids), f"duplicate ids means the scan restarted: {ids}"
+    assert [c.get("offset") for c in calls] == [None, None, 2, 4]
+
+
+@patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
+def test_iter_all_raises_when_no_pagination_is_supported():
+    """A client rejecting both `after` and `offset` cannot page past the first
+    result."""
+    store = WeaviateStore()
+    store.collection = MagicMock()
+
+    def _fetch(**kwargs):
+        if "after" in kwargs or "offset" in kwargs:
+            raise TypeError("unsupported")
+        return _page([_obj("a"), _obj("b")])
+
+    store.collection.query.fetch_objects.side_effect = _fetch
+
+    with pytest.raises(ProcessingError, match="neither an .after. cursor nor a"):
+        list(store.iter_all(batch_size=2))
 
 
 @patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
