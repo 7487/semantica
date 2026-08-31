@@ -57,10 +57,13 @@ jobs:
           # `pip install -e ".[explorer]" pytest==9.1.1`) so every fetched
           # package is hash-verified (Scorecard Pinned-Dependencies); the
           # local editable install itself has nothing to hash.
-          # .github/requirements/explorer-extra.txt is
-          # `uv pip compile pyproject.toml --extra explorer --constraint requirements-ci.txt --generate-hashes`
+          # .github/requirements/explorer-extra-py311.txt is
+          # `uv pip compile pyproject.toml --extra explorer --python-version 3.11 --constraint requirements-ci.txt --generate-hashes`
           # - regenerate it the same way if pyproject.toml's base/explorer
-          # deps change.
+          # deps change. Resolved specifically for this job's python 3.11
+          # (see the Dockerfile's explorer-extra-py313.txt for why this
+          # can't be shared with python 3.13: audioread needs extra
+          # standard-aifc/standard-sunau hashes only on 3.13+).
           #
           # --no-deps only skips *runtime* dependency resolution - `-e .`
           # still does a PEP 517 build, which by default creates an isolated
@@ -71,7 +74,7 @@ jobs:
           # copies instead of fetching its own.
           pip install -r .github/requirements/pep517-build.txt --require-hashes
           pip install --no-deps --no-build-isolation -e .
-          pip install -r .github/requirements/explorer-extra.txt --require-hashes
+          pip install -r .github/requirements/explorer-extra-py311.txt --require-hashes
           pip install -r .github/requirements/pytest-tool.txt --require-hashes
       - name: Test deterministic Explorer backend path
         run: |
