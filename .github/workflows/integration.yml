@@ -1,0 +1,88 @@
+name: Integration Tests
+
+# Runs the suites that need a real server rather than a mock. Deliberately
+# separate from ci.yml: ci.yml is a required check, and a slow image pull or a
+# flaky container must not block unrelated merges. Same reasoning as
+# install-matrix.yml being its own workflow.
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'docs_check.py'
+      - '**/*.md'
+  schedule:
+    - cron: '0 5 * * 1'  # weekly, catches upstream image and driver drift
+  workflow_dispatch:
+
+jobs:
+  pgvector:
+    name: pgvector (live PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # Pinned by digest rather than tag, matching how this repo pins its
+        # GitHub Actions. This is pgvector/pgvector:pg16 as published on
+        # 2026-08-13; verify-action-pins.sh only inspects `uses:` lines, so
+        # keeping this immutable is on us.
+        image: pgvector/pgvector@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # tests/vector_store/test_pgvector_store.py falls back to this same value,
+      # but set it explicitly so the workflow is not relying on a default it
+      # does not control.
+      TEST_PGVECTOR_URL: postgresql://postgres:postgres@localhost:5432/test
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install semantica with the pgvector extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[vectorstore-pgvector]" pytest==9.1.1
+
+      - name: Create the vector extension
+        # PgVectorStore._verify_pgvector_extension() checks for this and raises
+        # if absent; it deliberately does not auto-create it. This step doubles
+        # as the connectivity gate: if Postgres is unreachable the job fails
+        # here rather than further on with every test silently skipped.
+        run: |
+          python - <<'PY'
+          import os
+
+          import psycopg
+
+          # Read from the environment rather than interpolating ${{ }} into the
+          # script body: same reason the setup-semantica action does, keeping
+          # workflow values out of the generated source.
+          with psycopg.connect(os.environ["TEST_PGVECTOR_URL"]) as conn:
+              conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+              conn.commit()
+          print("vector extension ready")
+          PY
+
+      - name: Run the live pgvector suite
+        # -rs reports skip reasons, so a run that passes by skipping everything
+        # is visible in the log rather than looking green.
+        run: pytest tests/vector_store/test_pgvector_store.py -v -rs
