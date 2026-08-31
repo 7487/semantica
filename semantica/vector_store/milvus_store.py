@@ -680,6 +680,76 @@ class MilvusStore:
             self.logger.warning(f"Failed to query Milvus vectors by metadata expression: {e}")
             return []
 
+    def iter_all(self, batch_size: int = 500):
+        """
+        Iterate over every stored entity using Milvus's query iterator.
+
+        Milvus paginates large result sets with a primary-key cursor rather
+        than a row offset, so this is exposed instead of
+        scan_vectors(offset, limit). Plain query(offset=...) is bounded by the
+        16384 result window, which would silently truncate any collection
+        larger than that. VectorStore.iter_vectors() prefers this method when
+        it is present.
+
+        Args:
+            batch_size: Entities to request per iterator batch
+
+        Yields:
+            Result dicts with 'id', 'metadata', and 'vector', in cursor order
+
+        Raises:
+            ProcessingError: If the collection is not initialized, or the
+                installed pymilvus does not expose query_iterator(). Errors are
+                raised rather than swallowed because a scan that silently
+                yields nothing is indistinguishable from an empty source,
+                which would let a caller such as `store migrate` report
+                success having copied nothing (issue #1083).
+        """
+        if self.collection is None or not MILVUS_AVAILABLE:
+            raise ProcessingError(
+                "Collection not initialized. Call create_collection() or get_collection() first."
+            )
+
+        query_iterator = getattr(self.collection.collection, "query_iterator", None)
+        if not callable(query_iterator):
+            raise ProcessingError(
+                "This pymilvus version does not expose Collection.query_iterator(), "
+                "which full enumeration requires. Falling back to query(offset=...) "
+                "is not safe here: it is capped by the 16384 result window and would "
+                "silently truncate a larger collection."
+            )
+
+        # Query operations require the collection to be loaded. load() is
+        # idempotent, and this runs once per scan rather than per batch.
+        self.collection.load()
+
+        # Milvus rejects an empty expression, so this is the match-everything
+        # form already used by filter_by_metadata().
+        iterator = query_iterator(
+            batch_size=batch_size,
+            expr="id != ''",
+            output_fields=["id", "vector", "metadata"],
+        )
+
+        try:
+            while True:
+                batch = iterator.next()
+                if not batch:
+                    return
+                for item in batch:
+                    vec = item.get("vector")
+                    yield {
+                        "id": str(item.get("id")),
+                        "metadata": item.get("metadata") or {},
+                        "vector": np.array(vec) if vec is not None else None,
+                    }
+        finally:
+            # The iterator holds server-side state; release it even if the
+            # consumer abandons iteration part way through.
+            close = getattr(iterator, "close", None)
+            if callable(close):
+                close()
+
     def get_stats(self, collection_name: Optional[str] = None) -> Dict[str, Any]:
         """Get collection statistics."""
         if self.collection is None and collection_name:
