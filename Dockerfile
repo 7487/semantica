@@ -33,7 +33,8 @@ WORKDIR /app
 RUN groupadd --system semantica \
     && useradd --system --gid semantica --home-dir /app --shell /usr/sbin/nologin semantica
 
-COPY pyproject.toml README.md LICENSE MANIFEST.in .github/requirements/explorer-extra.txt ./
+COPY pyproject.toml README.md LICENSE MANIFEST.in \
+     .github/requirements/explorer-extra.txt .github/requirements/pep517-build.txt ./
 COPY semantica/ ./semantica/
 COPY integrations/ ./integrations/
 COPY --from=frontend-builder /app/semantica/static ./semantica/static
@@ -45,10 +46,16 @@ COPY --from=frontend-builder /app/semantica/static ./semantica/static
 # setuptools==84.0.0 (which also replaces the base image's vulnerable
 # 70.3.0, CVE-2025-47273 - nothing else in the tree pulls a newer copy).
 # --no-deps on the local package itself: it's our own source tree, not a
-# fetch, so there's nothing to hash-pin there.
-RUN pip install --no-cache-dir -r explorer-extra.txt --require-hashes \
-    && pip install --no-cache-dir --no-deps . \
-    && rm -f explorer-extra.txt \
+# fetch, so there's nothing to hash-pin there - but `pip install .` still
+# does a PEP 517 build, which by default creates an *isolated* build env
+# and fetches [build-system] requires (setuptools, wheel) completely
+# outside any hash checking. pep517-build.txt pins that exact
+# build-system.requires; installing it first and passing
+# --no-build-isolation makes pip reuse those hash-verified copies instead
+# of fetching its own.
+RUN pip install --no-cache-dir -r explorer-extra.txt -r pep517-build.txt --require-hashes \
+    && pip install --no-cache-dir --no-deps --no-build-isolation . \
+    && rm -f explorer-extra.txt pep517-build.txt \
     && chown -R semantica:semantica /app
 
 USER semantica

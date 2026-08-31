@@ -20,6 +20,7 @@
 .github/**
 !.github/requirements/
 !.github/requirements/explorer-extra.txt
+!.github/requirements/pep517-build.txt
 .claude
 .claude/**
 .codex
