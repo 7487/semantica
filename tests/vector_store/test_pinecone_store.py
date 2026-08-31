@@ -327,8 +327,14 @@ class TestPineconeIterAll(unittest.TestCase):
         self.assertEqual([item["id"] for item in result], ["a"])
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
-    def test_stops_when_pagination_token_repeats(self):
-        """A token that stops advancing must not loop forever."""
+    def test_raises_when_pagination_token_repeats(self):
+        """A token that stops advancing must not loop forever, and must not
+        quietly return a partial scan either.
+
+        Truncating silently is indistinguishable from a complete enumeration,
+        which would let store migrate copy part of an index and report success
+        (issue #1083).
+        """
         store, _, raw_index = self._store(
             [self._page(["a"], "same"), self._page(["b"], "same")],
             [
@@ -337,10 +343,10 @@ class TestPineconeIterAll(unittest.TestCase):
             ],
         )
 
-        result = list(store.iter_all())
+        with self.assertRaises(ProcessingError):
+            list(store.iter_all())
 
         self.assertEqual(raw_index.list_paginated.call_count, 2)
-        self.assertEqual(len(result), 2)
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_empty_listing_yields_nothing_without_fetching(self):

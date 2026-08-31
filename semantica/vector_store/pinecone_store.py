@@ -848,10 +848,18 @@ class PineconeStore:
                 }
 
             next_token = _pinecone_next_token(response)
-            # A token that repeats means the listing is not advancing; stop
-            # rather than re-reading the same page forever.
-            if not next_token or next_token == token:
+            if not next_token:
                 return
+            if next_token == token:
+                # Distinct from exhaustion above: the listing is not advancing.
+                # Returning here would yield a partial scan that a caller cannot
+                # tell apart from a complete one, and `store migrate` would flush
+                # it and report success having copied only part of the index.
+                raise ProcessingError(
+                    "Pinecone returned the same pagination token twice, so the "
+                    "listing is not advancing. Refusing to return a truncated "
+                    "scan."
+                )
             token = next_token
 
     def fetch_vectors(
