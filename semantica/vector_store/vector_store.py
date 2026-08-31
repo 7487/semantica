@@ -867,12 +867,9 @@ class VectorStore:
         """
         Iterate over every stored vector, one page at a time.
 
-        Backends whose native pagination is cursor based (Qdrant, Pinecone,
-        Milvus, Weaviate) cannot honestly implement the positional
-        scan_vectors(offset, limit) contract, so they expose iter_all()
-        instead and it is preferred here when present. Backends with real
-        positional access (inmemory, FAISS, SQLite-vec, PgVector) fall
-        through to the offset loop below.
+        Cursor-based backends expose iter_all() because they cannot support a
+        positional offset; it takes precedence when present. Everything else
+        falls through to the scan_vectors() offset loop.
 
         Args:
             batch_size: Number of vectors to fetch per underlying call
