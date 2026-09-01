@@ -1859,6 +1859,27 @@ class TestMCP:
         assert "Traceback" not in result.output
         assert "--args must be a JSON object" in result.output
 
+    def test_call_non_object_args_json_mode_stdout_stays_clean(self, runner):
+        """Under global --json, stdout must stay machine-readable: failures are
+        emitted as structured JSON on stderr, never as a Rich panel on stdout."""
+        result = runner.invoke(
+            cli_module.main,
+            ["--json", "mcp", "call", "extract_entities", "--args", "[1, 2]"],
+        )
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        err = json.loads(result.stderr)
+        assert err["error"] == "--args must be a JSON object"
+
+    def test_call_unknown_tool_json_mode_stdout_stays_clean(self, runner):
+        result = runner.invoke(
+            cli_module.main, ["--json", "mcp", "call", "no_such_tool"]
+        )
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        err = json.loads(result.stderr)
+        assert "Unknown tool" in err["error"]
+
     def test_list_tools_json_matches_server_catalog(self, runner):
         """The CLI catalog and the MCP server catalog must be the same list."""
         from semantica.mcp_server import TOOLS
