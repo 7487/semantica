@@ -777,15 +777,24 @@ class TestReason:
         # Reasoner.infer_facts().
         pytest.importorskip("numpy", reason="semantica.reasoning needs numpy")
         rules_file = tmp_path / "rules.yaml"
-        rules_file.write_text('- IF Person(?x) THEN Human(?x)\n', encoding="utf-8")
+        rules_file.write_text(
+            '- IF Person(?x) THEN Human(?x)\n'
+            '- IF MANAGES(?x, ?y) THEN Manager(?x)\n'
+            '- IF Employee(?x) THEN Staff(?x)\n',
+            encoding="utf-8")
 
         class _FakeStore:
+            # Same dict schema as the real backends: nodes carry
+            # labels/properties, relationships carry start_node_id/end_node_id.
             def get_nodes(self, limit=None):
                 return [{"id": 1, "labels": ["Person"],
-                         "properties": {"name": "Alice"}}]
+                         "properties": {"name": "Alice"}},
+                        {"id": 2, "labels": ["Person", "Employee"],
+                         "properties": {"name": "Bob"}}]
 
             def get_relationships(self, limit=None):
-                return [{"id": 9, "type": "MANAGES", "start_id": 1, "end_id": 1}]
+                return [{"id": 9, "type": "MANAGES",
+                         "start_node_id": 1, "end_node_id": 2}]
 
         monkeypatch.setattr(cli_module, "_get_graph_store", lambda ctx: _FakeStore())
         result = runner.invoke(
@@ -794,9 +803,22 @@ class TestReason:
         )
         _ok(result)
         data = json.loads(result.output.strip())
-        assert data["facts"] == 2
+        # Person(Alice), Person(Bob), Employee(Bob), MANAGES(Alice, Bob)
+        assert data["facts"] == 4
         assert "Human(Alice)" in data["inferred_facts"]
+        # Relationship endpoints resolve node ids to names.
+        assert "Manager(Alice)" in data["inferred_facts"]
+        # Secondary labels also become facts.
+        assert "Staff(Bob)" in data["inferred_facts"]
         assert data["inferred_count"] == len(data["inferred_facts"])
+
+    def test_run_rejects_unwired_engine(self, runner):
+        result = runner.invoke(cli_module.main,
+                               ["reason", "run", "--engine", "sparql"])
+        assert result.exit_code != 0
+        assert "not wired" in result.output
+        assert "reason query" in result.output
+        assert "Traceback" not in result.output
 
     def test_load_rule_definitions_formats(self, tmp_path):
         yaml_list = tmp_path / "list.yaml"

@@ -1191,11 +1191,11 @@ def _graph_store_facts(cli_ctx: CLIContext) -> List[str]:
         props = node.get("properties") or {}
         name = props.get("name") or props.get("id") or node.get("id")
         names[node.get("id")] = name
-        label = (node.get("labels") or ["Entity"])[0]
-        facts.append(f"{label}({name})")
+        for label in node.get("labels") or ["Entity"]:
+            facts.append(f"{label}({name})")
     for rel in relationships:
-        source = names.get(rel.get("start_id"), rel.get("start_id"))
-        target = names.get(rel.get("end_id"), rel.get("end_id"))
+        source = names.get(rel.get("start_node_id"), rel.get("start_node_id"))
+        target = names.get(rel.get("end_node_id"), rel.get("end_node_id"))
         facts.append(f"{rel.get('type', 'RELATED_TO')}({source}, {target})")
     return facts
 
@@ -2205,6 +2205,17 @@ def reason_run(cli_ctx: CLIContext, engine: str, rules: Optional[str],
     cli_ctx = _require_ctx(cli_ctx)
 
     def _action() -> None:
+        # Only the forward-chaining production-rule engines run through
+        # Reasoner.infer_facts(); the other engines take different inputs
+        # (SPARQL/Datalog queries, observations, premises) and are not wired
+        # to this command yet. Fail honestly instead of silently
+        # forward-chaining under another engine's name.
+        if engine not in ("rete", "forward-chain"):
+            hint = (" Use 'semantica reason query' for SPARQL/Datalog queries."
+                    if engine in ("sparql", "datalog") else "")
+            raise click.ClickException(
+                f"Engine '{engine}' is not wired to 'reason run' yet; "
+                f"supported engines: rete, forward-chain.{hint}")
         try:
             from .reasoning import Reasoner
             # Reasoner has no run() method (#1354); dispatch to its real
