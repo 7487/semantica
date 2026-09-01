@@ -590,19 +590,18 @@ class QdrantStore:
                 with_payload=True,
                 with_vectors=True,
             )
-            results = []
-            for rec in records:
-                results.append(
-                    {
-                        "id": str(rec.id),
-                        "metadata": rec.payload or {},
-                        "vector": np.array(rec.vector) if rec.vector is not None else None,
-                    }
-                )
-            return results
+            return [self._record_to_result(rec) for rec in records]
         except Exception as e:
             self.logger.warning(f"Failed to scroll Qdrant points by metadata filter: {e}")
             return []
+
+    @staticmethod
+    def _record_to_result(rec: Any) -> Dict[str, Any]:
+        return {
+            "id": str(rec.id),
+            "metadata": rec.payload or {},
+            "vector": np.array(rec.vector) if rec.vector is not None else None,
+        }
 
     def iter_all(self, batch_size: int = 500):
         """
@@ -624,7 +623,7 @@ class QdrantStore:
 
         Raises:
             ProcessingError: If the collection or client is not initialized, or
-                if the scan cannot advance past a full page.
+                if the cursor stops advancing before the scan completes.
         """
         if self.collection is None or self.client is None or not QDRANT_AVAILABLE:
             raise ProcessingError(
@@ -632,6 +631,7 @@ class QdrantStore:
             )
 
         next_offset = None
+        last_offset = object()
         while True:
             records, next_offset = self.client.scroll(
                 collection_name=self.collection.collection_name,
@@ -642,11 +642,7 @@ class QdrantStore:
             )
 
             for rec in records:
-                yield {
-                    "id": str(rec.id),
-                    "metadata": rec.payload or {},
-                    "vector": np.array(rec.vector) if rec.vector is not None else None,
-                }
+                yield self._record_to_result(rec)
 
             # A final page can carry records alongside a null cursor, so they
             # are yielded above before stopping. Passing offset=None back to
@@ -654,14 +650,16 @@ class QdrantStore:
             if next_offset is None:
                 return
 
-            # A cursor without records means the scan cannot advance, which is
-            # truncation rather than completion.
-            if not records:
+            # An empty page with a live cursor isn't necessarily truncation —
+            # a batch window that lands entirely on deleted points comes back
+            # this way too, and there's more to scan past it. Only treat it as
+            # stuck if the cursor itself stops moving.
+            if not records and next_offset == last_offset:
                 raise ProcessingError(
-                    "Qdrant returned an empty page alongside a continuation "
-                    "cursor, so the scan cannot advance. Refusing to return a "
-                    "truncated scan."
+                    "Qdrant scroll cursor stopped advancing without reaching "
+                    "the end of the collection, so the scan cannot complete."
                 )
+            last_offset = next_offset
 
     def delete_vectors(
         self, point_ids: List[Union[str, int]], **options

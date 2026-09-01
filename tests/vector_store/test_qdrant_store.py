@@ -94,12 +94,26 @@ def test_iter_all_empty_collection_yields_nothing():
 
 
 @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
-def test_iter_all_raises_on_empty_page_with_a_cursor():
-    """An empty page with a cursor left set cannot advance, so returning here
-    would hand back a partial scan that reads as a complete one."""
-    store = _store_with_scroll(([], "cursor-that-never-clears"))
+def test_iter_all_continues_past_empty_page_with_advancing_cursor():
+    store = _store_with_scroll(
+        ([], "cursor-1"),
+        ([_record(1)], None),
+    )
 
-    with pytest.raises(ProcessingError, match="cannot advance"):
+    result = list(store.iter_all())
+
+    assert [item["id"] for item in result] == ["1"]
+    assert store.client.scroll.call_count == 2
+
+
+@patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
+def test_iter_all_raises_when_cursor_stops_advancing():
+    store = _store_with_scroll(
+        ([], "stuck-cursor"),
+        ([], "stuck-cursor"),
+    )
+
+    with pytest.raises(ProcessingError, match="stopped advancing"):
         list(store.iter_all())
 
 
