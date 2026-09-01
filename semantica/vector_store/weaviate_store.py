@@ -488,6 +488,28 @@ class WeaviateStore:
             self.logger.debug(f"Could not build native Weaviate filter: {e}")
             return None
 
+    def _fetch_objects_offset_or_plain(self, kwargs: Dict[str, Any], scanned_count: int):
+        """Retry a failed `after`-cursor fetch_objects() call with `offset`, then
+        with no pagination argument at all. Returns (objs, mode)."""
+        kwargs = dict(kwargs)
+        kwargs.pop("after", None)
+        kwargs["offset"] = scanned_count
+        try:
+            return self.collection.query.fetch_objects(**kwargs), "offset"
+        except TypeError:
+            kwargs.pop("offset", None)
+            return self.collection.query.fetch_objects(**kwargs), "single_page"
+
+    @staticmethod
+    def _extract_vector(raw_vector: Any) -> Optional[np.ndarray]:
+        """weaviate-client v4 returns vector as {'default': [...]} rather than a
+        bare list; older clients and mocks may still hand back a bare list."""
+        if isinstance(raw_vector, dict):
+            raw_vector = raw_vector.get("default")
+        if raw_vector is None or len(raw_vector) == 0:
+            return None
+        return np.array(raw_vector)
+
     def filter_by_metadata(
         self, filters: Dict[str, Any], limit: int = 10
     ) -> List[Dict[str, Any]]:
@@ -533,22 +555,11 @@ class WeaviateStore:
                         try:
                             objs = self.collection.query.fetch_objects(**kwargs)
                         except TypeError:
-                            if "after" in kwargs:
-                                kwargs.pop("after", None)
-                                kwargs["offset"] = scanned_count
-                                try:
-                                    objs = self.collection.query.fetch_objects(**kwargs)
-                                except TypeError:
-                                    kwargs.pop("offset", None)
-                                    objs = self.collection.query.fetch_objects(**kwargs)
+                            if "after" not in kwargs:
+                                raise
+                            objs, _ = self._fetch_objects_offset_or_plain(kwargs, scanned_count)
                     elif "after" in kwargs:
-                        kwargs.pop("after", None)
-                        kwargs["offset"] = scanned_count
-                        try:
-                            objs = self.collection.query.fetch_objects(**kwargs)
-                        except TypeError:
-                            kwargs.pop("offset", None)
-                            objs = self.collection.query.fetch_objects(**kwargs)
+                        objs, _ = self._fetch_objects_offset_or_plain(kwargs, scanned_count)
                     else:
                         raise te
                 except Exception as fe:
@@ -655,15 +666,7 @@ class WeaviateStore:
                 objs = self.collection.query.fetch_objects(**kwargs)
             except TypeError:
                 if mode == "cursor" and "after" in kwargs:
-                    mode = "offset"
-                    kwargs.pop("after", None)
-                    kwargs["offset"] = scanned_count
-                    try:
-                        objs = self.collection.query.fetch_objects(**kwargs)
-                    except TypeError:
-                        mode = "single_page"
-                        kwargs.pop("offset", None)
-                        objs = self.collection.query.fetch_objects(**kwargs)
+                    objs, mode = self._fetch_objects_offset_or_plain(kwargs, scanned_count)
                 elif mode == "offset":
                     mode = "single_page"
                     kwargs.pop("offset", None)
@@ -675,50 +678,48 @@ class WeaviateStore:
             if not batch_objects:
                 return
 
+            page_full = len(batch_objects) >= batch_size
+            next_cursor = after_cursor
+
+            # Checked before yielding: a page that can't advance is truncation,
+            # not completion, and the caller shouldn't see any of it go out
+            # before the error does.
+            if page_full:
+                if mode == "single_page":
+                    raise ProcessingError(
+                        "This Weaviate client accepts neither an `after` cursor nor a "
+                        "numeric offset, so the scan cannot advance past the first "
+                        "page. Refusing to return a truncated scan."
+                    )
+                if mode == "cursor":
+                    last_uuid = getattr(batch_objects[-1], "uuid", None)
+                    if last_uuid is None:
+                        raise ProcessingError(
+                            "The last object of a full Weaviate page has no uuid, so the "
+                            "cursor cannot advance. Refusing to return a truncated scan."
+                        )
+                    next_cursor = str(last_uuid)
+                    if next_cursor == after_cursor:
+                        raise ProcessingError(
+                            "The Weaviate cursor stopped advancing, so the listing is "
+                            "repeating a page. Refusing to return a truncated scan."
+                        )
+
             for obj in batch_objects:
                 obj_uuid = getattr(obj, "uuid", None)
-                raw_vector = getattr(obj, "vector", None)
                 yield {
                     "id": str(obj_uuid) if obj_uuid is not None else None,
                     "metadata": getattr(obj, "properties", None) or {},
-                    "vector": (
-                        np.array(raw_vector)
-                        if raw_vector is not None and len(raw_vector) > 0
-                        else None
-                    ),
+                    "vector": self._extract_vector(getattr(obj, "vector", None)),
                 }
 
             scanned_count += len(batch_objects)
 
-            # Past this point the page was full, so failing to advance is
-            # truncation rather than completion.
-            if len(batch_objects) < batch_size:
+            if not page_full:
                 return
 
-            if mode == "single_page":
-                raise ProcessingError(
-                    "This Weaviate client accepts neither an `after` cursor nor a "
-                    "numeric offset, so the scan cannot advance past the first "
-                    "page. Refusing to return a truncated scan."
-                )
-
-            if mode == "offset":
-                continue
-
-            last_uuid = getattr(batch_objects[-1], "uuid", None)
-            if last_uuid is None:
-                raise ProcessingError(
-                    "The last object of a full Weaviate page has no uuid, so the "
-                    "cursor cannot advance. Refusing to return a truncated scan."
-                )
-
-            next_cursor = str(last_uuid)
-            if next_cursor == after_cursor:
-                raise ProcessingError(
-                    "The Weaviate cursor stopped advancing, so the listing is "
-                    "repeating a page. Refusing to return a truncated scan."
-                )
-            after_cursor = next_cursor
+            if mode == "cursor":
+                after_cursor = next_cursor
 
 
     def query_vectors(
