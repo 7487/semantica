@@ -771,6 +771,50 @@ class TestReason:
         assert result.exit_code != 0
         assert "Traceback" not in result.output
 
+    def test_run_infers_from_graph_store_facts(self, runner, monkeypatch, tmp_path):
+        # reason run used to call Reasoner.run(), which does not exist
+        # (#1354); it must feed graph store facts + --rules into
+        # Reasoner.infer_facts().
+        pytest.importorskip("numpy", reason="semantica.reasoning needs numpy")
+        rules_file = tmp_path / "rules.yaml"
+        rules_file.write_text('- IF Person(?x) THEN Human(?x)\n', encoding="utf-8")
+
+        class _FakeStore:
+            def get_nodes(self, limit=None):
+                return [{"id": 1, "labels": ["Person"],
+                         "properties": {"name": "Alice"}}]
+
+            def get_relationships(self, limit=None):
+                return [{"id": 9, "type": "MANAGES", "start_id": 1, "end_id": 1}]
+
+        monkeypatch.setattr(cli_module, "_get_graph_store", lambda ctx: _FakeStore())
+        result = runner.invoke(
+            cli_module.main,
+            ["--json", "reason", "run", "--rules", str(rules_file)],
+        )
+        _ok(result)
+        data = json.loads(result.output.strip())
+        assert data["facts"] == 2
+        assert "Human(Alice)" in data["inferred_facts"]
+        assert data["inferred_count"] == len(data["inferred_facts"])
+
+    def test_load_rule_definitions_formats(self, tmp_path):
+        yaml_list = tmp_path / "list.yaml"
+        yaml_list.write_text('- IF A(?x) THEN B(?x)\n- IF B(?x) THEN C(?x)\n',
+                             encoding="utf-8")
+        assert cli_module._load_rule_definitions(str(yaml_list)) == [
+            "IF A(?x) THEN B(?x)", "IF B(?x) THEN C(?x)"]
+
+        yaml_map = tmp_path / "map.yaml"
+        yaml_map.write_text('rules:\n  - IF A(?x) THEN B(?x)\n', encoding="utf-8")
+        assert cli_module._load_rule_definitions(str(yaml_map)) == [
+            "IF A(?x) THEN B(?x)"]
+
+        plain = tmp_path / "rules.dl"
+        plain.write_text('# comment\nIF A(?x) THEN B(?x)\n\n', encoding="utf-8")
+        assert cli_module._load_rule_definitions(str(plain)) == [
+            "IF A(?x) THEN B(?x)"]
+
     def test_explain_requires_conclusion(self, runner):
         result = runner.invoke(cli_module.main, ["reason", "explain"])
         assert result.exit_code != 0
@@ -1349,6 +1393,33 @@ class TestStore:
     def test_connect_reports_status(self, runner):
         result = runner.invoke(cli_module.main, ["store", "connect", "--backend", "neo4j"])
         _ok(result)
+
+    def test_connect_dispatches_through_graph_store(self, runner, monkeypatch):
+        # store connect used to call get_graph_store_method(backend) — the
+        # method registry, which needs (task, method_name) — so it raised a
+        # TypeError before any connection attempt (#1354).
+        calls = {}
+
+        class _FakeGraphStore:
+            def __init__(self, backend=None, **cfg):
+                calls["backend"] = backend
+                calls["cfg"] = cfg
+
+            def connect(self):
+                calls["connected"] = True
+                return True
+
+        import semantica.graph_store as gs_mod
+        monkeypatch.setattr(gs_mod, "GraphStore", _FakeGraphStore)
+        result = runner.invoke(cli_module.main, [
+            "store", "connect", "--backend", "neo4j",
+            "--uri", "bolt://example:7687", "--json"])
+        _ok(result)
+        data = _json_output(result)
+        assert data == {"backend": "neo4j", "connected": True}
+        assert calls["backend"] == "neo4j"
+        assert calls["cfg"].get("uri") == "bolt://example:7687"
+        assert calls.get("connected") is True
 
     def test_migrate_dry_run(self, runner):
         result = runner.invoke(cli_module.main, ["store", "migrate",
