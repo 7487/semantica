@@ -396,6 +396,9 @@ class MockSigV4Auth:
         request.headers["Host"] = host
         request.headers["X-Amz-Date"] = amz_date
         request.headers["Authorization"] = authorization
+        # Real SigV4Auth adds the session token header for temporary credentials
+        if self.credentials.token:
+            request.headers["X-Amz-Security-Token"] = self.credentials.token
 
 
 def mock_host_from_url(url):
@@ -707,18 +710,23 @@ class TestAmazonNeptuneStoreIAMAuth(unittest.TestCase):
                 aws_region="us-east-1",
             )
 
-            with self.assertLogs(
-                "semantica.neptune_auth_token_manager", level="DEBUG"
-            ) as captured:
-                auth = manager.get_auth()
+            # Use temporary credentials so the signer emits X-Amz-Security-Token
+            with patch.object(
+                mock_credentials, "token", "mocksessiontoken987654321"
+            ):
+                with self.assertLogs(
+                    "semantica.neptune_auth_token_manager", level="DEBUG"
+                ) as captured:
+                    auth = manager.get_auth()
 
             self.assertIsNotNone(auth)
             logged = "\n".join(captured.output)
             # The signed Authorization header (containing the SigV4 signature)
-            # is a live, replayable credential and must not appear in logs at
-            # any level.
+            # and the STS session token are live, replayable credentials and
+            # must not appear in logs at any level.
             self.assertNotIn("mocksignature123456789", logged)
             self.assertNotIn("Authorization", logged)
+            self.assertNotIn("mocksessiontoken987654321", logged)
 
     def test_refresh_auth_token(self):
         """Test manual token refresh."""
