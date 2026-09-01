@@ -621,6 +621,15 @@ class MilvusStore:
         except Exception:
             return None
 
+    @staticmethod
+    def _record_to_result(item: Dict[str, Any]) -> Dict[str, Any]:
+        vec = item.get("vector")
+        return {
+            "id": str(item.get("id")),
+            "metadata": item.get("metadata") or {},
+            "vector": np.array(vec) if vec is not None else None,
+        }
+
     def filter_by_metadata(
         self, filters: Dict[str, Any], limit: int = 10
     ) -> List[Dict[str, Any]]:
@@ -665,17 +674,7 @@ class MilvusStore:
                 limit=limit,
                 output_fields=["id", "vector", "metadata"],
             )
-            results = []
-            for item in query_results:
-                vec = item.get("vector")
-                results.append(
-                    {
-                        "id": str(item.get("id")),
-                        "metadata": item.get("metadata") or {},
-                        "vector": np.array(vec) if vec is not None else None,
-                    }
-                )
-            return results
+            return [self._record_to_result(item) for item in query_results]
         except Exception as e:
             self.logger.warning(f"Failed to query Milvus vectors by metadata expression: {e}")
             return []
@@ -705,10 +704,13 @@ class MilvusStore:
             ProcessingError: If the collection is not initialized, or the
                 installed pymilvus does not expose query_iterator().
         """
-        if self.collection is None or not MILVUS_AVAILABLE:
+        if self.collection is None:
             raise ProcessingError(
                 "Collection not initialized. Call create_collection() or get_collection() first."
             )
+
+        if not MILVUS_AVAILABLE:
+            raise ProcessingError("Milvus not available")
 
         query_iterator = getattr(self.collection.collection, "query_iterator", None)
         if not callable(query_iterator):
@@ -737,17 +739,17 @@ class MilvusStore:
                 if not batch:
                     return
                 for item in batch:
-                    vec = item.get("vector")
-                    yield {
-                        "id": str(item.get("id")),
-                        "metadata": item.get("metadata") or {},
-                        "vector": np.array(vec) if vec is not None else None,
-                    }
+                    yield self._record_to_result(item)
         finally:
             # Release the server-side iterator even if the consumer stops early.
+            # Swallowed so a broken connection at cleanup time doesn't replace
+            # whatever real exception was already propagating out of the try.
             close = getattr(iterator, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except Exception as e:
+                    self.logger.warning(f"Failed to close Milvus query iterator: {e}")
 
     def get_stats(self, collection_name: Optional[str] = None) -> Dict[str, Any]:
         """Get collection statistics."""
