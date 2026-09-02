@@ -20,7 +20,7 @@
 
 **Context Management &nbsp;·&nbsp; Knowledge Modeling &nbsp;·&nbsp; Deterministic Reasoning &nbsp;·&nbsp; Ontology Management &nbsp;·&nbsp; Decision Intelligence &nbsp;·&nbsp; End-to-End Traceability**
 
-**Open Source &nbsp;·&nbsp; Self-Hostable &nbsp;·&nbsp; Auditable &nbsp;·&nbsp; Governed &nbsp;·&nbsp; Zero Vendor Lock-In**
+**Open Source &nbsp;·&nbsp; Governed &nbsp;·&nbsp; Zero Vendor Lock-In**
 
 **Polyglot Graph Storage &nbsp;·&nbsp; RDF & LPG Support &nbsp;·&nbsp; W3C Standards &nbsp;·&nbsp; Interoperable**
 
