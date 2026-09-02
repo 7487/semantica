@@ -369,7 +369,7 @@ Semantica was designed for domains where every decision must be explainable and 
 | `semantica.reasoning` | Forward chaining, Rete, deductive, abductive, SPARQL, Datalog |
 | `semantica.ontology` | SHACL, SKOS, alignments, diff/migration, auto-generation, OWL/RDF |
 | `semantica.explorer` | FastAPI Knowledge Explorer, Ontology Hub, Distance Intelligence, SHACL Studio |
-| `semantica.mcp_server` | MCP stdio server: 12 tools for Claude Desktop, VS Code, Cursor, Windsurf, Cline |
+| `semantica.mcp_server` | MCP stdio server: 15 tools for Claude Desktop, VS Code, Cursor, Windsurf, Cline |
 | `semantica.vector_store` | FAISS, Pinecone, Weaviate, Qdrant, Milvus, PgVector |
 | `semantica.graph_store` | Neo4j, FalkorDB, Apache AGE, Amazon Neptune |
 | `semantica.triplet_store` | In-memory and persistent RDF triple store with SPARQL |
