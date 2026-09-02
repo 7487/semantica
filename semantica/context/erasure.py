@@ -137,7 +137,9 @@ class ErasureCoordinator:
         graph: A :class:`~semantica.context.ContextGraph` (or anything exposing
             ``purge_node``).
         memory: An :class:`~semantica.context.AgentMemory` (or anything
-            exposing ``find_by_entity`` and ``batch_delete``).
+            exposing ``find_by_entity`` and ``batch_delete``; ``batch_delete``
+            must accept a ``skip_vector`` keyword, which the coordinator sets
+            when its vector leg already covers the memory-bound store).
         vector_store: Vector store holding entity-keyed embeddings. Defaults to
             ``memory.vector_store`` when a memory is supplied, and stays
             overridable for deployments that bind a store the memory does not
@@ -423,6 +425,18 @@ class ErasureCoordinator:
         if self.memory is None:
             return {"status": STATUS_NOT_CONFIGURED}
 
+        # When the vector leg acts on the store memory itself holds -- the
+        # default binding -- it has already deleted (and reported on) every
+        # memory-owned embedding, so delete_memory()'s own best-effort cascade
+        # would only re-attempt ids that are already gone: a redundant
+        # round-trip per item, and spurious warnings on backends that flag
+        # missing ids. With a separate coordinator store, or the vector leg
+        # disabled, that cascade is still the only cleanup memory's own store
+        # gets, so it must keep running.
+        skip_vector = self.vector_store is not None and self.vector_store is getattr(
+            self.memory, "vector_store", None
+        )
+
         deleted = 0
         try:
             # Sweep in pages until dry rather than passing one large limit:
@@ -454,7 +468,7 @@ class ErasureCoordinator:
                         "detail": "memory items carry no 'memory_id'",
                     }
 
-                removed = self.memory.batch_delete(memory_ids)
+                removed = self.memory.batch_delete(memory_ids, skip_vector=skip_vector)
                 deleted += removed
                 if removed == 0:
                     # No progress: another page would return the same items.

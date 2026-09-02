@@ -227,7 +227,7 @@ class TestMemorySweepIsNotTruncated(unittest.TestCase):
             def find_by_entity(self, entity_id, limit=10):
                 return list(self.items)[:limit]
 
-            def batch_delete(self, memory_ids):
+            def batch_delete(self, memory_ids, *, skip_vector=False):
                 return 0
 
         receipt = ErasureCoordinator(memory=_UndeletableMemory()).erase_entity("e1")
@@ -241,7 +241,9 @@ class TestMemorySweepIsNotTruncated(unittest.TestCase):
             def find_by_entity(self, entity_id, limit=10):
                 return [{"content": "no id here"}]
 
-            def batch_delete(self, memory_ids):  # pragma: no cover - never reached
+            def batch_delete(
+                self, memory_ids, *, skip_vector=False
+            ):  # pragma: no cover - never reached
                 raise AssertionError("should not delete items it cannot identify")
 
         receipt = ErasureCoordinator(memory=_AnonymousMemory()).erase_entity("e1")
@@ -321,6 +323,43 @@ class TestVectorBackendShapes(unittest.TestCase):
 
         self.assertIsNone(coordinator.vector_store)
         self.assertEqual(receipt.stores["vectors"]["status"], STATUS_NOT_CONFIGURED)
+
+
+class TestVectorsAreDeletedOnceNotTwice(unittest.TestCase):
+    """The vector leg owns embedding deletion (issue #1375).
+
+    ``delete_memory()`` cascades to the vector store on its own, so without
+    ``skip_vector=True`` the memory leg would re-attempt every vector id the
+    vector leg already deleted and reported on.
+    """
+
+    def test_memory_owned_vector_ids_are_deleted_exactly_once(self):
+        store = _MemoryVectorStore()
+        memory = AgentMemory(vector_store=store)
+        memory.store(
+            "note about customer-4471",
+            entities=[{"id": "customer-4471", "name": "customer-4471"}],
+            skip_graph=True,
+        )
+
+        receipt = ErasureCoordinator(memory=memory).erase_entity("customer-4471")
+
+        self.assertEqual(receipt.stores["memory"]["status"], STATUS_ERASED)
+        # One delete call: the vector leg's. delete_memory() must not add a
+        # second, per-item attempt against ids that are already gone.
+        self.assertEqual(len(store.deleted), 1)
+        flattened = [vid for call in store.deleted for vid in call]
+        self.assertEqual(len(flattened), len(set(flattened)))
+
+    def test_batch_delete_still_cascades_to_vectors_by_default(self):
+        """Callers other than the coordinator keep the old behavior."""
+        store = _MemoryVectorStore()
+        memory = AgentMemory(vector_store=store)
+        memory_id = memory.store("a note", skip_graph=True)
+
+        self.assertEqual(memory.batch_delete([memory_id]), 1)
+
+        self.assertEqual(len(store.deleted), 1)
 
 
 class TestPartialFailureIsAResultNotAnException(unittest.TestCase):
