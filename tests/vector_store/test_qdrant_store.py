@@ -35,7 +35,7 @@ def _store_with_scroll(*pages):
 
 @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
 def test_iter_all_threads_cursor_across_pages():
-    """The next call must continue from the previous page's next_page_offset."""
+    """The next call continues from the previous page's cursor."""
     store = _store_with_scroll(
         ([_record(1), _record(2)], "cursor-1"),
         ([_record(3)], None),
@@ -53,11 +53,8 @@ def test_iter_all_threads_cursor_across_pages():
 
 @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
 def test_iter_all_yields_final_page_that_reports_no_next_cursor():
-    """Qdrant can return records and a null cursor on the same page.
-
-    Those records must still be yielded. Treating a null cursor as "stop
-    before this page" would silently drop the tail of every scan.
-    """
+    """Records and a null cursor can arrive together; those records must still
+    be yielded or every scan loses its tail."""
     store = _store_with_scroll(([_record(1), _record(2)], None))
 
     result = list(store.iter_all(batch_size=10))
@@ -97,21 +94,32 @@ def test_iter_all_empty_collection_yields_nothing():
 
 
 @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
-def test_iter_all_stops_on_empty_page_even_with_a_cursor():
-    """Defensive: an empty page ends the scan rather than looping forever."""
-    store = _store_with_scroll(([], "cursor-that-never-clears"))
+def test_iter_all_continues_past_empty_page_with_advancing_cursor():
+    store = _store_with_scroll(
+        ([], "cursor-1"),
+        ([_record(1)], None),
+    )
 
-    assert list(store.iter_all()) == []
-    assert store.client.scroll.call_count == 1
+    result = list(store.iter_all())
+
+    assert [item["id"] for item in result] == ["1"]
+    assert store.client.scroll.call_count == 2
+
+
+@patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
+def test_iter_all_raises_when_cursor_stops_advancing():
+    store = _store_with_scroll(
+        ([], "stuck-cursor"),
+        ([], "stuck-cursor"),
+    )
+
+    with pytest.raises(ProcessingError, match="stopped advancing"):
+        list(store.iter_all())
 
 
 @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
 def test_iter_all_raises_when_collection_not_initialized():
-    """Must fail loudly, not yield nothing.
-
-    An empty scan is indistinguishable from an empty source, which would let
-    `store migrate` report success having copied nothing (issue #1083).
-    """
+    """Must fail loudly: an empty scan reads the same as an empty source."""
     store = QdrantStore()
 
     with pytest.raises(ProcessingError, match="Collection not initialized"):

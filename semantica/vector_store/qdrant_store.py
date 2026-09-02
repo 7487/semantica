@@ -590,33 +590,30 @@ class QdrantStore:
                 with_payload=True,
                 with_vectors=True,
             )
-            results = []
-            for rec in records:
-                results.append(
-                    {
-                        "id": str(rec.id),
-                        "metadata": rec.payload or {},
-                        "vector": np.array(rec.vector) if rec.vector is not None else None,
-                    }
-                )
-            return results
+            return [self._record_to_result(rec) for rec in records]
         except Exception as e:
             self.logger.warning(f"Failed to scroll Qdrant points by metadata filter: {e}")
             return []
 
+    @staticmethod
+    def _record_to_result(rec: Any) -> Dict[str, Any]:
+        return {
+            "id": str(rec.id),
+            "metadata": rec.payload or {},
+            "vector": np.array(rec.vector) if rec.vector is not None else None,
+        }
+
     def iter_all(self, batch_size: int = 500):
         """
-        Iterate over every stored point using Qdrant's native scroll cursor.
+        Iterate over every stored point using Qdrant's scroll cursor.
 
-        Qdrant paginates by point-ID cursor, not by row offset, so this is
-        exposed instead of scan_vectors(offset, limit). An integer passed to
-        scroll()'s offset is a point ID rather than a rank, so there is no way
-        to seek to "the Nth record" without walking from the start.
-        VectorStore.iter_vectors() prefers this method when it is present.
+        Paginates by point-ID cursor rather than row offset, which is why this
+        exists instead of scan_vectors(offset, limit). An integer offset is a
+        point ID, not a rank.
 
-        Assumes a single unnamed vector per point, matching how insert_vectors()
-        writes them and how get_vector() reads them back. Collections configured
-        with named or multi-vectors are not handled here.
+        Assumes a single unnamed vector per point, as insert_vectors() and
+        get_vector() already do. Named and multi-vector collections are not
+        handled.
 
         Args:
             batch_size: Points to request per scroll call
@@ -625,11 +622,8 @@ class QdrantStore:
             Result dicts with 'id', 'metadata', and 'vector', in scroll order
 
         Raises:
-            ProcessingError: If the collection or client is not initialized.
-                Errors are raised rather than swallowed because a scan that
-                silently yields nothing is indistinguishable from an empty
-                source, which would let a caller such as `store migrate`
-                report success having copied nothing (issue #1083).
+            ProcessingError: If the collection or client is not initialized, or
+                if the cursor stops advancing before the scan completes.
         """
         if self.collection is None or self.client is None or not QDRANT_AVAILABLE:
             raise ProcessingError(
@@ -637,6 +631,7 @@ class QdrantStore:
             )
 
         next_offset = None
+        last_offset = object()
         while True:
             records, next_offset = self.client.scroll(
                 collection_name=self.collection.collection_name,
@@ -647,18 +642,24 @@ class QdrantStore:
             )
 
             for rec in records:
-                yield {
-                    "id": str(rec.id),
-                    "metadata": rec.payload or {},
-                    "vector": np.array(rec.vector) if rec.vector is not None else None,
-                }
+                yield self._record_to_result(rec)
 
-            # The final page can carry records while already reporting no next
-            # cursor, so those records are yielded above before stopping here.
-            # Calling scroll() again with offset=None would restart from the
-            # beginning rather than continue past the end.
-            if next_offset is None or not records:
+            # A final page can carry records alongside a null cursor, so they
+            # are yielded above before stopping. Passing offset=None back to
+            # scroll() would restart from the beginning, not continue.
+            if next_offset is None:
                 return
+
+            # An empty page with a live cursor isn't necessarily truncation —
+            # a batch window that lands entirely on deleted points comes back
+            # this way too, and there's more to scan past it. Only treat it as
+            # stuck if the cursor itself stops moving.
+            if not records and next_offset == last_offset:
+                raise ProcessingError(
+                    "Qdrant scroll cursor stopped advancing without reaching "
+                    "the end of the collection, so the scan cannot complete."
+                )
+            last_offset = next_offset
 
     def delete_vectors(
         self, point_ids: List[Union[str, int]], **options
