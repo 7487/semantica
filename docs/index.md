@@ -404,7 +404,7 @@ Semantica was designed for domains where every decision must be explainable and 
 - 1,000+ passing tests with full regression coverage
 - `PipelineValidator` catches configuration errors at startup
 - `FailureHandler` with exponential backoff and dead-letter queues
-- 12 security vulnerabilities fixed in v0.5.0
+- Ongoing security hardening: fixes shipped in every release ([CHANGELOG](https://github.com/semantica-agi/semantica/blob/main/CHANGELOG.md))
 
 **Modular by Design** — Import only what you need.
 - Use `NERExtractor` without a graph store
