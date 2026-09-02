@@ -173,7 +173,7 @@ This includes PyTorch with CUDA, FAISS GPU, and CuPy.
 <Accordion title="How does Semantica handle large datasets?" icon="layer-group">
 
 - **Batching**: process documents in configurable chunks to control memory usage
-- **Parallel processing**: `PipelineBuilder().set_parallelism(N)` runs independent pipeline steps concurrently
+- **Parallel processing**: the `semantica.pipeline` module can run independent, parallel-safe steps in the same dependency layer concurrently (see the [Pipeline guide](guides/pipeline))
 - **Delta processing**: update graphs incrementally without full recompute on new data
 - **Persistent backends**: swap in-memory NetworkX for Neo4j, FalkorDB, or Apache AGE for large-scale production graphs
 

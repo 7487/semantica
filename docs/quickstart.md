@@ -47,37 +47,24 @@ python -c "import semantica; print(semantica.__version__)"
 
 <Step title="Ingest">
 
-Load a document from a file, directory, URL, or database.
+Load a document from a file or directory. The rest of this walkthrough follows
+the file path; other sources are shown afterwards.
 
-<CodeGroup>
-
-```python File
+```python
 from semantica.ingest import FileIngestor
 
 ingestor = FileIngestor()
 sources  = ingestor.ingest("data/report.pdf")
-# Also accepts: .docx, .html, .json, .csv, .xlsx, .pptx, .parquet, .xml
+# Also accepts a directory, .docx, .html, .json, .csv, .xlsx, .pptx, .parquet, .xml
 ```
 
-```python Web
-from semantica.ingest import WebIngestor
-
-ingestor = WebIngestor()
-page     = ingestor.ingest_url("https://example.com/article")
-# WebContent: page.text, page.title, page.html, page.links, page.metadata
-```
-
-```python Parquet / XML
-from semantica.ingest import ParquetIngestor, XMLIngestor
-
-# Single file or Hive-partitioned directory
-sources = ParquetIngestor().ingest("data/events.parquet")
-
-# XML; pass an XSD to validate against during ingestion
-sources = XMLIngestor().ingest("data/records/", schema_path="schema.xsd")
-```
-
-</CodeGroup>
+<Tip>
+  **Other sources.** `WebIngestor().ingest_url(url)` returns a `WebContent` whose
+  `.text` you can feed straight into the Extract step (no parsing needed).
+  `ParquetIngestor().ingest(path)` and `XMLIngestor().ingest(path, schema_path=...)`
+  return structured records rather than documents; build a graph from those with
+  `GraphBuilder().build({"entities": [...], "relationships": [...]})` directly.
+</Tip>
 
 </Step>
 
@@ -400,30 +387,40 @@ parsed = parser.parse(sources[0].path)
 
 <Accordion title="Slow processing on large corpora" icon="gauge">
 
-Enable GPU acceleration and run pipeline steps in parallel:
+Install the GPU extras so embedding and ML inference run on CUDA:
 
 ```bash
 pip install semantica[gpu]
 ```
 
+Scan the directory for paths first (no file contents are read), then handle one
+document at a time and write to a persistent graph backend instead of the
+in-memory graph:
+
 ```python
-from semantica.pipeline import PipelineBuilder, ExecutionEngine
+from semantica.ingest import FileIngestor
+from semantica.parse import DocumentParser
+from semantica.semantic_extract import NERExtractor, RelationExtractor
+from semantica.graph_store import GraphStore
+from semantica.kg import GraphBuilder
 
-builder = PipelineBuilder()
-builder.add_step("ingest",  step_type="ingest", source="data/reports/", recursive=True)
-builder.add_step("extract", step_type="ner_extract")
-builder.add_step("build",   step_type="kg_build", merge_entities=True)
+ingestor = FileIngestor()
+parser   = DocumentParser()
+ner      = NERExtractor(method="pattern")
+rel      = RelationExtractor(method="pattern")
+store    = GraphStore(backend="neo4j", uri="bolt://localhost:7687",
+                      user="neo4j", password="password")
+builder  = GraphBuilder(merge_entities=True, graph_store=store)
 
-pipeline = (
-    builder
-    .connect_steps("ingest",  "extract")
-    .connect_steps("extract", "build")
-    .set_parallelism(8)
-    .build(name="reports_pipeline")
-)
-
-result = ExecutionEngine().execute_pipeline(pipeline)
+for info in ingestor.scan_directory("data/reports/", recursive=True):
+    text     = parser.parse(info["path"])["text"]   # one document loaded at a time
+    entities = ner.extract(text)
+    rels     = rel.extract(text, entities=entities)
+    builder.build({"entities": entities, "relationships": rels})
 ```
+
+For multi-step orchestration with configurable parallelism, see the
+[Pipeline guide](guides/pipeline).
 
 </Accordion>
 
