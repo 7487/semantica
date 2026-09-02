@@ -820,23 +820,30 @@ class PineconeStore:
 
             response = list_paginated(**kwargs)
             vector_ids = _pinecone_listed_ids(response)
-            if not vector_ids:
-                return
 
-            fetched = self.index.fetch_vectors(vector_ids, namespace=namespace)
-            vectors = fetched.get("vectors") or {}
+            # A page listing zero ids is not necessarily exhaustion: Pinecone's
+            # contract is that a scan ends only when there's no pagination
+            # token, and a page can legitimately come back empty while
+            # pagination.next is still set (sparse/filtered namespaces,
+            # eventual-consistency windows on serverless indexes). Skip the
+            # fetch (nothing to hydrate) but still fall through to the token
+            # check below instead of returning early, or a gap like that
+            # silently truncates the scan with no error.
+            if vector_ids:
+                fetched = self.index.fetch_vectors(vector_ids, namespace=namespace)
+                vectors = fetched.get("vectors") or {}
 
-            for vector_id in vector_ids:
-                entry = vectors.get(vector_id)
-                if entry is None:
-                    # fetch() omits ids it cannot find: deleted since listing.
-                    continue
-                values = entry.get("values")
-                yield {
-                    "id": vector_id,
-                    "metadata": entry.get("metadata") or {},
-                    "vector": np.array(values) if values is not None else None,
-                }
+                for vector_id in vector_ids:
+                    entry = vectors.get(vector_id)
+                    if entry is None:
+                        # fetch() omits ids it cannot find: deleted since listing.
+                        continue
+                    values = entry.get("values")
+                    yield {
+                        "id": vector_id,
+                        "metadata": entry.get("metadata") or {},
+                        "vector": np.array(values) if values is not None else None,
+                    }
 
             next_token = _pinecone_next_token(response)
             if not next_token:

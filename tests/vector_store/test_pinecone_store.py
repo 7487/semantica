@@ -351,6 +351,31 @@ class TestPineconeIterAll(unittest.TestCase):
         wrapper.fetch_vectors.assert_not_called()
 
     @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
+    def test_continues_past_an_empty_page_with_a_live_token(self):
+        """An empty page is not necessarily the end: Pinecone can legitimately
+        list zero ids for a page while pagination.next is still set (sparse
+        or filtered namespaces, eventual-consistency windows on serverless
+        indexes). Only the absence of a next token means exhaustion."""
+        store, wrapper, raw_index = self._store(
+            [
+                self._page(["a"], "token-1"),
+                self._page([], "token-2"),  # empty page, but the token still advances
+                self._page(["b"], None),
+            ],
+            [
+                {"vectors": {"a": {"values": [0.1], "metadata": {}}}},
+                {"vectors": {"b": {"values": [0.2], "metadata": {}}}},
+            ],
+        )
+
+        result = list(store.iter_all(batch_size=1))
+
+        self.assertEqual([item["id"] for item in result], ["a", "b"])
+        self.assertEqual(raw_index.list_paginated.call_count, 3)
+        # Nothing to hydrate on the empty page, so only two fetches happen.
+        self.assertEqual(wrapper.fetch_vectors.call_count, 2)
+
+    @patch('semantica.vector_store.pinecone_store.PINECONE_AVAILABLE', True)
     def test_accepts_plain_string_ids_from_listing(self):
         """SDK generations differ on what listing yields."""
         store, _, _ = self._store(
