@@ -627,7 +627,10 @@ class WeaviateStore:
         Iterate over every stored object using Weaviate's UUID cursor.
 
         Paginates by the last object's UUID rather than a row offset, which is
-        why this exists instead of scan_vectors(offset, limit).
+        why this exists instead of scan_vectors(offset, limit). An empty page
+        under that cursor falls back to offset pagination once before ending
+        the scan, since an empty page isn't on its own proof there's nothing
+        left past it (see the inline comment below).
 
         Assumes a single unnamed vector per object, as get_vector() and
         filter_by_metadata() already do. Named-vector collections return a
@@ -676,6 +679,20 @@ class WeaviateStore:
 
             batch_objects = getattr(objs, "objects", None) if objs else None
             if not batch_objects:
+                # An empty page in "cursor" mode isn't necessarily the end.
+                # Unlike an offset, `after` has no server-issued continuation
+                # value of its own - it's derived client-side from the last
+                # object's uuid - so an empty page gives nothing to advance
+                # it with. If Weaviate's cursor walks internal storage
+                # position rather than strict uuid order, a batch can in
+                # principle land entirely on a gap (e.g. tombstoned objects)
+                # with live data past it, the same risk already confirmed for
+                # Qdrant's scroll cursor (#1316). Offset pagination doesn't
+                # have that ambiguity - it addresses live rows by position -
+                # so fall back to it once to confirm before ending the scan.
+                if mode == "cursor":
+                    mode = "offset"
+                    continue
                 return
 
             page_full = len(batch_objects) >= batch_size

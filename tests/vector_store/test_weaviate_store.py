@@ -79,6 +79,29 @@ def test_iter_all_raises_when_cursor_stops_advancing():
 
 
 @patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
+def test_iter_all_continues_past_empty_page_in_cursor_mode():
+    """A full page followed by an empty page must not be read as the end of
+    the collection: the empty page could be a gap (e.g. a window landing on
+    tombstoned objects) with real data past it, the same failure mode
+    already confirmed for Qdrant's scroll cursor (#1316). The `after` cursor
+    has no server-issued value to advance past an empty page with, so this
+    must fall back to offset pagination rather than silently stopping."""
+    store = _store_with_pages(
+        _page([_obj("uuid-1"), _obj("uuid-2")]),  # full page, cursor -> uuid-2
+        _page([]),                                 # empty page: not the end
+        _page([_obj("uuid-3")]),                   # real data past the gap
+    )
+
+    result = [item["id"] for item in store.iter_all(batch_size=2)]
+
+    assert result == ["uuid-1", "uuid-2", "uuid-3"]
+    calls = store.collection.query.fetch_objects.call_args_list
+    assert len(calls) == 3
+    assert calls[1][1]["after"] == "uuid-2"  # the empty page still queried by cursor
+    assert calls[2][1].get("offset") == 2    # then the fallback used position, not the cursor
+
+
+@patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
 def test_iter_all_offset_fallback_advances_across_pages():
     """Regression: the offset was only set inside the except branch, so pages
     after the fallback went out with no pagination at all and the scan
@@ -124,9 +147,15 @@ def test_iter_all_raises_when_no_pagination_is_supported():
 
 @patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
 def test_iter_all_empty_collection_yields_nothing():
-    store = _store_with_pages(_page([]))
+    """A genuinely empty collection needs two empty pages to confirm: the
+    first (in cursor mode) triggers the offset fallback, and the second
+    (in offset mode, which has no gap ambiguity) is what actually ends the
+    scan. See test_iter_all_continues_past_empty_page_in_cursor_mode for the
+    case where the first empty page is *not* the end."""
+    store = _store_with_pages(_page([]), _page([]))
 
     assert list(store.iter_all()) == []
+    assert store.collection.query.fetch_objects.call_count == 2
 
 
 @patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
@@ -162,7 +191,7 @@ def test_iter_all_treats_empty_vector_as_none():
 @patch("semantica.vector_store.weaviate_store.WEAVIATE_AVAILABLE", True)
 def test_iter_all_requests_vectors():
     """Weaviate omits vectors unless include_vector is set."""
-    store = _store_with_pages(_page([]))
+    store = _store_with_pages(_page([]), _page([]))
 
     list(store.iter_all(batch_size=64))
 
