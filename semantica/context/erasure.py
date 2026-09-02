@@ -34,6 +34,7 @@ Example:
     'unsupported'
 """
 
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
@@ -122,7 +123,7 @@ class ErasureReceipt:
             "reason": self.reason,
             "erased_at": self.erased_at,
             "complete": self.complete,
-            "stores": {name: dict(result) for name, result in self.stores.items()},
+            "stores": copy.deepcopy(self.stores),
         }
 
 
