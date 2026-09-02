@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Salesforce ingestor** (#1240) by @Sameer6305
   - New `SalesforceConnector` / `SalesforceData` / `SalesforceIngestor` (`semantica.ingest`, lazy export), following the same Connector + Data + Ingestor pattern already used for Snowflake/Databricks/SAP
-  - Auth covers both landscapes Salesforce actually uses: username + password + security token (SOAP login), session_id + instance_url (reusing an existing session), and consumer_key + private key (JWT Bearer); production and sandbox are selected via `domain`, and credentials can come from environment variables. Credential material is never intentionally written to logs, exceptions, or `repr()`
+  - Auth covers both landscapes Salesforce actually uses: username + password + security token (SOAP login), session_id + instance_url (reusing an existing session), and username + consumer_key + private key (JWT Bearer); production and sandbox are selected via `domain`, and credentials can come from environment variables. Credential material is never intentionally written to logs, exceptions, or `repr()`
   - `ingest_sobject()`, `ingest_query()`, `list_sobjects()`, `get_sobject_schema()`, `export_as_documents()` against standard sObjects, custom objects (`__c`), custom metadata (`__mdt`), platform events (`__e`), namespaced objects, and relationship-field traversal (e.g. `Owner.Name`); pagination follows `nextRecordsUrl`/`query_more()` and stops once a caller's `limit` is satisfied
   - New `pip install semantica[db-salesforce]` extra (`simple-salesforce>=1.12.0`)
   - New `tests/test_salesforce_ingestor.py`

@@ -1513,6 +1513,7 @@ pip install semantica[vectorstore-qdrant]   # Qdrant vector store
 pip install semantica[vectorstore-pinecone] # Pinecone vector store
 pip install semantica[db-snowflake]         # Snowflake
 pip install semantica[db-databricks]        # Databricks (SDK + SQL connector)
+pip install semantica[ingest-sap]           # SAP OData
 pip install semantica[ingest-parquet]       # Parquet / PyArrow
 pip install semantica[ingest-arrow]        # Apache Arrow, Feather, IPC
 pip install semantica[viz]                  # HTML interactive visualization
