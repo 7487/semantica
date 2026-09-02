@@ -62,18 +62,19 @@ sources  = ingestor.ingest("data/report.pdf")
 ```python Web
 from semantica.ingest import WebIngestor
 
-ingestor = WebIngestor(max_depth=2)
-sources  = ingestor.ingest("https://example.com/article")
+ingestor = WebIngestor()
+page     = ingestor.ingest_url("https://example.com/article")
+# WebContent: page.text, page.title, page.html, page.links, page.metadata
 ```
 
-```python Parquet / XML (v0.5.0)
+```python Parquet / XML
 from semantica.ingest import ParquetIngestor, XMLIngestor
 
 # Single file or Hive-partitioned directory
 sources = ParquetIngestor().ingest("data/events.parquet")
 
-# XML with XSD schema validation
-sources = XMLIngestor(validate_xsd="schema.xsd").ingest("data/records/")
+# XML; pass an XSD to validate against during ingestion
+sources = XMLIngestor().ingest("data/records/", schema_path="schema.xsd")
 ```
 
 </CodeGroup>
@@ -88,22 +89,24 @@ Extract structured text and layout from raw documents.
 from semantica.parse import DocumentParser
 
 parser = DocumentParser()
-parsed = parser.parse(sources[0])
+parsed = parser.parse(sources[0].path)   # parse() takes a path string
 
-print(parsed.text[:200])  # extracted text
-print(parsed.metadata)    # title, author, date, source
+print(parsed["text"][:200])   # extracted text
+print(parsed["metadata"])     # file_path, encoding, size, and format-specific keys
 ```
 
+`parse()` returns a `dict` with `text`, `full_text`, and `metadata` keys.
+
 <Tip>
-  For PDFs with tables, charts, or multi-column layouts, use `DoclingParser`: it applies advanced layout analysis and returns structured table data alongside text.
+  For PDFs with tables, charts, or multi-column layouts, use `DoclingParser` (`pip install semantica[parse-docling]`): it applies advanced layout analysis and returns structured table data alongside text.
 </Tip>
 
 ```python
 from semantica.parse import DoclingParser
 
 parser = DoclingParser()
-parsed = parser.parse(sources[0])
-print(parsed.tables)  # structured table objects
+parsed = parser.parse(sources[0].path)
+print(parsed["tables"])   # structured table data
 ```
 
 </Step>
@@ -117,26 +120,28 @@ Identify named entities and extract typed relationships between them.
 ```python Pattern-based (fast, no API key)
 from semantica.semantic_extract import NERExtractor, RelationExtractor
 
-ner      = NERExtractor(method="pattern")
-entities = ner.extract(parsed)
-# Returns: [{"text": "Apple Inc.", "type": "ORGANIZATION", "confidence": 0.98}, ...]
+text = parsed["text"]
 
-rel           = RelationExtractor(method="rule")
-relationships = rel.extract(parsed, entities=entities)
-# Returns: [{"subject": "Steve Jobs", "predicate": "founded", "object": "Apple Inc."}, ...]
+ner      = NERExtractor(method="pattern")
+entities = ner.extract(text)
+# Returns: [Entity(text="Apple Inc.", label="ORG", start_char=0, end_char=10, confidence=0.7), ...]
+
+rel           = RelationExtractor(method="pattern")
+relationships = rel.extract(text, entities=entities)
+# Returns: [Relation(subject=Entity(...), predicate="founded_by", object=Entity(...), confidence=0.7), ...]
 ```
 
 ```python LLM-powered (higher accuracy)
 from semantica.semantic_extract import NERExtractor, RelationExtractor
-from semantica.llms import Groq
 
-llm = Groq(model="llama-3.3-70b-versatile")
+# Reads GROQ_API_KEY from the environment; provider/llm_model select the backend
+text = parsed["text"]
 
-ner           = NERExtractor(method="llm", llm_provider=llm)
-entities      = ner.extract(parsed)
+ner           = NERExtractor(method="llm", provider="groq", llm_model="llama-3.3-70b-versatile")
+entities      = ner.extract(text)
 
-rel           = RelationExtractor(method="llm", llm_provider=llm)
-relationships = rel.extract(parsed, entities=entities)
+rel           = RelationExtractor(method="llm", provider="groq", llm_model="llama-3.3-70b-versatile")
+relationships = rel.extract(text, entities=entities)
 ```
 
 </CodeGroup>
@@ -198,16 +203,17 @@ exporter.export(graph, file_path="graph.nt",     format="nt")
 from semantica.export import ParquetExporter
 
 exporter = ParquetExporter()
-exporter.export(graph, file_path="output/graph.parquet")
-# Writes nodes.parquet + edges.parquet: ready for Spark, BigQuery, Databricks
+exporter.export(graph, file_path="output/graph")
+# Dict input writes one file per key: output/graph_entities.parquet and
+# output/graph_relationships.parquet: ready for Spark, BigQuery, Databricks
 ```
 
 ```python ArangoDB
 from semantica.export import ArangoAQLExporter
 
 exporter = ArangoAQLExporter()
-aql      = exporter.export(graph)
-# Returns ready-to-run AQL INSERT statements
+exporter.export(graph, file_path="graph.aql")
+# Writes ready-to-run AQL INSERT statements to graph.aql
 ```
 
 </CodeGroup>
@@ -272,14 +278,21 @@ relationships = rel.extract(text, entities=entities)
 <Accordion title="Multi-source incremental graph build" icon="layer-group">
 
 ```python
+from semantica.ingest import FileIngestor
+from semantica.parse import DocumentParser
+from semantica.semantic_extract import NERExtractor, RelationExtractor
 from semantica.kg import GraphBuilder
 
-builder     = GraphBuilder(merge_entities=True)
-all_entities, all_rels = [], []
+parser  = DocumentParser()
+ner     = NERExtractor(method="pattern")
+rel     = RelationExtractor(method="pattern")
+builder = GraphBuilder(merge_entities=True)
 
-for doc in parsed_docs:
-    entities = ner.extract(doc)
-    rels     = rel.extract(doc, entities=entities)
+all_entities, all_rels = [], []
+for source in FileIngestor().ingest("data/reports/"):
+    text     = parser.parse(source.path)["text"]
+    entities = ner.extract(text)
+    rels     = rel.extract(text, entities=entities)
     all_entities.extend(entities)
     all_rels.extend(rels)
 
@@ -359,7 +372,8 @@ graph   = builder.build({"entities": entities, "relationships": relationships})
 # Retrieve full lineage for any entity
 sources = prov.get_all_sources("Apple Inc.")
 print(sources[0])
-# {"source": "data/report.pdf", "location": None, "timestamp": "...", "confidence": 0.98}
+# {"source": "data/report.pdf", "location": None, "timestamp": "...",
+#  "confidence": 1.0, "metadata": {"confidence": 0.98}}
 ```
 
 </Accordion>
@@ -373,30 +387,42 @@ print(sources[0])
 
 <Accordion title="No entities extracted" icon="magnifying-glass">
 
-The document likely contains scanned images rather than machine-readable text. Enable OCR:
+The document likely contains scanned images rather than machine-readable text. `DocumentParser` warns when a PDF has no text layer; switch to `DoclingParser` with OCR enabled:
 
 ```python
-from semantica.parse import DocumentParser
+from semantica.parse import DoclingParser   # pip install semantica[parse-docling]
 
-parser = DocumentParser(ocr=True)  # enables Tesseract OCR
-parsed = parser.parse(sources[0])
+parser = DoclingParser(enable_ocr=True)
+parsed = parser.parse(sources[0].path)
 ```
 
 </Accordion>
 
 <Accordion title="Slow processing on large corpora" icon="gauge">
 
-Enable parallel processing and GPU acceleration:
+Enable GPU acceleration and run pipeline steps in parallel:
 
 ```bash
 pip install semantica[gpu]
 ```
 
 ```python
-from semantica.pipeline import Pipeline
+from semantica.pipeline import PipelineBuilder, ExecutionEngine
 
-pipeline = Pipeline(workers=8, batch_size=32)
-pipeline.run(sources)
+builder = PipelineBuilder()
+builder.add_step("ingest",  step_type="ingest", source="data/reports/", recursive=True)
+builder.add_step("extract", step_type="ner_extract")
+builder.add_step("build",   step_type="kg_build", merge_entities=True)
+
+pipeline = (
+    builder
+    .connect_steps("ingest",  "extract")
+    .connect_steps("extract", "build")
+    .set_parallelism(8)
+    .build(name="reports_pipeline")
+)
+
+result = ExecutionEngine().execute_pipeline(pipeline)
 ```
 
 </Accordion>
