@@ -589,6 +589,6 @@ StepStatus.SKIPPED    # Skipped due to FailureHandler "skip" strategy
 </AccordionGroup>
 
 - [Ingest](ingest) — First step in most pipelines.
-- [Semantic Extract](semantic_extract) — Core extraction step.
-- [Knowledge Graph](kg) — Graph construction step.
+- [Semantic Extract](/reference/semantic_extract) — Core extraction step.
+- [Knowledge Graph](/reference/kg) — Graph construction step.
 - [Export](export) — Final output step.
