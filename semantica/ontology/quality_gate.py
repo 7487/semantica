@@ -1,5 +1,6 @@
 """Deterministic quality checks for ontology and KG pipelines."""
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
@@ -198,6 +199,14 @@ class OntologyQualityGate:
                 QualitySeverity.ERROR,
                 element_type="ontology",
             )
+        for message in getattr(validation, "warnings", []) or []:
+            self._add_issue(
+                issues,
+                "VALIDATOR_WARNING",
+                str(message),
+                QualitySeverity.WARNING,
+                element_type="ontology",
+            )
 
         classes = self._read_collection(ontology, "classes", issues)
         properties = self._read_collection(ontology, "properties", issues)
@@ -350,8 +359,11 @@ class OntologyQualityGate:
             "validator_valid": 1.0 if getattr(validation, "valid", True) else 0.0,
         }
         if competency_questions is not None:
+            evaluation_ontology = self._prepare_for_evaluation(
+                ontology, classes, properties
+            )
             evaluation = self.evaluator.evaluate_ontology(
-                ontology, competency_questions=competency_questions
+                evaluation_ontology, competency_questions=competency_questions
             )
             metrics["competency_question_coverage"] = evaluation.coverage_score
             metrics["completeness"] = evaluation.completeness_score
@@ -468,11 +480,46 @@ class OntologyQualityGate:
         max_errors = float(thresholds.get("max_errors", 0.0) or 0.0)
         warning_value = thresholds.get("max_warnings")
         max_warnings = None if warning_value is None else float(warning_value)
+        if not all(
+            math.isfinite(value)
+            for value in (min_coverage, max_errors)
+            if value is not None
+        ) or (max_warnings is not None and not math.isfinite(max_warnings)):
+            raise ValueError("quality thresholds must be finite numbers")
         if not 0.0 <= min_coverage <= 1.0:
             raise ValueError("min_coverage must be between 0.0 and 1.0")
         if max_errors < 0 or (max_warnings is not None and max_warnings < 0):
             raise ValueError("error and warning thresholds cannot be negative")
         return min_coverage, max_errors, max_warnings
+
+    @classmethod
+    def _prepare_for_evaluation(
+        cls,
+        ontology: Dict[str, Any],
+        classes: Iterable[Any],
+        properties: Iterable[Any],
+    ) -> Dict[str, Any]:
+        """Make a shallow, evaluator-safe view without changing caller data."""
+        prepared = dict(ontology)
+        prepared["classes"] = [
+            cls._prepare_element(element)
+            for element in classes
+            if isinstance(element, dict)
+        ]
+        prepared["properties"] = [
+            cls._prepare_element(element)
+            for element in properties
+            if isinstance(element, dict)
+        ]
+        return prepared
+
+    @classmethod
+    def _prepare_element(cls, element: Dict[str, Any]) -> Dict[str, Any]:
+        prepared = dict(element)
+        identifier = cls._identifier(prepared)
+        if identifier is not None and not str(prepared.get("name", "")).strip():
+            prepared["name"] = identifier
+        return prepared
 
     @classmethod
     def _read_collection(
@@ -522,7 +569,10 @@ class OntologyQualityGate:
                 )
                 continue
             identifiers.append(identifier)
-            for alias in cls._term_aliases(identifier):
+            aliases_for_element: Set[str] = set()
+            for candidate in cls._identifiers(element):
+                aliases_for_element.update(cls._term_aliases(candidate))
+            for alias in sorted(aliases_for_element):
                 aliases.setdefault(alias, identifier)
         return aliases, identifiers
 
@@ -537,7 +587,13 @@ class OntologyQualityGate:
             if not isinstance(class_entry, dict):
                 continue
             identifier = cls._identifier(class_entry)
-            for key in ("subClassOf", "parent", "superclass", "superclasses"):
+            for key in (
+                "subClassOf",
+                "subclassOf",
+                "parent",
+                "superclass",
+                "superclasses",
+            ):
                 parents = cls._values(class_entry, key)
                 if parents and identifier:
                     referenced.add(identifier)
@@ -563,7 +619,8 @@ class OntologyQualityGate:
 
     @classmethod
     def _check_graph(cls, graph: Dict[str, Any], issues: List[QualityIssue]) -> None:
-        result = GraphValidator().validate(graph)
+        safe_graph = cls._prepare_graph_for_validation(graph, issues)
+        result = GraphValidator().validate(safe_graph)
         code_map = {
             "DANGLING_EDGE": "UNRESOLVED_RELATIONSHIP_ENDPOINT",
             "ORPHAN_NODES": "ORPHAN_ENTITY",
@@ -578,6 +635,9 @@ class OntologyQualityGate:
             severity = severity_map.get(
                 graph_issue.severity.value, QualitySeverity.ERROR
             )
+            details = dict(graph_issue.details or {})
+            if graph_issue.code == "ORPHAN_NODES" and "ids" in details:
+                details["ids"] = sorted(details["ids"], key=str)
             cls._add_issue(
                 issues,
                 code_map.get(graph_issue.code, graph_issue.code),
@@ -585,8 +645,46 @@ class OntologyQualityGate:
                 severity,
                 element_id=graph_issue.element_id,
                 element_type=graph_issue.element_type,
-                details=graph_issue.details,
+                details=details,
             )
+
+    @classmethod
+    def _prepare_graph_for_validation(
+        cls, graph: Dict[str, Any], issues: List[QualityIssue]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Normalize supported graph aliases and isolate malformed members."""
+        entities: List[Dict[str, Any]] = []
+        for index, entity in enumerate(graph.get("entities", [])):
+            if not isinstance(entity, dict):
+                cls._add_issue(
+                    issues,
+                    "INVALID_ENTITY",
+                    f"Entity at index {index} must be a dictionary.",
+                    QualitySeverity.ERROR,
+                    element_type="entity",
+                    details={"index": index},
+                )
+                continue
+            normalized = dict(entity)
+            if not normalized.get("name") and normalized.get("text") is not None:
+                normalized["name"] = normalized["text"]
+            entities.append(normalized)
+
+        relationships: List[Dict[str, Any]] = []
+        for index, relationship in enumerate(graph.get("relationships", [])):
+            if not isinstance(relationship, dict):
+                cls._add_issue(
+                    issues,
+                    "INVALID_RELATIONSHIP",
+                    f"Relationship at index {index} must be a dictionary.",
+                    QualitySeverity.ERROR,
+                    element_type="relationship",
+                    details={"index": index},
+                )
+                continue
+            relationships.append(dict(relationship))
+
+        return {"entities": entities, "relationships": relationships}
 
     @classmethod
     def _read_graph(
@@ -618,15 +716,21 @@ class OntologyQualityGate:
 
     @staticmethod
     def _identifier(element: Any) -> Optional[str]:
+        identifiers = OntologyQualityGate._identifiers(element)
+        return identifiers[0] if identifiers else None
+
+    @staticmethod
+    def _identifiers(element: Any) -> List[str]:
         if isinstance(element, dict):
+            values = []
             for key in ("name", "uri", "id", "@id"):
                 value = element.get(key)
                 if value is not None and str(value).strip():
-                    return str(value).strip()
-            return None
+                    values.append(str(value).strip())
+            return values
         if isinstance(element, str) and element.strip():
-            return element.strip()
-        return None
+            return [element.strip()]
+        return []
 
     @staticmethod
     def _values(element: Dict[str, Any], key: str) -> List[Any]:
@@ -634,7 +738,8 @@ class OntologyQualityGate:
         if value is None:
             return []
         if isinstance(value, (list, tuple, set)):
-            return [item for item in value if item is not None and str(item).strip()]
+            values = [item for item in value if item is not None and str(item).strip()]
+            return sorted(values, key=str) if isinstance(value, set) else values
         return [value] if str(value).strip() else []
 
     @classmethod
@@ -658,7 +763,7 @@ class OntologyQualityGate:
 
     @classmethod
     def _match_class(cls, value: Any, aliases: Mapping[str, str]) -> Optional[str]:
-        for alias in cls._term_aliases(value):
+        for alias in sorted(cls._term_aliases(value)):
             if alias in aliases:
                 return aliases[alias]
         return None
