@@ -12,13 +12,50 @@ on:
       - '**/*.md'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - 'docs_check.py'
-      - '**/*.md'
 
 jobs:
+  # Detect whether this PR touches any source files (non-docs/non-markdown).
+  # The result drives the `build` job's `if:` condition so that:
+  #   - docs-only PRs: `build` is skipped (satisfies the required check).
+  #   - code PRs:      `build` runs exactly as before.
+  # Push events (to main) keep their own paths-ignore above and never reach
+  # this job, so the push optimization is unaffected.
+  changes:
+    runs-on: ubuntu-latest
+    # Only needed for pull_request events; push events are pre-filtered above.
+    if: github.event_name == 'pull_request'
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Fetch enough history to diff against the PR base.
+          fetch-depth: 0
+      - name: Check for source changes
+        id: filter
+        run: |
+          # List files changed in this PR relative to the merge base.
+          # If every changed file matches docs/** or *.md or docs_check.py,
+          # this is a docs-only PR and src=false; otherwise src=true.
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          echo "Changed files:"
+          echo "$CHANGED"
+          NON_DOCS=$(echo "$CHANGED" | grep -Ev '^(docs/|docs_check\.py|[^/]+\.md$)' || true)
+          if [ -n "$NON_DOCS" ]; then
+            echo "src=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "src=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: [changes]
+    # For pull_request events: run only when source files changed.
+    # Skipped (not absent) for docs-only PRs — satisfies the required check.
+    # For push/non-PR events: changes is skipped, so always() is required to
+    # prevent build from being skipped when its needs dependency is skipped.
+    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.src == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

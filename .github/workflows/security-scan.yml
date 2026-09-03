@@ -13,17 +13,55 @@ on:
       - '**/*.md'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - 'requirements-docs.txt'
-      - '**/*.md'
 
 permissions:
   contents: read
 
 jobs:
+  # Detect whether this PR touches any source files (non-docs/non-markdown).
+  # The result drives the `security-scan` job's `if:` condition so that:
+  #   - docs-only PRs: `security-scan` is skipped (satisfies the required check).
+  #   - code PRs:      the full scan runs exactly as before.
+  # Schedule and workflow_dispatch runs always skip this job and run the scan
+  # unconditionally (the security-scan job's if: accounts for that below).
+  # Push events (to main) keep their own paths-ignore above.
+  changes:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Check for source changes
+        id: filter
+        run: |
+          # List files changed in this PR relative to the merge base.
+          # If every changed file matches the docs/markdown paths-ignore list,
+          # this is a docs-only PR and src=false; otherwise src=true.
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          echo "Changed files:"
+          echo "$CHANGED"
+          NON_DOCS=$(echo "$CHANGED" | grep -Ev '^(docs/|mkdocs\.yml$|requirements-docs\.txt$|[^/]+\.md$)' || true)
+          if [ -n "$NON_DOCS" ]; then
+            echo "src=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "src=false" >> "$GITHUB_OUTPUT"
+          fi
+
   security-scan:
+    # For pull_request events: depends on changes; run only when src files changed.
+    # For schedule/workflow_dispatch/push: no changes job runs, so needs is
+    # skipped — use always() to ensure the job still runs in those cases.
+    needs: [changes]
+    if: >-
+      always() && (
+        github.event_name != 'pull_request' ||
+        needs.changes.outputs.src == 'true'
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
