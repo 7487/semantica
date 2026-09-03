@@ -121,6 +121,23 @@
             "pages": [
               "vector_stores/pgvector"
             ]
+          },
+          {
+            "group": "FAQ",
+            "pages": [
+              "faq"
+            ]
+          },
+          {
+            "group": "Community",
+            "pages": [
+              "community",
+              "community-projects",
+              "contributing-guide",
+              "governance",
+              "citation",
+              "project-license"
+            ]
           }
         ]
       },
@@ -167,7 +184,17 @@
               "guides/policy-engine",
               "guides/visualization",
               "guides/distance-intelligence",
-              "guides/graph-analytics",
+              "guides/graph-analytics"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Context & Intelligence",
+            "pages": [
               "reference/context",
               "reference/kg",
               "reference/temporal",
@@ -236,32 +263,6 @@
             ]
           }
         ]
-      },
-      {
-        "tab": "FAQ",
-        "groups": [
-          {
-            "group": "FAQ",
-            "pages": [
-              "faq"
-            ]
-          },
-          {
-            "group": "Community",
-            "pages": [
-              "community",
-              "community-projects",
-              "contributing-guide",
-              "governance",
-              "citation",
-              "project-license"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Changelog",
-        "href": "https://github.com/semantica-agi/semantica/releases"
       }
     ]
   },
