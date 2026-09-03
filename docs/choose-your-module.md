@@ -89,7 +89,7 @@ Pick your goal to see the minimum imports and a working skeleton.
       Pass `method="pattern"` to `NERExtractor` for zero-cost, zero-API-key extraction. Switch to `method="llm"` with any of the supported providers for higher recall.
     </Tip>
 
-    **Next:** [Quickstart →](/quickstart): full pipeline with visualization and export.
+    See the [Quickstart →](/quickstart) for a full pipeline with visualization and export.
   </Tab>
 
   <Tab title="Build GraphRAG">
@@ -226,7 +226,7 @@ Pick your goal to see the minimum imports and a working skeleton.
   </Tab>
 
   <Tab title="MCP: Claude / Cursor">
-    Use Semantica from Claude Desktop, Cursor, VS Code, or any MCP-aware tool; no Python code required after setup. 15 tools available instantly.
+    Use Semantica from Claude Desktop, Cursor, VS Code, or any MCP-aware tool; no Python code required after setup. 15 tools are available.
 
     **Step 1: Install**
     ```bash
