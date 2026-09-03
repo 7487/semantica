@@ -109,7 +109,7 @@ def my_ingestor(source):
 method_registry.register("file", "my_format", my_ingestor)
 ```
 
-See [Architecture](architecture#extension-points) for the full extension guide.
+See [Architecture](/architecture#extension-points) for the full extension guide.
 
 
 ## How to Contribute

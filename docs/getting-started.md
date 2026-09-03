@@ -54,7 +54,7 @@ icon: "rocket"
     | :----- | :-------------- | :--------- |
     | **Knowledge Graph** | Turn documents into structured, queryable graphs | [Quickstart → Step 1](/quickstart) |
     | **Agent Context** | Give your AI agent persistent memory and decision tracking | [Context reference](/reference/context) |
-    | **GraphRAG** | Ground LLM answers in structured knowledge | [Concepts → GraphRAG](concepts#graphrag) |
+    | **GraphRAG** | Ground LLM answers in structured knowledge | [Concepts → GraphRAG](/concepts#graphrag) |
     | **MCP Integration** | Use Semantica from Claude Desktop or VS Code | [MCP Server](/reference/mcp_server) |
 
   </Step>
@@ -161,7 +161,7 @@ icon: "rocket"
         print(f"{claim.text}  →  source: {claim.source_node}")
     ```
 
-    **Next:** [GraphRAG concepts →](concepts#graphrag)
+    **Next:** [GraphRAG concepts →](/concepts#graphrag)
   </Tab>
 
   <Tab title="MCP Integration">

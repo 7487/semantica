@@ -27,7 +27,7 @@ Verify:
 semantica-explorer --help
 ```
 
-You should see the usage message with the four available flags. If you see `command not found`, activate your virtual environment first. See [CLI Setup](cli-setup#troubleshooting) for PATH help.
+You should see the usage message with the four available flags. If you see `command not found`, activate your virtual environment first. See [CLI Setup](/cli-setup#troubleshooting) for PATH help.
 
 
 ## Minimal End-to-End Example
