@@ -1,5 +1,6 @@
 """Deterministic quality checks for ontology and KG pipelines."""
 
+import copy
 import math
 from dataclasses import dataclass, field
 from enum import Enum
@@ -241,7 +242,10 @@ class OntologyQualityGate:
                     details={"index": index},
                 )
 
-            prop_type = str(prop.get("type", "")).strip().lower()
+            raw_prop_type = prop.get("type")
+            prop_type = (
+                str(raw_prop_type).strip().lower() if raw_prop_type is not None else ""
+            )
             if not prop_type:
                 self._add_issue(
                     issues,
@@ -325,7 +329,7 @@ class OntologyQualityGate:
         if graph is None and ("entities" in ontology or "relationships" in ontology):
             graph = ontology
         graph_entities, graph_relationships = self._read_graph(graph, issues)
-        if graph is not None:
+        if self._has_valid_graph_shape(graph):
             self._check_graph(graph, issues)
             self._mark_graph_types(graph_entities, class_aliases, referenced_classes)
 
@@ -362,7 +366,7 @@ class OntologyQualityGate:
             evaluation_ontology = self._prepare_for_evaluation(
                 ontology, classes, properties
             )
-            evaluation = self.evaluator.evaluate_ontology(
+            evaluation = self._evaluate_competency_questions(
                 evaluation_ontology, competency_questions=competency_questions
             )
             metrics["competency_question_coverage"] = evaluation.coverage_score
@@ -521,6 +525,20 @@ class OntologyQualityGate:
             prepared["name"] = identifier
         return prepared
 
+    def _evaluate_competency_questions(
+        self, ontology: Dict[str, Any], competency_questions: List[str]
+    ) -> Any:
+        """Evaluate with an isolated question manager for repeatable checks."""
+        evaluator = copy.copy(self.evaluator)
+        manager = getattr(self.evaluator, "competency_questions_manager", None)
+        if manager is not None and hasattr(manager, "questions"):
+            isolated_manager = copy.copy(manager)
+            isolated_manager.questions = []
+            evaluator.competency_questions_manager = isolated_manager
+        return evaluator.evaluate_ontology(
+            ontology, competency_questions=competency_questions
+        )
+
     @classmethod
     def _read_collection(
         cls, ontology: Dict[str, Any], key: str, issues: List[QualityIssue]
@@ -654,7 +672,11 @@ class OntologyQualityGate:
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Normalize supported graph aliases and isolate malformed members."""
         entities: List[Dict[str, Any]] = []
-        for index, entity in enumerate(graph.get("entities", [])):
+        raw_entities = graph.get("entities", [])
+        raw_relationships = graph.get("relationships", [])
+        for index, entity in enumerate(
+            raw_entities if isinstance(raw_entities, list) else []
+        ):
             if not isinstance(entity, dict):
                 cls._add_issue(
                     issues,
@@ -671,7 +693,9 @@ class OntologyQualityGate:
             entities.append(normalized)
 
         relationships: List[Dict[str, Any]] = []
-        for index, relationship in enumerate(graph.get("relationships", [])):
+        for index, relationship in enumerate(
+            raw_relationships if isinstance(raw_relationships, list) else []
+        ):
             if not isinstance(relationship, dict):
                 cls._add_issue(
                     issues,
@@ -713,6 +737,14 @@ class OntologyQualityGate:
             )
             return [], []
         return entities, relationships
+
+    @staticmethod
+    def _has_valid_graph_shape(graph: Optional[Dict[str, Any]]) -> bool:
+        return bool(
+            isinstance(graph, dict)
+            and isinstance(graph.get("entities", []), list)
+            and isinstance(graph.get("relationships", []), list)
+        )
 
     @staticmethod
     def _identifier(element: Any) -> Optional[str]:
@@ -787,13 +819,6 @@ class OntologyQualityGate:
         element_type: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if any(
-            issue.code == code
-            and issue.element_id == element_id
-            and issue.message == message
-            for issue in issues
-        ):
-            return
         issues.append(
             QualityIssue(
                 code=code,

@@ -142,6 +142,38 @@ def test_quality_gate_returns_structured_findings_for_malformed_graph_members():
     assert {"INVALID_ENTITY", "INVALID_RELATIONSHIP"} <= codes
 
 
+def test_quality_gate_returns_structured_finding_for_invalid_graph_containers():
+    report = OntologyQualityGate().check(
+        _ontology(), graph_data={"entities": None, "relationships": []}
+    )
+
+    assert not report.passed
+    assert any(issue.code == "INVALID_GRAPH" for issue in report.issues)
+
+
+def test_quality_gate_does_not_undercount_identical_dangling_edges():
+    graph = {
+        "entities": [{"id": "p1", "name": "Alice", "type": "Person"}],
+        "relationships": [
+            {"source": "p1", "target": "missing", "type": "knows"},
+            {"source": "p1", "target": "missing", "type": "knows"},
+        ],
+    }
+
+    report = OntologyQualityGate().check(
+        _ontology(), graph_data=graph, thresholds={"max_errors": 1}
+    )
+
+    endpoint_errors = [
+        issue
+        for issue in report.issues
+        if issue.code == "UNRESOLVED_RELATIONSHIP_ENDPOINT"
+    ]
+    assert len(endpoint_errors) == 2
+    assert not report.passed
+    assert "max_errors" in report.threshold_failures
+
+
 def test_quality_gate_indexes_all_class_identifier_aliases():
     ontology = {
         "classes": [{"name": "Person", "uri": "https://example.org/PersonType"}],
@@ -215,6 +247,37 @@ def test_quality_gate_reports_validator_warnings_and_can_fail_on_them():
     assert report.warning_count == 1
     assert "VALIDATOR_WARNING" in {issue.code for issue in report.issues}
     assert "fail_on_warnings" in report.threshold_failures
+
+
+def test_quality_gate_isolates_competency_questions_between_checks():
+    engine = OntologyEngine()
+
+    first = engine.quality_check(_ontology(), competency_questions=["Who is a Person?"])
+    second = engine.quality_check(
+        _ontology(), competency_questions=["What is a location?"]
+    )
+
+    assert first.metrics["competency_question_coverage"] == 1.0
+    assert second.metrics["competency_question_coverage"] == 0.0
+
+
+def test_quality_gate_treats_null_property_type_as_missing():
+    ontology = {
+        "classes": [{"name": "Person"}],
+        "properties": [
+            {
+                "name": "value",
+                "type": None,
+                "domain": "Person",
+                "range": "string",
+            }
+        ],
+    }
+
+    report = OntologyQualityGate().check(ontology)
+
+    assert "MISSING_PROPERTY_TYPE" in {issue.code for issue in report.issues}
+    assert report.error_count >= 1
 
 
 def test_quality_gate_normalizes_orphan_ids_for_deterministic_reports():
