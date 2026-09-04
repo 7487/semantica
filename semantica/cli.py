@@ -1415,6 +1415,31 @@ _INGEST_TYPES = [
 ]
 
 _INGEST_FORMATS = ["pdf", "docx", "csv", "excel", "html", "json", "parquet", "xml", "rdf"]
+_GRAPH_STORE_ENV_BACKEND_HINTS = {
+    "GRAPH_STORE_NEO4J_URI": "neo4j",
+    "GRAPH_STORE_FALKORDB_HOST": "falkordb",
+    "GRAPH_STORE_NEPTUNE_ENDPOINT": "neptune",
+    "GRAPH_STORE_AGE_CONNECTION_STRING": "age",
+}
+
+
+def _configured_ingest_graph_backend(
+    cli_ctx: CLIContext, store_override: Optional[str]
+) -> Optional[str]:
+    graph_db = dict(cli_ctx.config.to_dict().get("graph_db", {}))
+    backend = store_override or cli_ctx.store_backend or graph_db.get("backend")
+    if backend:
+        return str(backend)
+
+    env_backend = os.environ.get("GRAPH_STORE_DEFAULT_BACKEND")
+    if env_backend:
+        return env_backend
+
+    for env_var, hinted_backend in _GRAPH_STORE_ENV_BACKEND_HINTS.items():
+        if os.environ.get(env_var):
+            return hinted_backend
+
+    return None
 
 
 @main.command()
@@ -1452,6 +1477,12 @@ def ingest(
             _dry(cli_ctx, "ingest", json_out=_is_json(cli_ctx, local_json),
                  source=source, type=ingestor_type, format=fmt)
             return
+        graph_backend = _configured_ingest_graph_backend(cli_ctx, store_override)
+        if graph_backend and graph_backend.lower() != "memory" and not output:
+            raise click.ClickException(
+                "semantica ingest does not write to graph stores yet; use "
+                f"'semantica kg build --source {source}' to build the graph."
+            )
         kwargs: Dict[str, Any] = {"batch_size": batch_size}
         if ingestor_type:
             kwargs["source_type"] = ingestor_type

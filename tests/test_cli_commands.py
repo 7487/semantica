@@ -336,6 +336,21 @@ class TestIngest:
         assert captured["sources"] == "README.md"
         assert captured["kwargs"]["method"] == "file"
 
+    def test_configured_graph_backend_does_not_report_false_success(
+        self, runner, monkeypatch
+    ):
+        monkeypatch.setenv("GRAPH_STORE_DEFAULT_BACKEND", "neo4j")
+        monkeypatch.setattr(
+            "semantica.ingest.methods.ingest_file",
+            lambda sources, **kwargs: [{"path": sources}],
+        )
+
+        result = runner.invoke(cli_module.main, ["ingest", "README.md"])
+
+        assert result.exit_code != 0
+        assert "does not write to graph stores" in result.output
+        assert "Ingested" not in result.output
+
     def test_import_error_is_clean(self, runner, monkeypatch):
         monkeypatch.setattr(cli_module, "__import__", _import_side_effect, raising=False)
         original_import = __import__
