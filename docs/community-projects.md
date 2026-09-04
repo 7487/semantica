@@ -66,12 +66,12 @@ Production deployments span regulated and high-stakes industries where AI accoun
     | :-------- | :---- |
     | **OpenAI** | GPT-4o, GPT-4, GPT-3.5 |
     | **Anthropic** | Claude Opus, Sonnet, Haiku |
-    | **Google Gemini** |: |
+    | **Google Gemini** | Gemini Pro and other Gemini models |
     | **Groq** | LLaMA, Mixtral (fast inference) |
     | **Ollama** | Fully local, air-gapped |
-    | **HuggingFace** |: |
-    | **DeepSeek** |: |
-    | **Novita AI** |: |
+    | **HuggingFace** | Transformers-based local LLM models |
+    | **DeepSeek** | deepseek-chat and reasoning models |
+    | **Novita AI** | OpenAI-compatible gateway, DeepSeek-V3.2 default |
     | **LiteLLM** | 100+ model gateway |
   </Tab>
   <Tab title="NLP Libraries">
