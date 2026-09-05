@@ -1168,7 +1168,13 @@ def _load_rule_definitions(path: str) -> List[str]:
     except yaml.YAMLError:
         data = None
     if isinstance(data, dict):
-        data = data.get("rules")
+        rules_value = data.get("rules")
+        if rules_value is None and "rules" not in data:
+            raise click.ClickException(
+                f"Rules file '{path}' is a YAML mapping but has no 'rules' key. "
+                "Expected either a YAML list or a mapping with a 'rules' list."
+            )
+        data = rules_value
     if isinstance(data, list):
         return [str(item) for item in data]
     return [line.strip() for line in text.splitlines()
