@@ -887,7 +887,12 @@ def ingest_repository(
         config = ingest_config.get_method_config("repo")
         config.update(kwargs)
 
-        ingestor = RepoIngestor(**config)
+        try:
+            ingestor = RepoIngestor(**config)
+        except ImportError as exc:
+            raise _missing_optional_dependency(
+                "Repository ingestion", "GitPython"
+            ) from exc
 
         if method == "clone" or (
             isinstance(source, str)

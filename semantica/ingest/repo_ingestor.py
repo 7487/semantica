@@ -44,7 +44,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import urlparse
 
-import git
+try:
+    import git
+except (ImportError, ModuleNotFoundError):
+    git = None
 
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.logging import get_logger
@@ -525,6 +528,11 @@ class RepoIngestor:
             **kwargs: Additional configuration parameters (merged into config)
         """
         self.logger = get_logger("repo_ingestor")
+        if git is None:
+            raise ImportError(
+                "GitPython is required for repository ingestion. "
+                "Install it with: pip install 'semantica[ingest-git]'"
+            )
         self.config = config or {}
         self.config.update(kwargs)
 

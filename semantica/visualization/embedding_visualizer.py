@@ -33,7 +33,10 @@ License: MIT
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+except (ImportError, OSError):
+    plt = None
 import numpy as np
 
 try:
@@ -45,8 +48,12 @@ except (ImportError, OSError):
     go = None
     make_subplots = None
 
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
+try:
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+except (ImportError, OSError):
+    PCA = None
+    TSNE = None
 
 try:
     import umap
@@ -99,7 +106,7 @@ class EmbeddingVisualizer:
         if px is None or go is None:
             raise ProcessingError(
                 "Plotly is required for embedding visualization. "
-                "Install with: pip install plotly"
+                "Install with: pip install 'semantica[viz]'"
             )
 
     def visualize_2d_projection(
@@ -632,7 +639,7 @@ class EmbeddingVisualizer:
             else:
                 # Fallback to PCA if UMAP not available
                 self.logger.warning(
-                    "UMAP not available, using PCA. Install with: pip install umap-learn"
+                    "UMAP not available, using PCA. Install with: pip install 'semantica[viz]'"
                 )
                 pca = PCA(n_components=n_components)
                 return pca.fit_transform(embeddings)

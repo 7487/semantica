@@ -34,7 +34,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from lxml import etree
+try:
+    from lxml import etree
+except (ImportError, ModuleNotFoundError):
+    etree = None
 
 from ..utils.exceptions import ProcessingError, ValidationError
 from ..utils.logging import get_logger
@@ -105,7 +108,13 @@ class XMLParser:
         )
 
         try:
-            engine = options.get("engine", "lxml")
+            explicit_engine = options.get("engine") or self.config.get("engine")
+            engine = explicit_engine or ("lxml" if etree is not None else "etree")
+            if engine == "lxml" and etree is None:
+                raise ProcessingError(
+                    "lxml is required to parse XML with engine='lxml'. "
+                    "Install it with: pip install 'semantica[documents]'"
+                )
 
             # Load XML content
             if file_path_obj:
@@ -249,6 +258,12 @@ class XMLParser:
         xml_data = self.parse(file_path, **options)
 
         # Use lxml for XPath queries
+        if etree is None:
+            raise ProcessingError(
+                "lxml is required for find_elements (XPath queries). "
+                "Install it with: pip install 'semantica[documents]'"
+            )
+
         xml_string = (
             file_path
             if isinstance(file_path, str) and not Path(file_path).exists()

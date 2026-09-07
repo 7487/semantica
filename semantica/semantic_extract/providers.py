@@ -1184,7 +1184,7 @@ class HuggingFaceLLMProvider(BaseProvider):
             import torch
         except (ImportError, OSError):
             raise ImportError(
-                "torch is required for HuggingFaceLLMProvider. Install with: pip install torch"
+                "torch is required for HuggingFaceLLMProvider. Install with: pip install 'semantica[models-huggingface]'"
             )
         
         self.model_name = model_name
@@ -1204,7 +1204,7 @@ class HuggingFaceLLMProvider(BaseProvider):
             self.model.eval()
         except (ImportError, OSError):
             self.logger.warning(
-                "transformers library not installed. Install with: pip install semantica[models-huggingface]"
+                "transformers library not installed. Install with: pip install 'semantica[models-huggingface]'"
             )
         except Exception as e:
             self.logger.warning(
@@ -1271,7 +1271,7 @@ class HuggingFaceModelLoader:
             import torch
         except (ImportError, OSError):
             raise ImportError(
-                "torch is required for HuggingFaceModelLoader. Install with: pip install torch"
+                "torch is required for HuggingFaceModelLoader. Install with: pip install 'semantica[models-huggingface]'"
             )
         
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -1293,7 +1293,7 @@ class HuggingFaceModelLoader:
             from transformers import pipeline
         except ImportError:
             raise ImportError(
-                "transformers library not installed. Install with: pip install semantica[models-huggingface]"
+                "transformers library not installed. Install with: pip install 'semantica[models-huggingface]'"
             )
 
         try:
@@ -1326,7 +1326,7 @@ class HuggingFaceModelLoader:
             from transformers import pipeline, AutoTokenizer
         except ImportError:
             raise ImportError(
-                "transformers library not installed. Install with: pip install semantica[models-huggingface]"
+                "transformers library not installed. Install with: pip install 'semantica[models-huggingface]'"
             )
 
         try:
@@ -1362,7 +1362,7 @@ class HuggingFaceModelLoader:
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
         except ImportError:
             raise ImportError(
-                "transformers library not installed. Install with: pip install semantica[models-huggingface]"
+                "transformers library not installed. Install with: pip install 'semantica[models-huggingface]'"
             )
 
         try:

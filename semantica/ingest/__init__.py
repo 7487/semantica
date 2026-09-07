@@ -248,32 +248,42 @@ _LAZY_EXPORTS: Dict[str, Tuple[str, str]] = {
 _OPTIONAL_DEPENDENCY_MESSAGES = {
     ".repo_ingestor": (
         "Repository ingestion requires optional dependency 'GitPython'. "
-        "Install it before importing RepoIngestor or using ingest_repository()."
+        "Install it before importing RepoIngestor or using ingest_repository(). "
+        "Install it with: pip install 'semantica[ingest-git]'"
     ),
     ".web_ingestor": (
         "Web ingestion requires optional dependency 'beautifulsoup4'. "
-        "Install it before importing WebIngestor or using ingest_web()."
+        "Install it before importing WebIngestor or using ingest_web(). "
+        "Install it with: pip install 'semantica[documents]'"
     ),
     ".feed_ingestor": (
         "Feed ingestion requires optional dependency 'beautifulsoup4'. "
-        "Install it before importing FeedIngestor or using ingest_feed()."
+        "Install it before importing FeedIngestor or using ingest_feed(). "
+        "Install it with: pip install 'semantica[documents]'"
     ),
     ".email_ingestor": (
         "Email ingestion requires optional dependency 'beautifulsoup4'. "
-        "Install it before importing EmailIngestor or using ingest_email()."
+        "Install it before importing EmailIngestor or using ingest_email(). "
+        "Install it with: pip install 'semantica[documents]'"
+    ),
+    ".xml_ingestor": (
+        "XML ingestion requires optional dependency 'lxml'. "
+        "Install it before importing XMLIngestor or using ingest_xml(). "
+        "Install it with: pip install 'semantica[documents]'"
     ),
     ".parquet_ingestor": (
         "Parquet ingestion requires optional dependency 'pyarrow'. "
-        "Install it before importing ParquetIngestor or using ingest_parquet()."
+        "Install it before importing ParquetIngestor or using ingest_parquet(). "
+        "Install it with: pip install 'semantica[ingest-parquet]'"
     ),
     ".arrow_ingestor": (
         "Arrow ingestion requires optional dependency 'pyarrow'. "
-        "Install it before importing ArrowIngestor or using ingest_arrow()."
+        "Install it before importing ArrowIngestor or using ingest_arrow(). "
+        "Install it with: pip install 'semantica[ingest-arrow]'"
     ),
     ".salesforce_ingestor": (
         "Salesforce ingestion requires optional dependency 'simple-salesforce'. "
-        "Install it with: pip install \"semantica[db-salesforce]\" "
-        "or: pip install simple-salesforce>=1.12.0"
+        "Install it with: pip install 'semantica[db-salesforce]'"
     ),
 }
 
@@ -289,7 +299,7 @@ def __getattr__(name: str) -> Any:
     except ModuleNotFoundError as exc:
         message = _OPTIONAL_DEPENDENCY_MESSAGES.get(module_name)
         missing_name = getattr(exc, "name", None)
-        if message and missing_name in {"git", "bs4", "pyarrow", "simple_salesforce"}:
+        if message and missing_name in {"git", "bs4", "pyarrow", "simple_salesforce", "lxml"}:
             raise ImportError(message) from exc
         raise
 

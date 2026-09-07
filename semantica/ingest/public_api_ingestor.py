@@ -28,7 +28,21 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 import requests
-from lxml import etree as lxml_etree
+
+try:
+    from lxml import etree as lxml_etree
+    _SAFE_XML_PARSER = lxml_etree.XMLParser(
+        resolve_entities=False,
+        no_network=True,
+        recover=False,
+        huge_tree=False,
+        load_dtd=False,
+    )
+    _LXML_SYNTAX_ERRORS: Tuple[type, ...] = (lxml_etree.XMLSyntaxError,)
+except (ImportError, ModuleNotFoundError):
+    lxml_etree = None
+    _SAFE_XML_PARSER = None
+    _LXML_SYNTAX_ERRORS = ()
 
 try:
     from defusedxml import ElementTree as safe_xml_etree
@@ -70,14 +84,6 @@ AUTH_PARAM_NAMES = {
     "subscription_key",
     "subscription-key",
 }
-
-_SAFE_XML_PARSER = lxml_etree.XMLParser(
-    resolve_entities=False,
-    no_network=True,
-    recover=False,
-    huge_tree=False,
-    load_dtd=False,
-)
 
 
 @dataclass
@@ -730,7 +736,7 @@ class PublicAPIIngestor(RESTIngestor):
             raise ProcessingError(
                 f"Failed to parse {detected_format.upper()} public API response"
             ) from exc
-        except (DefusedXmlException, lxml_etree.XMLSyntaxError) as exc:
+        except (DefusedXmlException, *_LXML_SYNTAX_ERRORS) as exc:
             raise ProcessingError("Failed to parse XML public API response") from exc
 
     def _detect_response_format(
@@ -770,10 +776,15 @@ class PublicAPIIngestor(RESTIngestor):
     def _parse_xml(self, xml_text: str) -> Dict[str, Any]:
         if safe_xml_etree is not None:
             root = safe_xml_etree.fromstring(xml_text)
-        else:
+        elif lxml_etree is not None and _SAFE_XML_PARSER is not None:
             root = lxml_etree.fromstring(
                 xml_text.encode("utf-8"),
                 parser=_SAFE_XML_PARSER,
+            )
+        else:
+            raise ProcessingError(
+                "XML parsing requires 'defusedxml' or 'lxml'. "
+                "Install it with: pip install 'semantica[documents]'"
             )
         return self._element_to_dict(root)
 

@@ -24,7 +24,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from lxml import etree
+try:
+    from lxml import etree
+except (ImportError, ModuleNotFoundError):
+    etree = None
 
 from ..utils.constants import FILE_SIZE_LIMITS
 from ..utils.exceptions import ProcessingError, ValidationError
@@ -72,6 +75,11 @@ class XMLIngestor:
             **kwargs: Additional configuration values
         """
         self.logger = get_logger("xml_ingestor")
+        if etree is None:
+            raise ProcessingError(
+                "lxml is required for XMLIngestor. "
+                "Install it with: pip install 'semantica[documents]'"
+            )
         self.config = config or {}
         self.config.update(kwargs)
         self.progress_tracker = get_progress_tracker()

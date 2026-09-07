@@ -18,14 +18,11 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 # ── Mock optional heavyweight dependencies before any semantica import ──────
-sys.modules.setdefault("spacy", MagicMock())
-sys.modules.setdefault("instructor", MagicMock())
-_openai_mock = MagicMock()
-sys.modules.setdefault("openai", _openai_mock)
-sys.modules.setdefault("groq", MagicMock())
-sys.modules.setdefault("sentence_transformers", MagicMock())
-sys.modules.setdefault("transformers", MagicMock())
-sys.modules.setdefault("torch", MagicMock())
+_MOCKED_MODULES = ["spacy", "instructor", "openai", "groq", "sentence_transformers", "transformers", "torch"]
+_original_modules = {k: sys.modules.get(k) for k in _MOCKED_MODULES}
+
+for k in _MOCKED_MODULES:
+    sys.modules.setdefault(k, MagicMock())
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -37,6 +34,12 @@ from semantica.semantic_extract.schemas import (
 )
 from semantica.kg.temporal_normalizer import TemporalNormalizer
 from semantica.utils.exceptions import TemporalAmbiguityWarning
+
+for _key, _original in _original_modules.items():
+    if _original is None:
+        sys.modules.pop(_key, None)
+    else:
+        sys.modules[_key] = _original
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

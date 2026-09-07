@@ -178,7 +178,7 @@ def parse_document(
         >>> text = parse_document("document.pdf", method="default", extract_text=True)
     """
     custom_method = method_registry.get("document", method)
-    if custom_method:
+    if custom_method and custom_method != parse_document:
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, file_type, fallback_on_custom_error=fallback, **kwargs
@@ -289,7 +289,7 @@ def parse_web_content(
         >>> html = parse_web_content("page.html", content_type="html", method="default")
     """
     custom_method = method_registry.get("web", method)
-    if custom_method:
+    if custom_method and custom_method != parse_web_content:
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, content, content_type, base_url, fallback_on_custom_error=fallback, **kwargs
@@ -345,7 +345,7 @@ def parse_structured_data(
         >>> csv_data = parse_structured_data("data.csv", data_format="csv", method="default")
     """
     custom_method = method_registry.get("structured", method)
-    if custom_method:
+    if custom_method and custom_method != parse_structured_data:
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, data, data_format, fallback_on_custom_error=fallback, **kwargs
@@ -392,7 +392,7 @@ def parse_email(
         >>> headers = parse_email("email.eml", method="headers")
     """
     custom_method = method_registry.get("email", method)
-    if custom_method:
+    if custom_method and custom_method != parse_email:
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, email_content, fallback_on_custom_error=fallback, **kwargs
@@ -442,7 +442,7 @@ def parse_code(
         >>> structure = parse_code("script.py", method="ast")
     """
     custom_method = method_registry.get("code", method)
-    if custom_method:
+    if custom_method and custom_method != parse_code:
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, language, fallback_on_custom_error=fallback, **kwargs
@@ -495,7 +495,7 @@ def parse_media(
         >>> video = parse_media("video.mp4", method="default")
     """
     custom_method = method_registry.get("media", method)
-    if custom_method:
+    if custom_method and custom_method != parse_media:
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, media_type, fallback_on_custom_error=fallback, **kwargs
@@ -541,7 +541,7 @@ def parse_pdf(
         >>> pages = parse_pdf("document.pdf", method="default", pages=[1, 2, 3])
     """
     custom_method = method_registry.get("document", method)
-    if custom_method:
+    if custom_method and custom_method not in (parse_pdf, parse_document):
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
@@ -585,7 +585,7 @@ def parse_docx(
         >>> docx = parse_docx("document.docx", method="default")
     """
     custom_method = method_registry.get("document", method)
-    if custom_method:
+    if custom_method and custom_method not in (parse_docx, parse_document):
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
@@ -628,7 +628,7 @@ def parse_json(file_path: Union[str, Path], method: str = "default", **kwargs) -
         >>> flattened = parse_json("data.json", method="default", flatten=True)
     """
     custom_method = method_registry.get("structured", method)
-    if custom_method:
+    if custom_method and custom_method not in (parse_json, parse_structured_data):
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
@@ -675,7 +675,7 @@ def parse_csv(
         >>> tab_separated = parse_csv("data.tsv", delimiter="\t", method="default")
     """
     custom_method = method_registry.get("structured", method)
-    if custom_method:
+    if custom_method and custom_method not in (parse_csv, parse_structured_data):
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, delimiter, fallback_on_custom_error=fallback, **kwargs
@@ -714,7 +714,7 @@ def parse_xml(file_path: Union[str, Path], method: str = "default", **kwargs) ->
         >>> xml_data = parse_xml("data.xml", method="default")
     """
     custom_method = method_registry.get("structured", method)
-    if custom_method:
+    if custom_method and custom_method not in (parse_xml, parse_structured_data):
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
@@ -762,7 +762,7 @@ def parse_image(
         >>> ocr_text = image.get("ocr_result", {}).get("text", "")
     """
     custom_method = method_registry.get("media", method)
-    if custom_method:
+    if custom_method and custom_method not in (parse_image, parse_media):
         fallback = kwargs.pop("fallback_on_custom_error", False)
         result = call_custom_method(
             logger, method, custom_method, file_path, fallback_on_custom_error=fallback, **kwargs
