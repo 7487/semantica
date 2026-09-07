@@ -153,9 +153,12 @@ class QdrantCollection:
             raise ProcessingError("Qdrant not available")
 
         try:
-            search_results = self.client.search(
+            # qdrant-client >=1.10.0: query_points() supersedes the removed search().
+            # It returns a QueryResponse whose .points attribute is a list of
+            # ScoredPoint objects (id, score, payload, …).
+            response = self.client.query_points(
                 collection_name=self.collection_name,
-                query_vector=query_vector.tolist(),
+                query=query_vector.tolist(),
                 limit=limit,
                 query_filter=query_filter,
                 with_payload=True,
@@ -164,19 +167,19 @@ class QdrantCollection:
             )
 
             results = []
-            for result in search_results:
+            for point in response.points:
                 results.append(
                     {
-                        "id": result.id,
+                        "id": point.id,
                         # See pinecone_store.py PineconeIndex.search_vectors for why
                         # this uses x/(1+|x|) rather than clamping distance-to-zero:
                         # Qdrant's Dot distance metric is unbounded, and the old
                         # clamped formula collapsed every score >= 1.0 to 1.0.
                         "score": (
-                            float(result.score) / (1.0 + abs(float(result.score))) + 1.0
+                            float(point.score) / (1.0 + abs(float(point.score))) + 1.0
                         )
                         / 2.0,
-                        "metadata": result.payload or {},
+                        "metadata": point.payload or {},
                         "vector": None,
                         "distance": None,
                     }
@@ -697,7 +700,16 @@ class QdrantStore:
             )
             return {
                 "points_count": collection_info.points_count,
-                "vectors_count": collection_info.vectors_count,
+                # vectors_count was removed in qdrant-client 1.16.0.
+                # indexed_vectors_count is NOT equivalent: it counts only vectors
+                # in fully-optimised segments and is 0 for freshly-inserted points.
+                # Semantica inserts one vector per point, so points_count is the
+                # correct substitute for the old vectors_count statistic.
+                "vectors_count": getattr(
+                    collection_info,
+                    "vectors_count",
+                    collection_info.points_count,
+                ),
                 "status": str(collection_info.status)
                 if hasattr(collection_info, "status")
                 else "unknown",
