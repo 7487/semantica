@@ -133,7 +133,11 @@ import importlib
 from typing import TYPE_CHECKING, Any, Dict, Tuple
 
 if TYPE_CHECKING:
-    from .salesforce_ingestor import SalesforceConnector, SalesforceData, SalesforceIngestor
+    from .salesforce_ingestor import (
+        SalesforceConnector,
+        SalesforceData,
+        SalesforceIngestor,
+    )
 
 from .config import IngestConfig, ingest_config
 from .file_ingestor import (
@@ -296,12 +300,54 @@ def __getattr__(name: str) -> Any:
     module_name, attr_name = _LAZY_EXPORTS[name]
     try:
         module = importlib.import_module(module_name, __name__)
-    except ModuleNotFoundError as exc:
+    except (ImportError, OSError) as exc:
         message = _OPTIONAL_DEPENDENCY_MESSAGES.get(module_name)
         missing_name = getattr(exc, "name", None)
-        if message and missing_name in {"git", "bs4", "pyarrow", "simple_salesforce", "lxml"}:
+        if message and (
+            missing_name is None
+            or any(
+                pkg in missing_name
+                for pkg in ("git", "bs4", "pyarrow", "simple_salesforce", "lxml")
+            )
+        ):
             raise ImportError(message) from exc
         raise
+
+    # Guard against backends whose modules imported cleanly with dependencies
+    # set to None; ensure probe imports (e.g. try: from semantica.ingest import ...)
+    # fail at import time rather than postponing failure to construction time.
+    if module_name == ".repo_ingestor" and name in {"RepoIngestor"}:
+        if getattr(module, "git", None) is None:
+            message = _OPTIONAL_DEPENDENCY_MESSAGES.get(module_name)
+            if message:
+                raise ImportError(message)
+
+    if module_name == ".xml_ingestor" and name in {"XMLIngestor"}:
+        if getattr(module, "etree", None) is None:
+            message = _OPTIONAL_DEPENDENCY_MESSAGES.get(module_name)
+            if message:
+                raise ImportError(message)
+
+    if module_name == ".parquet_ingestor" and name in {"ParquetIngestor"}:
+        if not getattr(module, "PARQUET_AVAILABLE", True):
+            message = _OPTIONAL_DEPENDENCY_MESSAGES.get(module_name)
+            if message:
+                raise ImportError(message)
+
+    if module_name == ".arrow_ingestor" and name in {"ArrowIngestor"}:
+        if not getattr(module, "ARROW_AVAILABLE", True):
+            message = _OPTIONAL_DEPENDENCY_MESSAGES.get(module_name)
+            if message:
+                raise ImportError(message)
+
+    if module_name == ".salesforce_ingestor" and name in {
+        "SalesforceIngestor",
+        "SalesforceConnector",
+    }:
+        if not getattr(module, "SALESFORCE_AVAILABLE", True):
+            message = _OPTIONAL_DEPENDENCY_MESSAGES.get(module_name)
+            if message:
+                raise ImportError(message)
 
     value = getattr(module, attr_name)
     globals()[name] = value

@@ -28,6 +28,7 @@ Example Usage:
 Author: Semantica Contributors
 License: MIT
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -47,7 +48,7 @@ from urllib.parse import urlparse
 
 try:
     import git
-except (ImportError, ModuleNotFoundError):
+except (ImportError, OSError):
     git = None
 
 from ..utils.exceptions import ProcessingError, ValidationError
@@ -61,9 +62,7 @@ ALLOWED_CLONE_OPTIONS: Set[str] = {"depth", "branch", "single_branch", "no_tags"
 ALLOWED_REPO_URL_SCHEMES = frozenset({"https", "http", "git", "ssh"})
 # SCP-like SSH remotes: user@host:path/to/repo.git (no scheme)
 _SCP_LIKE_REPO_URL_RE = re.compile(r"^[^@\s]+@[^:\s]+:.+$")
-_ENV_VAR_TOKEN_RE = re.compile(
-    r"\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)"
-)
+_ENV_VAR_TOKEN_RE = re.compile(r"\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
 # Short-lived DNS cache for host validation. This reduces repeated lookups but
 # does not eliminate DNS-rebinding / TOCTOU races between validate and clone —
 # network egress controls remain recommended.
@@ -599,10 +598,7 @@ class RepoIngestor:
         networks). Those addresses are not SSRF-sensitive.
         """
         return bool(
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_unspecified
+            ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified
         )
 
     @staticmethod
@@ -629,9 +625,7 @@ class RepoIngestor:
         # or hanging lookup for one host cannot stall cache access for
         # concurrent lookups of other hosts.
         try:
-            addrinfos = socket.getaddrinfo(
-                host, None, type=socket.SOCK_STREAM
-            )
+            addrinfos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         except socket.gaierror as exc:
             raise ValidationError(
                 f"Cannot resolve repository host {host!r}: {exc}"
@@ -804,9 +798,7 @@ class RepoIngestor:
                 f"Allowed schemes: {sorted(ALLOWED_REPO_URL_SCHEMES)}"
             )
         if not parsed.netloc or not host:
-            raise ValidationError(
-                f"Repository URL must include a host: {repo_url}"
-            )
+            raise ValidationError(f"Repository URL must include a host: {repo_url}")
 
         RepoIngestor._validate_repo_host(host)
 
@@ -821,9 +813,7 @@ class RepoIngestor:
             "include_extensions",
             "max_depth",
         }
-        candidate = {
-            k: v for k, v in options.items() if k not in non_git_options
-        }
+        candidate = {k: v for k, v in options.items() if k not in non_git_options}
         unsafe = set(candidate) - ALLOWED_CLONE_OPTIONS
         if unsafe:
             raise ValidationError(
@@ -902,9 +892,7 @@ class RepoIngestor:
             if "include_extensions" in options:
                 # Normalize extensions to include dot prefix
                 exts = options["include_extensions"]
-                normalized_exts = [
-                    e if e.startswith(".") else f".{e}" for e in exts
-                ]
+                normalized_exts = [e if e.startswith(".") else f".{e}" for e in exts]
                 file_filters["extensions"] = normalized_exts
 
             # Process code files
@@ -1120,6 +1108,7 @@ class RepoIngestor:
     def cleanup(self):
         """Cleanup temporary repository files."""
         if self.temp_dir and os.path.exists(self.temp_dir):
+
             def onexc(func, path, exc_info):
                 """
                 Error handler for shutil.rmtree.
@@ -1132,6 +1121,7 @@ class RepoIngestor:
                 Usage : shutil.rmtree(path, onerror=onexc)
                 """
                 import stat
+
                 if not os.access(path, os.W_OK):
                     # Is the error an access error ?
                     os.chmod(path, stat.S_IWUSR)

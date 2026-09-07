@@ -31,15 +31,18 @@ import requests
 
 try:
     from lxml import etree as lxml_etree
+
     _SAFE_XML_PARSER = lxml_etree.XMLParser(
         resolve_entities=False,
         no_network=True,
         recover=False,
         huge_tree=False,
         load_dtd=False,
+        remove_comments=True,
+        remove_pis=True,
     )
     _LXML_SYNTAX_ERRORS: Tuple[type, ...] = (lxml_etree.XMLSyntaxError,)
-except (ImportError, ModuleNotFoundError):
+except (ImportError, OSError):
     lxml_etree = None
     _SAFE_XML_PARSER = None
     _LXML_SYNTAX_ERRORS = ()
@@ -47,7 +50,7 @@ except (ImportError, ModuleNotFoundError):
 try:
     from defusedxml import ElementTree as safe_xml_etree
     from defusedxml.common import DefusedXmlException
-except ModuleNotFoundError:  # pragma: no cover - fallback for minimal installs
+except (ImportError, OSError):  # pragma: no cover - fallback for minimal installs
     safe_xml_etree = None
 
     class DefusedXmlException(Exception):
@@ -449,7 +452,9 @@ class PublicAPIIngestor(RESTIngestor):
             APIData: Normalized public API response and metadata
         """
         self._validate_endpoint(endpoint)
-        self._validate_no_auth_request(headers=headers, params=params, options=options, endpoint=endpoint)
+        self._validate_no_auth_request(
+            headers=headers, params=params, options=options, endpoint=endpoint
+        )
 
         tracking_id = self.progress_tracker.start_tracking(
             file=endpoint,
@@ -610,7 +615,9 @@ class PublicAPIIngestor(RESTIngestor):
         for endpoint in endpoints:
             try:
                 results.append(
-                    self.ingest_public_api(endpoint, method=method, **copy.deepcopy(options))
+                    self.ingest_public_api(
+                        endpoint, method=method, **copy.deepcopy(options)
+                    )
                 )
             except Exception as exc:
                 self.logger.warning(f"Failed to fetch public API {endpoint}: {exc}")
@@ -781,6 +788,16 @@ class PublicAPIIngestor(RESTIngestor):
                 xml_text.encode("utf-8"),
                 parser=_SAFE_XML_PARSER,
             )
+            for elem in root.iter():
+                if (
+                    elem.tag is lxml_etree.Comment
+                    or elem.tag is lxml_etree.PI
+                    or getattr(elem.tag, "__name__", "")
+                    in ("Comment", "ProcessingInstruction", "PI")
+                ):
+                    continue
+                if callable(elem.tag) or not isinstance(elem.tag, str):
+                    raise ProcessingError("Failed to parse XML public API response")
         else:
             raise ProcessingError(
                 "XML parsing requires 'defusedxml' or 'lxml'. "
@@ -789,7 +806,17 @@ class PublicAPIIngestor(RESTIngestor):
         return self._element_to_dict(root)
 
     def _element_to_dict(self, element: Any) -> Dict[str, Any]:
-        children = [self._element_to_dict(child) for child in list(element)]
+        children = [
+            self._element_to_dict(child)
+            for child in list(element)
+            if not (
+                callable(child.tag)
+                or (
+                    lxml_etree is not None
+                    and (child.tag is lxml_etree.Comment or child.tag is lxml_etree.PI)
+                )
+            )
+        ]
         return {
             "tag": self._strip_namespace(element.tag),
             "attributes": {
@@ -800,7 +827,9 @@ class PublicAPIIngestor(RESTIngestor):
             "children": children,
         }
 
-    def _strip_namespace(self, value: str) -> str:
+    def _strip_namespace(self, value: Any) -> str:
+        if not isinstance(value, str):
+            return str(value)
         if value.startswith("{") and "}" in value:
             return value.split("}", 1)[1]
         return value

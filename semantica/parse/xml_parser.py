@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Optional, Union
 
 try:
     from lxml import etree
-except (ImportError, ModuleNotFoundError):
+except (ImportError, OSError):
     etree = None
 
 from ..utils.exceptions import ProcessingError, ValidationError
@@ -156,7 +156,7 @@ class XMLParser:
         self, xml_string: str, source: str, options: Dict[str, Any]
     ) -> XMLData:
         """Parse XML using lxml."""
-        parser = etree.XMLParser(remove_blank_text=True)
+        parser = etree.XMLParser(remove_blank_text=True, remove_comments=True)
         root = etree.fromstring(xml_string.encode("utf-8"), parser)
 
         # Extract namespaces
@@ -197,8 +197,10 @@ class XMLParser:
             metadata={"source": source, "engine": "etree"},
         )
 
-    def _element_to_xml_element(self, element) -> XMLElement:
+    def _element_to_xml_element(self, element) -> Optional[XMLElement]:
         """Convert lxml element to XMLElement."""
+        if not hasattr(element, "tag") or not isinstance(element.tag, str):
+            return None
         tag = element.tag
         if "}" in tag:
             namespace, tag = tag.split("}", 1)
@@ -215,12 +217,18 @@ class XMLParser:
 
         # Process children
         for child in element:
-            xml_elem.children.append(self._element_to_xml_element(child))
+            child_elem = self._element_to_xml_element(child)
+            if child_elem is not None:
+                xml_elem.children.append(child_elem)
 
         return xml_elem
 
-    def _etree_element_to_xml_element(self, element: ET.Element) -> XMLElement:
+    def _etree_element_to_xml_element(
+        self, element: ET.Element
+    ) -> Optional[XMLElement]:
         """Convert ElementTree element to XMLElement."""
+        if not hasattr(element, "tag") or not isinstance(element.tag, str):
+            return None
         tag = element.tag
         if "}" in tag:
             namespace, tag = tag.split("}", 1)
@@ -237,7 +245,9 @@ class XMLParser:
 
         # Process children
         for child in element:
-            xml_elem.children.append(self._etree_element_to_xml_element(child))
+            child_elem = self._etree_element_to_xml_element(child)
+            if child_elem is not None:
+                xml_elem.children.append(child_elem)
 
         return xml_elem
 
@@ -267,15 +277,21 @@ class XMLParser:
         xml_string = (
             file_path
             if isinstance(file_path, str) and not Path(file_path).exists()
-            else Path(file_path).read_text()
+            else Path(file_path).read_text(encoding="utf-8")
         )
-        root = etree.fromstring(xml_string.encode("utf-8"))
+        parser = etree.XMLParser(remove_blank_text=True, remove_comments=True)
+        root = etree.fromstring(xml_string.encode("utf-8"), parser=parser)
 
         # Register namespaces for XPath
         namespaces = xml_data.namespaces
         elements = root.xpath(xpath, namespaces=namespaces)
 
-        return [self._element_to_xml_element(elem) for elem in elements]
+        results = []
+        for elem in elements:
+            xml_elem = self._element_to_xml_element(elem)
+            if xml_elem is not None:
+                results.append(xml_elem)
+        return results
 
     def extract_by_tag(
         self, file_path: Union[str, Path], tag_name: str, **options

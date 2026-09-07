@@ -1,9 +1,10 @@
 """
 Embedding Visualizer Module
 
-This module provides comprehensive visualization capabilities for vector embeddings in the
-Semantica framework, including 2D/3D dimensionality reduction projections, similarity heatmaps,
-clustering visualizations, multi-modal comparisons, and quality metrics analysis.
+This module provides comprehensive visualization capabilities for vector
+embeddings in the Semantica framework, including 2D/3D dimensionality
+reduction projections, similarity heatmaps, clustering visualizations,
+multi-modal comparisons, and quality metrics analysis.
 
 Key Features:
     - 2D and 3D dimensionality reduction (UMAP, t-SNE, PCA)
@@ -31,7 +32,7 @@ License: MIT
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -158,10 +159,12 @@ class EmbeddingVisualizer:
 
         try:
             self.logger.info(f"Visualizing 2D projection using {method}")
-            
+
             # Step 2: Data Analysis
             n_samples, n_features = embeddings.shape
-            self.logger.info(f"Embedding Analysis: {n_samples} samples, {n_features} dimensions")
+            self.logger.info(
+                f"Embedding Analysis: {n_samples} samples, {n_features} dimensions"
+            )
 
             if embeddings.shape[1] <= 2:
                 # Already 2D or less, use directly
@@ -183,20 +186,22 @@ class EmbeddingVisualizer:
                 tracking_id, message="Generating visualization..."
             )
             result = self._visualize_2d_plotly(
-                projected, 
-                labels, 
-                output, 
-                file_path, 
+                projected,
+                labels,
+                output,
+                file_path,
                 color_by=color_by,
                 size_by=size_by,
                 hover_data=hover_data,
-                **options
+                **options,
             )
 
             self.progress_tracker.stop_tracking(
                 tracking_id,
                 status="completed",
-                message=f"2D projection visualization generated: {len(projected)} points",
+                message=(
+                    f"2D projection visualization generated: {len(projected)} points"
+                ),
             )
             return result
         except Exception as e:
@@ -263,7 +268,9 @@ class EmbeddingVisualizer:
             self.progress_tracker.stop_tracking(
                 tracking_id,
                 status="completed",
-                message=f"3D projection visualization generated: {len(projected)} points",
+                message=(
+                    f"3D projection visualization generated: {len(projected)} points"
+                ),
             )
             return result
         except Exception as e:
@@ -354,7 +361,10 @@ class EmbeddingVisualizer:
                 self.progress_tracker.stop_tracking(
                     tracking_id,
                     status="completed",
-                    message=f"Similarity heatmap generated: {len(embeddings)}x{len(embeddings)} matrix",
+                    message=(
+                        f"Similarity heatmap generated: "
+                        f"{len(embeddings)}x{len(embeddings)} matrix"
+                    ),
                 )
                 return fig
             elif file_path:
@@ -459,7 +469,10 @@ class EmbeddingVisualizer:
                 self.progress_tracker.stop_tracking(
                     tracking_id,
                     status="completed",
-                    message=f"Clustering visualization generated: {num_clusters} clusters, {len(embeddings)} points",
+                    message=(
+                        f"Clustering visualization generated: "
+                        f"{num_clusters} clusters, {len(embeddings)} points"
+                    ),
                 )
                 return fig
             elif file_path:
@@ -558,7 +571,10 @@ class EmbeddingVisualizer:
                 dim_options = dict(options)
                 n_comp = dim_options.pop("n_components", 2)
                 projected = self._reduce_dimensions(
-                    combined_embeddings, method=method, n_components=n_comp, **dim_options
+                    combined_embeddings,
+                    method=method,
+                    n_components=n_comp,
+                    **dim_options,
                 )
 
             # Color by type
@@ -595,7 +611,10 @@ class EmbeddingVisualizer:
                 self.progress_tracker.stop_tracking(
                     tracking_id,
                     status="completed",
-                    message=f"Multi-modal comparison generated: {len(combined_embeddings)} embeddings",
+                    message=(
+                        f"Multi-modal comparison generated: "
+                        f"{len(combined_embeddings)} embeddings"
+                    ),
                 )
                 return fig
             elif file_path:
@@ -613,8 +632,6 @@ class EmbeddingVisualizer:
                 tracking_id, status="failed", message=str(e)
             )
             raise
-
-
 
     def _reduce_dimensions(
         self,

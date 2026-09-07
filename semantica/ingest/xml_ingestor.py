@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
     from lxml import etree
-except (ImportError, ModuleNotFoundError):
+except (ImportError, OSError):
     etree = None
 
 from ..utils.constants import FILE_SIZE_LIMITS
@@ -76,7 +76,7 @@ class XMLIngestor:
         """
         self.logger = get_logger("xml_ingestor")
         if etree is None:
-            raise ProcessingError(
+            raise ImportError(
                 "lxml is required for XMLIngestor. "
                 "Install it with: pip install 'semantica[documents]'"
             )

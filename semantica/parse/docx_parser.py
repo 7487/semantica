@@ -39,7 +39,7 @@ try:
     from docx.oxml.text.paragraph import CT_P
     from docx.table import Table
     from docx.text.paragraph import Paragraph
-except (ImportError, ModuleNotFoundError):
+except (ImportError, OSError):
     Document = None
     DocxDocument = None
     CT_Tbl = None
@@ -92,7 +92,9 @@ class DOCXParser:
         self.config = config
         self.progress_tracker = get_progress_tracker()
 
-    def parse(self, file_path: Union[str, Path], pipeline_id: Optional[str] = None, **options) -> Dict[str, Any]:
+    def parse(
+        self, file_path: Union[str, Path], pipeline_id: Optional[str] = None, **options
+    ) -> Dict[str, Any]:
         """
         Parse DOCX document.
 

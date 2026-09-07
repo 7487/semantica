@@ -35,7 +35,7 @@ from urllib.parse import urljoin, urlparse
 
 try:
     from bs4 import BeautifulSoup
-except (ImportError, ModuleNotFoundError):
+except (ImportError, OSError):
     BeautifulSoup = None
 
 from ..utils.exceptions import ProcessingError, ValidationError

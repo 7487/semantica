@@ -33,9 +33,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
+
 try:
     from openpyxl import load_workbook
-except (ImportError, ModuleNotFoundError):
+except (ImportError, OSError):
     load_workbook = None
 
 from ..utils.exceptions import ProcessingError, ValidationError
