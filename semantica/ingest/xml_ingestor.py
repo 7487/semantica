@@ -792,8 +792,8 @@ class XMLIngestor:
         first_error = errors[0] if errors else "No detailed validation error available."
         return f"{prefix} for {source}: {first_error}"
 
-    def _format_xml_error(self, exc: etree.XMLSyntaxError) -> str:
-        if exc.error_log:
+    def _format_xml_error(self, exc: Any) -> str:
+        if hasattr(exc, "error_log") and exc.error_log:
             return str(exc.error_log.last_error)
         return str(exc)
 

@@ -1,10 +1,6 @@
 from pathlib import Path
 from unittest.mock import patch
 import pytest
-try:
-    import tomllib
-except ImportError:
-    import toml as tomllib
 
 from semantica.parse.docx_parser import DOCXParser
 from semantica.parse.excel_parser import ExcelParser
@@ -13,11 +9,25 @@ from semantica.parse.xml_parser import XMLParser
 from semantica.utils.exceptions import ProcessingError
 
 
+def _load_toml(file_path: Path) -> dict:
+    """Load and parse a TOML file across Python 3.8-3.14+ without mode mismatches."""
+    content = file_path.read_text(encoding="utf-8")
+    try:
+        import tomllib  # Python 3.11+ standard library
+        return tomllib.loads(content)
+    except ImportError:
+        try:
+            import tomli  # Fast PEP 680 compatible parser for Python < 3.11
+            return tomli.loads(content)
+        except ImportError:
+            import toml  # Fallback toml parser
+            return toml.loads(content)
+
+
 def test_core_dependencies_count():
     """pyproject.toml must contain exactly 22 unique core dependencies."""
     repo_root = Path(__file__).resolve().parents[1]
-    with open(repo_root / "pyproject.toml", "rb") as f:
-        data = tomllib.load(f)
+    data = _load_toml(repo_root / "pyproject.toml")
     deps = data["project"]["dependencies"]
     normalized_names = {
         d.split(";")[0].split(">=")[0].split("<")[0].split("==")[0].strip()
@@ -36,8 +46,7 @@ def test_core_dependencies_count():
 def test_optional_extras_defined():
     """All required optional extras must be declared in pyproject.toml."""
     repo_root = Path(__file__).resolve().parents[1]
-    with open(repo_root / "pyproject.toml", "rb") as f:
-        data = tomllib.load(f)
+    data = _load_toml(repo_root / "pyproject.toml")
     extras = data["project"]["optional-dependencies"]
     for extra in [
         "documents", "ingest-git", "embeddings-local", "nlp-spacy",
@@ -52,6 +61,27 @@ def test_optional_extras_defined():
         assert expected_ref in all_extra_str, f"Missing {expected_ref} in all"
     # And vectorstore-faiss is in vectorstore-all
     assert "vectorstore-faiss" in str(extras["vectorstore-all"])
+
+    # Verify nlp-spacy does not declare thinc directly (Qodo bot issue 1)
+    nlp_spacy_deps = str(extras.get("nlp-spacy", []))
+    assert "thinc" not in nlp_spacy_deps, "nlp-spacy should not directly declare thinc"
+    assert "spacy" in nlp_spacy_deps, "nlp-spacy must declare spacy"
+
+
+def test_core_modules_importable():
+    """Core modules must be importable without requiring optional extras."""
+    import semantica
+    import semantica.cli
+    import semantica.parse
+    import semantica.ingest
+    import semantica.embeddings
+    import semantica.export
+    import semantica.kg
+    import semantica.vector_store
+    import semantica.visualization
+    import semantica.semantic_extract
+    import semantica.pipeline
+    assert semantica.__version__ is not None
 
 
 def test_docx_parser_lazy_construction_and_parse_hint():
@@ -96,6 +126,20 @@ def test_xml_parser_lxml_explicit_requires_documents_extra():
             parser.parse("<root/>")
 
 
+def test_xml_ingestor_missing_hint():
+    with patch("semantica.ingest.xml_ingestor.etree", None):
+        from semantica.ingest.xml_ingestor import XMLIngestor
+        with pytest.raises(ProcessingError, match=r"semantica\[documents\]"):
+            XMLIngestor()
+
+
+def test_repo_ingestor_missing_hint():
+    with patch("semantica.ingest.repo_ingestor.git", None):
+        from semantica.ingest.repo_ingestor import RepoIngestor
+        with pytest.raises(ImportError, match=r"semantica\[ingest-git\]"):
+            RepoIngestor()
+
+
 def test_node_embedder_gensim_missing_hint():
     with patch("semantica.kg.node_embeddings.GENSIM_AVAILABLE", False):
         from semantica.kg.node_embeddings import NodeEmbedder
@@ -117,10 +161,93 @@ def test_faiss_store_missing_hint():
 def test_visualization_missing_hint():
     import numpy as np
     from semantica.visualization.embedding_visualizer import EmbeddingVisualizer
-    with patch("semantica.visualization.embedding_visualizer.plt", None):
+
+    # Plotly is checked via px and go in _check_dependencies
+    with patch("semantica.visualization.embedding_visualizer.px", None):
         visualizer = EmbeddingVisualizer()
-        with pytest.raises(ProcessingError, match=r"semantica\[viz\]"):
-            visualizer.visualize_2d_projection(np.array([[0.1, 0.2], [0.3, 0.4]]), output="png")
+        with pytest.raises(ProcessingError, match=r"Plotly is required.*semantica\[viz\]"):
+            visualizer.visualize_2d_projection(np.array([[0.1, 0.2], [0.3, 0.4]]))
+
+    with patch("semantica.visualization.embedding_visualizer.go", None):
+        visualizer = EmbeddingVisualizer()
+        with pytest.raises(ProcessingError, match=r"Plotly is required.*semantica\[viz\]"):
+            visualizer.visualize_2d_projection(np.array([[0.1, 0.2], [0.3, 0.4]]))
+
+
+def test_visualization_umap_missing_hint():
+    import numpy as np
+    from unittest.mock import MagicMock
+    from semantica.visualization.embedding_visualizer import EmbeddingVisualizer
+
+    # Stand in for Plotly so we reach dimensionality reduction
+    with patch("semantica.visualization.embedding_visualizer.px", MagicMock()), \
+         patch("semantica.visualization.embedding_visualizer.go", MagicMock()), \
+         patch("semantica.visualization.embedding_visualizer.umap", None):
+        visualizer = EmbeddingVisualizer()
+        # High-dimensional embeddings (>2D) trigger dimensionality reduction with method="umap"
+        embeddings = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]])
+        with pytest.raises(ProcessingError, match=r"UMAP is required.*semantica\[viz\]"):
+            visualizer.visualize_2d_projection(embeddings, method="umap")
+
+        # Also verify 3D projection triggers the same actionable error on >3D embeddings
+        embeddings_4d = np.array([[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8], [0.9, 1.0, 1.1, 1.2]])
+        with pytest.raises(ProcessingError, match=r"UMAP is required.*semantica\[viz\]"):
+            visualizer.visualize_3d_projection(embeddings_4d, method="umap")
+
+
+def test_visualization_sklearn_missing_hint():
+    import numpy as np
+    from unittest.mock import MagicMock
+    from semantica.visualization.embedding_visualizer import EmbeddingVisualizer
+
+    # Stand in for Plotly so we reach dimensionality reduction
+    with patch("semantica.visualization.embedding_visualizer.px", MagicMock()), \
+         patch("semantica.visualization.embedding_visualizer.go", MagicMock()):
+        visualizer = EmbeddingVisualizer()
+        embeddings = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]])
+
+        # Test direct dependency check
+        with patch("semantica.visualization.embedding_visualizer.PCA", None):
+            with pytest.raises(ProcessingError, match=r"scikit-learn is required"):
+                visualizer._check_dependencies(require_sklearn=True)
+
+        with patch("semantica.visualization.embedding_visualizer.PCA", None):
+            with pytest.raises(ProcessingError, match=r"scikit-learn is required"):
+                visualizer.visualize_2d_projection(embeddings, method="pca")
+
+        with patch("semantica.visualization.embedding_visualizer.TSNE", None):
+            with pytest.raises(ProcessingError, match=r"scikit-learn is required"):
+                visualizer.visualize_2d_projection(embeddings, method="tsne")
+
+
+def test_visualization_options_collision_free():
+    """Options such as n_components, perplexity, n_neighbors must not cause keyword collisions."""
+    import numpy as np
+    from unittest.mock import MagicMock
+    from semantica.visualization.embedding_visualizer import EmbeddingVisualizer
+
+    mock_pca = MagicMock()
+    mock_tsne = MagicMock()
+    mock_umap_cls = MagicMock()
+    mock_umap_module = MagicMock()
+    mock_umap_module.UMAP = mock_umap_cls
+
+    with patch("semantica.visualization.embedding_visualizer.PCA", mock_pca), \
+         patch("semantica.visualization.embedding_visualizer.TSNE", mock_tsne), \
+         patch("semantica.visualization.embedding_visualizer.umap", mock_umap_module), \
+         patch("semantica.visualization.embedding_visualizer.px", MagicMock()), \
+         patch("semantica.visualization.embedding_visualizer.go", MagicMock()):
+        visualizer = EmbeddingVisualizer()
+        embeddings = np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]])
+
+        # PCA with n_components
+        visualizer.visualize_2d_projection(embeddings, method="pca", n_components=2)
+        # TSNE with perplexity and random_state
+        visualizer.visualize_2d_projection(embeddings, method="tsne", perplexity=1, random_state=42)
+        # UMAP with n_neighbors and min_dist
+        visualizer.visualize_2d_projection(embeddings, method="umap", n_neighbors=2, min_dist=0.1)
+        # 3D with n_components
+        visualizer.visualize_3d_projection(embeddings, method="pca", n_components=3)
 
 
 def test_spacy_load_missing_hint():

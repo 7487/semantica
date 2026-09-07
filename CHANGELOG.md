@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Heavy ML/NLP, visualization, document parsing, and ingestion packages moved into granular optional extras:
     - `models-huggingface`: `torch`, `transformers`
     - `embeddings-local`: `sentence-transformers`, `fastembed`, `onnxruntime`, `tokenizers`
-    - `nlp-spacy`: `spacy`, `thinc`
+    - `nlp-spacy`: `spacy`
     - `viz`: expanded to include `matplotlib`, `seaborn`, `plotly`, `ipywidgets`, `umap-learn`, alongside `pyvis`, `graphviz`, and `d3blocks`
     - `media`: `librosa`, `opencv-python`
     - `vectorstore-faiss`: `faiss-cpu` (also included in `vectorstore-all`)

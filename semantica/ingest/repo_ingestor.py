@@ -28,6 +28,7 @@ Example Usage:
 Author: Semantica Contributors
 License: MIT
 """
+from __future__ import annotations
 
 import ipaddress
 import os
@@ -1070,14 +1071,14 @@ class RepoIngestor:
         return code_files
 
     def get_repository_info(
-        self, repo_url: str, repo: Optional[git.Repo] = None
+        self, repo_url: str, repo: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Get repository metadata and information.
 
         Args:
             repo_url: Repository URL
-            repo: Git repository object (optional)
+            repo: Git repository object (git.Repo, optional)
 
         Returns:
             dict: Repository information
