@@ -698,17 +698,30 @@ class QdrantStore:
             collection_info = self.client.get_collection(
                 self.collection.collection_name
             )
+            # vectors_count was removed in qdrant-client 1.16.0.
+            # When it is absent, only infer the total from points_count if we
+            # can confirm the collection uses a single unnamed vector per point
+            # (VectorParams). Named/multi-vector collections (dict of VectorParams)
+            # have an unknown multiplier, so return None rather than a wrong value.
+            # get_collection() accepts externally-created collections without schema
+            # validation, so the schema must be inspected at stats time.
+            vectors_count_fallback: Optional[int]
+            try:
+                vectors_cfg = collection_info.config.params.vectors
+                vectors_count_fallback = (
+                    collection_info.points_count
+                    if QDRANT_AVAILABLE and isinstance(vectors_cfg, VectorParams)
+                    else None
+                )
+            except Exception:
+                vectors_count_fallback = None
+
             return {
                 "points_count": collection_info.points_count,
-                # vectors_count was removed in qdrant-client 1.16.0.
-                # indexed_vectors_count is NOT equivalent: it counts only vectors
-                # in fully-optimised segments and is 0 for freshly-inserted points.
-                # Semantica inserts one vector per point, so points_count is the
-                # correct substitute for the old vectors_count statistic.
                 "vectors_count": getattr(
                     collection_info,
                     "vectors_count",
-                    collection_info.points_count,
+                    vectors_count_fallback,
                 ),
                 "status": str(collection_info.status)
                 if hasattr(collection_info, "status")

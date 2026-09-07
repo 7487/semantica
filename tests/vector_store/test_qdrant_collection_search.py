@@ -6,8 +6,10 @@ These cover the qdrant-client >=1.16.0 compatibility fixes:
    read ScoredPoints from response.points, and map them to the documented
    Semantica result shape.
 
-2. get_stats() must not access vectors_count unconditionally; it falls back to
-   indexed_vectors_count (present since 1.10.0) or None.
+2. get_stats() must not access vectors_count unconditionally; when the field
+   is absent (qdrant-client >=1.16), it falls back to points_count for
+   single-vector collections, and to None for named/multi-vector collections
+   where the per-point vector count is unknown.
 
 All tests drive the real implementation against a MagicMock client, following
 the established pattern in test_qdrant_store.py.
@@ -274,20 +276,20 @@ def test_get_stats_uses_vectors_count_when_present():
 @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
 def test_get_stats_uses_points_count_when_vectors_count_absent():
     """On qdrant-client >=1.16, vectors_count is absent.
-    Semantica inserts one vector per point, so points_count is the correct
-    substitute. indexed_vectors_count must NOT be used: it counts only vectors
+    For a single unnamed-vector collection (config.params.vectors is a
+    VectorParams instance), points_count is the correct substitute.
+    indexed_vectors_count must NOT be used: it counts only vectors
     in optimised segments and is 0 for freshly-inserted data."""
-    # Simulate qdrant-client >=1.16: no vectors_count attribute on the object,
-    # but indexed_vectors_count is present and intentionally different from
-    # points_count to verify the correct field is chosen.
+    from qdrant_client.models import VectorParams, Distance
     store = QdrantStore()
     store.client = MagicMock()
     store.collection = MagicMock()
     store.collection.collection_name = "test_coll"
 
-    info = MagicMock(spec=["points_count", "indexed_vectors_count", "status"])
+    info = MagicMock(spec=["points_count", "indexed_vectors_count", "config", "status"])
     info.points_count = 5
     info.indexed_vectors_count = 0  # typical for freshly-inserted, unoptimised data
+    info.config.params.vectors = VectorParams(size=4, distance=Distance.COSINE)
     info.status = "green"
     store.client.get_collection.return_value = info
 
@@ -302,17 +304,19 @@ def test_get_stats_uses_points_count_when_vectors_count_absent():
 
 @patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
 def test_get_stats_vectors_count_equals_points_count_when_vectors_count_absent():
-    """On qdrant-client >=1.16, vectors_count is absent. The fallback is
-    points_count, so vectors_count and points_count must always be equal.
+    """On qdrant-client >=1.16, vectors_count is absent.  For a single unnamed-
+    vector collection the fallback is points_count, so both keys are equal.
     indexed_vectors_count is intentionally absent from this mock to confirm
-    it is not required for the fallback path."""
+    it is not required by the fallback path."""
+    from qdrant_client.models import VectorParams, Distance
     store = QdrantStore()
     store.client = MagicMock()
     store.collection = MagicMock()
     store.collection.collection_name = "test_coll"
 
-    info = MagicMock(spec=["points_count", "status"])
+    info = MagicMock(spec=["points_count", "config", "status"])
     info.points_count = 7
+    info.config.params.vectors = VectorParams(size=8, distance=Distance.COSINE)
     info.status = "green"
     store.client.get_collection.return_value = info
 
@@ -320,3 +324,54 @@ def test_get_stats_vectors_count_equals_points_count_when_vectors_count_absent()
 
     assert stats["points_count"] == 7
     assert stats["vectors_count"] == 7
+
+
+@patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
+def test_get_stats_vectors_count_is_none_for_named_multi_vector_collection():
+    """When vectors_count is absent and the collection uses named/multi vectors
+    (config.params.vectors is a dict), the total cannot be inferred and
+    vectors_count must be None rather than a misleading points_count value."""
+    from qdrant_client.models import VectorParams, Distance
+    store = QdrantStore()
+    store.client = MagicMock()
+    store.collection = MagicMock()
+    store.collection.collection_name = "test_coll"
+
+    info = MagicMock(spec=["points_count", "config", "status"])
+    info.points_count = 4
+    # Named multi-vector: qdrant-client returns a dict of VectorParams
+    info.config.params.vectors = {
+        "text": VectorParams(size=4, distance=Distance.COSINE),
+        "image": VectorParams(size=8, distance=Distance.DOT),
+    }
+    info.status = "green"
+    store.client.get_collection.return_value = info
+
+    stats = store.get_stats()
+
+    assert stats["points_count"] == 4
+    # vectors_count must be None: total vectors = points * num_named_vectors,
+    # and that multiplier is unknown to the caller.
+    assert stats["vectors_count"] is None
+
+
+@patch("semantica.vector_store.qdrant_store.QDRANT_AVAILABLE", True)
+def test_get_stats_vectors_count_is_none_when_config_inaccessible():
+    """If the collection config cannot be read (e.g. an older schema or
+    unexpected server response), vectors_count must fall back to None safely
+    without raising."""
+    store = QdrantStore()
+    store.client = MagicMock()
+    store.collection = MagicMock()
+    store.collection.collection_name = "test_coll"
+
+    # Simulate a CollectionInfo that has no config attribute at all
+    info = MagicMock(spec=["points_count", "status"])
+    info.points_count = 3
+    info.status = "green"
+    store.client.get_collection.return_value = info
+
+    stats = store.get_stats()
+
+    assert stats["points_count"] == 3
+    assert stats["vectors_count"] is None
