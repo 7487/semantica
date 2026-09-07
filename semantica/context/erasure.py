@@ -34,13 +34,14 @@ Example:
     'unsupported'
 """
 
+import copy
 import inspect
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from ..utils.logging import get_logger
-from .context_graph import _normalize_temporal_input
+from .context_graph import normalize_temporal_input
 
 __all__ = [
     "ErasureCoordinator",
@@ -117,13 +118,21 @@ class ErasureReceipt:
         ]
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize the receipt, deep-copying the per-store results."""
+        """Serialize the receipt, deep-copying the per-store results.
+
+        Each store result is copied recursively so the returned payload shares
+        no mutable objects with the live receipt: mutating
+        ``payload["stores"][name][...]`` (including nested dicts such as a
+        vector backend's ``backend_result``) cannot corrupt the audit record.
+        """
         return {
             "entity_id": self.entity_id,
             "reason": self.reason,
             "erased_at": self.erased_at,
             "complete": self.complete,
-            "stores": {name: dict(result) for name, result in self.stores.items()},
+            "stores": {
+                name: copy.deepcopy(result) for name, result in self.stores.items()
+            },
         }
 
 
@@ -140,9 +149,10 @@ class ErasureCoordinator:
         memory: An :class:`~semantica.context.AgentMemory` (or anything
             exposing ``find_by_entity`` and ``batch_delete``; when
             ``batch_delete`` accepts a ``skip_vector`` keyword the coordinator
-            sets it after its vector leg has fully covered the memory-bound
-            store, and otherwise calls ``batch_delete(memory_ids)`` and leaves
-            the implementation's own cascade running).
+            sets it once its vector leg has fully covered the memory-bound
+            store, or when the vector leg is disabled outright, and otherwise
+            calls ``batch_delete(memory_ids)`` and leaves the implementation's
+            own cascade running).
         vector_store: Vector store holding entity-keyed embeddings. Defaults to
             ``memory.vector_store`` when a memory is supplied, and stays
             overridable for deployments that bind a store the memory does not
@@ -155,6 +165,24 @@ class ErasureCoordinator:
         more than actually occurred. Erasing the graph last means a partial
         failure leaves the node present and the receipt incomplete, which is
         recoverable and honest.
+
+    Note:
+        An explicit ``vector_store=False`` also suppresses ``AgentMemory``'s
+        own internal vector cascade, not just the coordinator's leg (#1378).
+        ``AgentMemory.delete_memory()`` deletes an item's vectors best-effort:
+        it catches a vector-store failure, logs it, and still returns ``True``,
+        so without this a caller who opted out of the vector leg could still
+        have ``memory.vector_store`` mutated underneath them while the receipt
+        read ``vectors: not_configured``. ``vector_store=False`` is taken to
+        mean "no vector activity at all", so the coordinator passes
+        ``skip_vector=True`` through to ``memory.batch_delete()`` in that case,
+        and ``receipt.stores["vectors"]["status"]`` stays ``"not_configured"``
+        honestly -- the caller opted the vector store out entirely, rather than
+        the coordinator having erased it. This only applies when
+        ``vector_store=False`` was passed explicitly; when no vector store
+        exists anywhere (no ``memory`` was supplied, or ``memory`` has no
+        ``vector_store`` attribute), there is nothing to suppress and
+        ``memory.batch_delete()`` is called as before.
     """
 
     def __init__(
@@ -175,6 +203,12 @@ class ErasureCoordinator:
 
         self.graph = graph
         self.memory = memory
+        # Distinct from `self.vector_store is None`: that's also true when no
+        # vector store exists anywhere (no memory, or memory with no
+        # vector_store attribute), where there is nothing to suppress and
+        # forcing skip_vector onto a duck-typed memory would break callers
+        # whose batch_delete() doesn't accept that kwarg.
+        self._vector_leg_disabled = vector_store is False
         if vector_store is False:
             self.vector_store: Optional[Any] = None
         elif vector_store is not None:
@@ -450,18 +484,33 @@ class ErasureCoordinator:
         # cascade would only re-attempt ids that are already gone: a redundant
         # round-trip per item, and spurious warnings on backends that flag
         # missing ids. In every other case -- a separate coordinator store,
-        # the vector leg disabled, its deletion rejected, or its enumeration
-        # incomplete -- that cascade is still the only cleanup memory's own
-        # store gets, so it must keep running. A memory-like whose
-        # batch_delete predates the keyword keeps its old call and cascade.
-        skip_vector = (
+        # its deletion rejected, or its enumeration incomplete -- that cascade
+        # is still the only cleanup memory's own store gets, so it must keep
+        # running. The one exception is an explicit vector_store=False, which
+        # means "no vector activity at all" (see the class docstring). A
+        # memory-like whose batch_delete predates the keyword keeps its old
+        # call and cascade.
+        vector_leg_owns_store = (
             vector_leg_covered
             and self.vector_store is not None
             and self.vector_store is getattr(self.memory, "vector_store", None)
-            and _accepts_skip_vector(self.memory.batch_delete)
         )
+        skip_vector = (
+            self._vector_leg_disabled or vector_leg_owns_store
+        ) and _accepts_skip_vector(self.memory.batch_delete)
 
         deleted = 0
+        if self._vector_leg_disabled and not skip_vector:
+            # The class docstring only requires find_by_entity/batch_delete; a
+            # duck-typed adapter is not required to support skip_vector. Falling
+            # back to the plain call keeps the memory leg working -- the
+            # adapter's own cascade (if it has one) just can't be suppressed.
+            self.logger.warning(
+                "Memory adapter %r has no skip_vector support; its own vector "
+                "cascade (if any) could not be suppressed for %r",
+                type(self.memory).__name__,
+                entity_id,
+            )
         try:
             # Sweep in pages until dry rather than passing one large limit:
             # ``find_by_entity`` has historically defaulted to ``limit=10`` and
@@ -578,22 +627,6 @@ class ErasureCoordinator:
 # Helpers
 
 
-def _accepts_skip_vector(batch_delete: Any) -> bool:
-    """True when ``batch_delete`` can be called with ``skip_vector=``.
-
-    Probed by signature rather than try/except around the real call: a
-    ``TypeError`` raised from *inside* an implementation that does accept the
-    keyword must surface as that leg's failure, not trigger a second delete
-    attempt. Unintrospectable callables get the plain call and keep their own
-    cascade -- the conservative side.
-    """
-    try:
-        inspect.signature(batch_delete).bind(["memory-id"], skip_vector=True)
-    except (TypeError, ValueError):
-        return False
-    return True
-
-
 def _normalize_timestamp(at: Optional[Union[str, int, float, datetime]]) -> str:
     """Render ``at`` exactly as the graph tombstone will record it.
 
@@ -608,7 +641,7 @@ def _normalize_timestamp(at: Optional[Union[str, int, float, datetime]]) -> str:
     default path gets one timestamp for both records instead of two ``now()``
     calls separated by the length of the cascade.
     """
-    return _normalize_temporal_input(
+    return normalize_temporal_input(
         at if at is not None else datetime.now(timezone.utc)
     )
 
@@ -619,6 +652,25 @@ def _memory_item_id(item: Any) -> Optional[str]:
         return None
     memory_id = item.get("memory_id") or item.get("id")
     return str(memory_id) if memory_id else None
+
+
+def _accepts_skip_vector(batch_delete: Any) -> bool:
+    """True when ``batch_delete`` takes a ``skip_vector`` keyword.
+
+    ``skip_vector`` is an ``AgentMemory``-specific extension, not part of the
+    duck-typed contract the class docstring promises (``find_by_entity`` and
+    ``batch_delete`` only). Passing it to an adapter that doesn't accept it
+    would raise ``TypeError`` and fail the whole memory leg, so this is
+    checked before ever passing the kwarg.
+    """
+    try:
+        signature = inspect.signature(batch_delete)
+    except (TypeError, ValueError):
+        return False
+    for parameter in signature.parameters.values():
+        if parameter.name == "skip_vector" or parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+    return False
 
 
 #: Dict keys a backend uses to report whether a delete succeeded, and the

@@ -227,7 +227,7 @@ class TestMemorySweepIsNotTruncated(unittest.TestCase):
             def find_by_entity(self, entity_id, limit=10):
                 return list(self.items)[:limit]
 
-            def batch_delete(self, memory_ids, *, skip_vector=False):
+            def batch_delete(self, memory_ids):
                 return 0
 
         receipt = ErasureCoordinator(memory=_UndeletableMemory()).erase_entity("e1")
@@ -241,9 +241,7 @@ class TestMemorySweepIsNotTruncated(unittest.TestCase):
             def find_by_entity(self, entity_id, limit=10):
                 return [{"content": "no id here"}]
 
-            def batch_delete(
-                self, memory_ids, *, skip_vector=False
-            ):  # pragma: no cover - never reached
+            def batch_delete(self, memory_ids):  # pragma: no cover - never reached
                 raise AssertionError("should not delete items it cannot identify")
 
         receipt = ErasureCoordinator(memory=_AnonymousMemory()).erase_entity("e1")
@@ -533,6 +531,121 @@ class TestReceipt(unittest.TestCase):
 
         self.assertEqual(receipt.stores["graph"]["status"], STATUS_ERASED)
 
+    def test_to_dict_deep_copies_nested_store_results(self):
+        """A nested dict in a store result is not shared with the live receipt.
+
+        ``backend_result`` from a vector backend is a dict of its own, so a
+        shallow per-store copy leaves it referenced by both the payload and the
+        receipt -- sanitizing the payload for a user-facing response would
+        silently corrupt the audit record.
+        """
+        receipt = ErasureReceipt(
+            entity_id="customer-4471",
+            stores={
+                "vectors": {
+                    "status": STATUS_ERASED,
+                    "backend": "qdrant",
+                    "backend_result": {"status": "completed"},
+                },
+            },
+        )
+
+        payload = receipt.to_dict()
+        payload["stores"]["vectors"]["backend_result"]["status"] = "redacted"
+
+        self.assertEqual(
+            receipt.stores["vectors"]["backend_result"]["status"], "completed"
+        )
+
+    def test_to_dict_store_results_are_distinct_objects(self):
+        """The per-store dict and any nested dict in the payload must not be
+        the same objects as the ones in the live receipt.
+
+        A mutation test proves *isolation* only when the copy actually
+        happened; identity checks prove *that* a copy was made.
+        """
+        receipt = ErasureReceipt(
+            entity_id="customer-4471",
+            stores={
+                "vectors": {
+                    "status": STATUS_ERASED,
+                    "backend": "qdrant",
+                    # Realistic Qdrant-shaped backend_result with rendered enum
+                    "backend_result": {"status": "UpdateStatus.COMPLETED", "points": 1},
+                    "vector_ids": 2,
+                    "via": "delete_vectors",
+                },
+                "graph": {"status": STATUS_ERASED, "nodes": 1, "edges": 3},
+            },
+        )
+
+        payload = receipt.to_dict()
+
+        # The stores container itself is a new dict.
+        self.assertIsNot(payload["stores"], receipt.stores)
+
+        # Each per-store result dict is a new object.
+        self.assertIsNot(
+            payload["stores"]["vectors"], receipt.stores["vectors"]
+        )
+        self.assertIsNot(
+            payload["stores"]["graph"], receipt.stores["graph"]
+        )
+
+        # The nested backend_result dict is also a new object.
+        self.assertIsNot(
+            payload["stores"]["vectors"]["backend_result"],
+            receipt.stores["vectors"]["backend_result"],
+        )
+
+        # Values are equal (correct copy), not just distinct references.
+        self.assertEqual(
+            payload["stores"]["vectors"]["backend_result"],
+            {"status": "UpdateStatus.COMPLETED", "points": 1},
+        )
+        self.assertEqual(payload["stores"]["graph"], {"status": STATUS_ERASED, "nodes": 1, "edges": 3})
+
+    def test_to_dict_isolation_across_multiple_stores(self):
+        """Mutations to any store in the payload must not affect any other
+        store in either the payload or the live receipt.
+
+        This catches a hypothetical implementation that shares a single deep
+        copy across all stores rather than copying each independently.
+        """
+        receipt = ErasureReceipt(
+            entity_id="e1",
+            stores={
+                "vectors": {
+                    "status": STATUS_UNSUPPORTED,
+                    "backend": "faiss",
+                    "vector_ids": 1,
+                    "detail": "backend exposes no delete()",
+                },
+                "memory": {"status": STATUS_ERASED, "items": 4},
+                "graph": {
+                    "status": STATUS_ERASED,
+                    "nodes": 1,
+                    "edges": 2,
+                },
+            },
+        )
+
+        payload = receipt.to_dict()
+
+        # Mutate every store in the payload.
+        payload["stores"]["vectors"]["status"] = "tampered"
+        payload["stores"]["memory"]["items"] = 0
+        payload["stores"]["graph"]["nodes"] = 99
+
+        # None of the live receipt's stores are affected.
+        self.assertEqual(receipt.stores["vectors"]["status"], STATUS_UNSUPPORTED)
+        self.assertEqual(receipt.stores["memory"]["items"], 4)
+        self.assertEqual(receipt.stores["graph"]["nodes"], 1)
+
+        # The other stores in the payload are also unaffected (no aliasing).
+        self.assertEqual(payload["stores"]["memory"]["items"], 0)   # our mutation
+        self.assertEqual(receipt.stores["memory"]["items"], 4)       # unchanged
+
     def test_receipt_and_tombstone_agree_on_when_the_erasure_happened(self):
         graph = _graph()
         receipt = ErasureCoordinator(graph=graph).erase_entity(
@@ -812,7 +925,7 @@ class TestSeparateVectorStoreHandling(unittest.TestCase):
     """
 
     def test_vector_store_false_disables_vector_leg_entirely(self):
-        """vector_store=False must disable the vector leg, not try memory.vector_store."""
+        """vector_store=False must disable the vector leg AND memory's own cascade (#1378)."""
         memory_store = _SelectiveDeleteStore()
         memory = _memory_with_embedding("customer-4471", memory_store)
 
@@ -823,8 +936,91 @@ class TestSeparateVectorStoreHandling(unittest.TestCase):
 
         # Vector leg should report not_configured, not attempt deletion
         self.assertEqual(receipt.stores["vectors"]["status"], STATUS_NOT_CONFIGURED)
-        # Memory's own cascade still runs, but coordinator doesn't track it
         self.assertTrue(receipt.complete)
+        # Memory's own internal vector cascade must be suppressed too, not just
+        # unreported: the embedding memory owns is left untouched, and the
+        # backend's delete method is never even called.
+        self.assertEqual(memory_store.attempts, [])
+        self.assertTrue(memory_store.live)
+
+    def test_vector_store_false_regression_refusing_backend_never_called(self):
+        """Regression for #1378: a refusing backend must not be called at all.
+
+        Reproduces the exact bug report -- a vector store whose delete_vectors()
+        always returns False (refuses) bound as memory.vector_store, with the
+        coordinator's own vector leg disabled via vector_store=False. Before the
+        fix, delete_memory()'s internal cascade would still call the refusing
+        store, catch the failure, log a warning, and return True regardless --
+        so receipt.complete read True while the embedding stayed live and the
+        backend had in fact been asked to delete it. Pinned here so the delete
+        method call count can't silently regress back to nonzero.
+        """
+        refusing_store = _SelectiveDeleteStore(refuse={"vec-0"})
+        memory = _memory_with_embedding("customer-4471", refusing_store)
+
+        receipt = ErasureCoordinator(
+            memory=memory, vector_store=False
+        ).erase_entity("customer-4471")
+
+        self.assertTrue(receipt.complete)
+        self.assertEqual(receipt.stores["vectors"]["status"], STATUS_NOT_CONFIGURED)
+        self.assertEqual(len(refusing_store.attempts), 0)  # delete_calls == 0
+
+    def test_skip_vector_deletion_does_not_orphan_local_vector_id_tracking(self):
+        """skip_vector=True must still pop the item's own _vector_ids entry.
+
+        Regression: delete_memory(skip_vector=True) used to leave the item's
+        entry in AgentMemory._vector_ids behind since the pop() lived inside
+        the `if not skip_vector` block alongside the actual vector-store
+        delete. That orphaned entry never got cleaned up and leaked into
+        to_dict()/from_dict() snapshots.
+        """
+        memory = _memory_with_embedding("customer-4471", _SelectiveDeleteStore())
+        memory_id = next(iter(memory.memory_items))
+        self.assertIn(memory_id, memory._vector_ids)
+
+        ErasureCoordinator(memory=memory, vector_store=False).erase_entity(
+            "customer-4471"
+        )
+
+        self.assertNotIn(memory_id, memory.memory_items)
+        self.assertNotIn(memory_id, memory._vector_ids)
+
+    def test_memory_adapter_without_skip_vector_support_is_not_broken(self):
+        """A duck-typed memory whose batch_delete() lacks skip_vector must still work.
+
+        The class docstring only requires find_by_entity and batch_delete; an
+        adapter is not obligated to support skip_vector. The coordinator must
+        detect that and fall back to the plain call rather than raising
+        TypeError and failing the whole memory leg.
+        """
+
+        class _PlainAdapter:
+            def __init__(self):
+                self.items = {"m1": {"memory_id": "m1", "entities": [{"id": "customer-4471"}]}}
+
+            def find_by_entity(self, entity_id, limit=None):
+                return [
+                    item
+                    for item in self.items.values()
+                    if any(e.get("id") == entity_id for e in item.get("entities", []))
+                ]
+
+            def batch_delete(self, memory_ids):
+                removed = 0
+                for memory_id in memory_ids:
+                    if self.items.pop(memory_id, None) is not None:
+                        removed += 1
+                return removed
+
+        adapter = _PlainAdapter()
+
+        receipt = ErasureCoordinator(
+            memory=adapter, vector_store=False
+        ).erase_entity("customer-4471")
+
+        self.assertEqual(receipt.stores["memory"]["status"], STATUS_ERASED)
+        self.assertEqual(adapter.items, {})
 
     def test_separate_vector_store_only_handles_coordinator_store(self):
         """When coordinator has a different vector_store, it only handles that one.
