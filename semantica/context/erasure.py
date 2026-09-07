@@ -661,7 +661,16 @@ def _accepts_skip_vector(batch_delete: Any) -> bool:
     duck-typed contract the class docstring promises (``find_by_entity`` and
     ``batch_delete`` only). Passing it to an adapter that doesn't accept it
     would raise ``TypeError`` and fail the whole memory leg, so this is
-    checked before ever passing the kwarg.
+    checked before ever passing the kwarg. Probed by signature rather than
+    try/except around the real call: a ``TypeError`` raised from *inside* an
+    implementation that does accept the keyword must surface as that leg's
+    failure, not trigger a second delete attempt.
+
+    Only a callable whose signature cannot be introspected at all gets the
+    conservative plain call; a ``(*args, **kwargs)`` signature (a
+    ``MagicMock``, a hand-rolled passthrough wrapper) counts as accepting
+    ``skip_vector`` even if the callee then drops the keyword; the only
+    consequence is the cascade the flag would have suppressed.
     """
     try:
         signature = inspect.signature(batch_delete)
