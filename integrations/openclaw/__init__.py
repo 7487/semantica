@@ -37,7 +37,7 @@ restart the OpenClaw Gateway::
 
     openclaw gateway restart
 
-All 12 Semantica tools are then available as native OpenClaw agent tools.
+All 15 Semantica tools are then available as native OpenClaw agent tools.
 
 Compatibility
 -------------
