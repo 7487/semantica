@@ -384,6 +384,27 @@ class QdrantStore:
         except Exception as e:
             raise ProcessingError(f"Failed to get collection: {str(e)}")
 
+    def _ensure_default_collection(self, dim: int = 384) -> QdrantCollection:
+        """Lazily attach the configured collection, creating it on first use.
+
+        Mirrors FAISSStore's automatic index creation so the VectorStore
+        facade can read/write without an explicit create_collection() call.
+        Reuses the existing collection if a previous process created it.
+        """
+        # ``collection_name`` is the option the VectorStore facade and the
+        # docs pass through; accept the legacy ``collection`` spelling too.
+        name = (
+            self.config.get("collection_name")
+            or self.config.get("collection")
+            or "semantica_default"
+        )
+        try:
+            self.create_collection(name, vector_size=dim)
+        except ProcessingError:
+            self.get_collection(name)
+        self.logger.info(f"Auto-initialized Qdrant collection '{name}' (dim={dim})")
+        return self.collection
+
     def insert_vectors(
         self,
         vectors: List[Union[np.ndarray, List[float]]],
@@ -403,6 +424,14 @@ class QdrantStore:
         Returns:
             Insert response
         """
+        if len(ids) != len(vectors):
+            # Points are paired with zip(vectors, ids), so a mismatched ID
+            # list would silently drop the unpaired vectors while the
+            # completion message still reports the full batch as inserted.
+            raise ValidationError(
+                f"Number of ids ({len(ids)}) must match number of vectors ({len(vectors)})"
+            )
+
         tracking_id = self.progress_tracker.start_tracking(
             module="vector_store",
             submodule="QdrantStore",
@@ -411,12 +440,10 @@ class QdrantStore:
 
         try:
             if self.collection is None:
-                self.progress_tracker.stop_tracking(
-                    tracking_id, status="failed", message="Collection not initialized"
-                )
-                raise ProcessingError(
-                    "Collection not initialized. Call create_collection() or get_collection() first."
-                )
+                # len() not truthiness: vectors may be a 2-D ndarray, whose
+                # truth value is ambiguous.
+                dim = int(len(vectors[0])) if len(vectors) else 384
+                self._ensure_default_collection(dim)
 
             if not QDRANT_AVAILABLE:
                 self.progress_tracker.stop_tracking(
@@ -481,12 +508,7 @@ class QdrantStore:
 
         try:
             if self.search_engine is None:
-                self.progress_tracker.stop_tracking(
-                    tracking_id, status="failed", message="Collection not initialized"
-                )
-                raise ProcessingError(
-                    "Collection not initialized. Call create_collection() or get_collection() first."
-                )
+                self._ensure_default_collection(int(len(query_vector)))
 
             self.progress_tracker.update_tracking(
                 tracking_id, message="Performing similarity search..."
