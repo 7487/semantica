@@ -369,19 +369,13 @@ def test_spacy_load_missing_hint():
 
 
 def test_xml_parser_handles_comments():
+    from semantica.parse.xml_parser import etree as real_lxml_etree
+
     xml_content = (
         "<root><!-- top comment --><item id='1'>Value</item>"
         "<!-- bottom comment --></root>"
     )
-    # lxml engine
-    p_lxml = XMLParser(engine="lxml")
-    res_lxml = p_lxml.parse(xml_content)
-    assert res_lxml.root.tag == "root"
-    assert len(res_lxml.root.children) == 1
-    assert res_lxml.root.children[0].tag == "item"
-    assert res_lxml.root.children[0].text == "Value"
-
-    # etree engine
+    # etree engine (always available in a core-only install)
     p_etree = XMLParser(engine="etree")
     res_etree = p_etree.parse(xml_content)
     assert res_etree.root.tag == "root"
@@ -389,9 +383,26 @@ def test_xml_parser_handles_comments():
     assert res_etree.root.children[0].tag == "item"
     assert res_etree.root.children[0].text == "Value"
 
+    # lxml engine (only meaningful when the 'documents' extra is installed)
+    if real_lxml_etree is None:
+        pytest.skip("lxml not installed (requires semantica[documents])")
+    p_lxml = XMLParser(engine="lxml")
+    res_lxml = p_lxml.parse(xml_content)
+    assert res_lxml.root.tag == "root"
+    assert len(res_lxml.root.children) == 1
+    assert res_lxml.root.children[0].tag == "item"
+    assert res_lxml.root.children[0].text == "Value"
+
 
 def test_public_api_ingestor_handles_xml_comments():
-    from semantica.ingest.public_api_ingestor import PublicAPIIngestor
+    from semantica.ingest.public_api_ingestor import (
+        PublicAPIIngestor,
+        lxml_etree as real_lxml_etree,
+        safe_xml_etree as real_safe_xml_etree,
+    )
+
+    if real_lxml_etree is None and real_safe_xml_etree is None:
+        pytest.skip("neither defusedxml nor lxml installed (requires semantica[documents]/[explorer])")
 
     xml_content = "<root><!-- comment --><item id='1'>Value</item></root>"
     ingestor = PublicAPIIngestor(rate_limit_delay=0)
@@ -403,7 +414,9 @@ def test_public_api_ingestor_handles_xml_comments():
     assert parsed["children"][0]["tag"] == "item"
     assert parsed["children"][0]["text"] == "Value"
 
-    # 2. lxml fallback
+    # 2. lxml fallback (only meaningful when lxml is actually installed)
+    if real_lxml_etree is None:
+        pytest.skip("lxml not installed (requires semantica[documents])")
     with patch("semantica.ingest.public_api_ingestor.safe_xml_etree", None):
         parsed_lxml = ingestor._parse_xml(xml_content)
         assert parsed_lxml["tag"] == "root"
