@@ -18,8 +18,11 @@ List SKOS concepts in a vocabulary scheme.
 
 ```python
 from semantica.ontology import OntologyEngine
+from semantica.triplet_store import TripletStore
 
-engine = OntologyEngine()
+store = TripletStore(backend="oxigraph")   # needs semantica[tripletstore-oxigraph]
+engine = OntologyEngine(store=store)       # list_concepts/list_vocabularies need a
+                                            # configured store — raises ProcessingError without one
 concepts = engine.list_concepts(scheme_uri)
 vocabs = engine.list_vocabularies()
 ```
@@ -35,7 +38,7 @@ from semantica.ontology import OntologyValidator
 
 validator = OntologyValidator(check_consistency=True, check_satisfiability=True)
 result = validator.validate(ontology)   # dict or path to an ontology file
-# result.is_valid, result.errors, result.warnings
+# result.valid, result.errors, result.warnings
 ```
 
 For SHACL shape validation of instance data use `SHACLGenerator` / `SHACLValidationReport`:

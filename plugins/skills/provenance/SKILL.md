@@ -12,9 +12,12 @@ Lineage and audit trails. Usage: `/semantica:provenance <task> [args]`
 ## `lineage <entity_id> [--depth N]`
 
 ```python
+import os
 from semantica.provenance import ProvenanceManager
 
-pm = ProvenanceManager(storage_path="~/.semantica/prov.db")   # SQLite, or omit for in-memory
+db_path = os.path.expanduser("~/.semantica/prov.db")   # storage_path is passed to
+os.makedirs(os.path.dirname(db_path), exist_ok=True)   # sqlite3.connect() unexpanded
+pm = ProvenanceManager(storage_path=db_path)   # SQLite, or omit for in-memory
 chain = pm.lineage(entity_id, depth=3)
 full  = pm.get_lineage(entity_id)          # complete ancestry
 down  = pm.get_descendants(entity_id)      # what this entity influenced

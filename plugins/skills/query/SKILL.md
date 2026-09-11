@@ -16,10 +16,11 @@ Query the graph. Usage: `/semantica:query <task> [args]`
 This is the one that works with no external server.
 
 ```python
+import os
 from semantica.context import ContextGraph
 
 graph = ContextGraph()
-graph.load_from_file("~/.semantica/kg.json")
+graph.load_from_file(os.path.expanduser("~/.semantica/kg.json"))   # load_from_file does not expand ~
 
 results = graph.query("vendor selection", skip=0, limit=20)
 ```
@@ -49,12 +50,16 @@ result = store.execute_query(sparql)
 For query planning, optimisation, and caching over a backend:
 
 ```python
-from semantica.triplet_store import QueryEngine
+from semantica.triplet_store import QueryEngine, OxigraphStore
+
+# QueryEngine needs an object exposing execute_sparql() — the raw backend,
+# not the TripletStore wrapper above (which only exposes execute_query()).
+backend = OxigraphStore()
 
 qe = QueryEngine()
 plan   = qe.plan_query(sparql)
 tuned  = qe.optimize_query(sparql)
-result = qe.execute_query(sparql, store_backend=store)
+result = qe.execute_query(sparql, store_backend=backend)
 stats  = qe.get_query_statistics()
 ```
 
@@ -69,6 +74,7 @@ SPARQL over HTTP using the core `requests` dependency.
 from semantica.graph_store import Neo4jStore    # needs semantica[graph-neo4j]
 
 store = Neo4jStore(uri=..., user=..., password=...)
+result = store.execute_query(query, parameters={...})
 ```
 
 Also available: `FalkorDBStore`, `ApacheAgeStore`, `AmazonNeptuneStore`,

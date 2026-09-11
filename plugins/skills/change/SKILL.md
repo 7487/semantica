@@ -19,20 +19,24 @@ Track what changed. Usage: `/semantica:change <task> [args]`
 ## `graph-at <timestamp>` — point-in-time graph state
 
 ```python
+import os
 from semantica.context import ContextGraph
 
 graph = ContextGraph()
-graph.load_from_file("~/.semantica/kg.json")
+graph.load_from_file(os.path.expanduser("~/.semantica/kg.json"))   # load_from_file does not expand ~
 
 snapshot = graph.state_at("2026-06-01")      # str | int | float | datetime
 ```
 
-Diff two moments by taking two snapshots and comparing node/edge sets:
+Diff two moments by comparing node IDs — `state_at()["nodes"]` is a list of
+dicts (unhashable), so compare the `id` fields, not the dicts themselves:
 
 ```python
 before = graph.state_at("2026-06-01")
 after  = graph.state_at("2026-09-01")
-added  = set(after["nodes"]) - set(before["nodes"])
+before_ids = {n["id"] for n in before["nodes"]}
+after_ids  = {n["id"] for n in after["nodes"]}
+added = after_ids - before_ids
 ```
 
 For richer temporal work (scrubbing, evolution, temporal patterns) use
@@ -45,9 +49,12 @@ For richer temporal work (scrubbing, evolution, temporal patterns) use
 Node-level history is provenance, not change management:
 
 ```python
+import os
 from semantica.provenance import ProvenanceManager
 
-pm = ProvenanceManager(storage_path="~/.semantica/prov.db")
+db_path = os.path.expanduser("~/.semantica/prov.db")   # storage_path is passed to
+os.makedirs(os.path.dirname(db_path), exist_ok=True)   # sqlite3.connect() unexpanded
+pm = ProvenanceManager(storage_path=db_path)
 history = pm.revision_history(node_id)
 log     = pm.audit_log(since="2026-01-01")
 ```
