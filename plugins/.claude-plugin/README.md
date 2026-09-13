@@ -8,7 +8,7 @@ Semantica ships a shared plugin bundle under `plugins/` that works across every 
 
 ## Platform Plugins
 
-Semantica provides a dedicated plugin for each platform. Every plugin shares the same `skills/`, `agents/`, and `hooks/` bundle — only the manifest format differs.
+Semantica provides a dedicated plugin for each platform. Every plugin shares the same `skills/`, `agents/`, and `hooks/` bundle — only the manifest format differs. Exception: the pi plugin (`.pi-plugin/`) loads only the `skills/` bundle via the root `package.json` manifest; pi discovers skills natively and reaches agents/hooks workflows through them.
 
 | # | Platform | Plugin Folder | Setup |
 |---|----------|--------------|-------|
