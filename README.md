@@ -1208,47 +1208,47 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <th colspan="5" align="left">MCP Server + Plugin</th>
 </tr>
 <tr>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
 <strong>Claude Code</strong><br/>
 <sub>Skills · agents · hooks</sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://cursor.com"><img src="https://www.freelogovectors.net/wp-content/uploads/2025/06/cursor-logo-freelogovectors.net_.png" alt="Cursor" width="48" height="48" /></a><br/>
 <strong>Cursor</strong><br/>
 <sub>Skills · agents</sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex CLI" width="48" height="48" /></a><br/>
 <strong>Codex CLI</strong><br/>
 <sub>Skills · agents</sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://pi.dev"><img src="https://github.com/earendil-works.png?size=120" alt="pi" width="48" height="48" /></a><br/>
 <strong>pi</strong><br/>
 <sub>Skills · <a href="plugins/.pi-plugin/">plugin</a></sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://windsurf.com"><img src="https://exafunction.github.io/public/brand/windsurf-black-symbol.svg" alt="Windsurf" width="48" height="48" /></a><br/>
 <strong>Windsurf</strong><br/>
 <sub><a href="plugins/.windsurf-plugin/">plugin</a></sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://github.com/cline/cline"><img src="https://github.com/cline.png?size=120" alt="Cline" width="48" height="48" /></a><br/>
 <strong>Cline</strong><br/>
 <sub><a href="plugins/.cline-plugin/">plugin</a></sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://github.com/continuedev/continue"><img src="https://github.com/continuedev.png?size=120" alt="Continue" width="48" height="48" /></a><br/>
 <strong>Continue</strong><br/>
 <sub><a href="plugins/.continue-plugin/">plugin</a></sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="https://github.com/microsoft/vscode"><img src="https://github.com/microsoft.png?size=120" alt="VS Code" width="48" height="48" /></a><br/>
 <strong>VS Code</strong><br/>
 <sub><a href="plugins/.vscode-plugin/">plugin</a></sub>
 </td>
-<td align="center" width="12.5%">
+<td align="center" width="11.1%">
 <a href="integrations/openclaw/"><img src="https://github.com/openclaw.png?size=120" alt="OpenClaw" width="48" height="48" /></a><br/>
 <strong>OpenClaw</strong><br/>
 <sub>MCP + <a href="integrations/openclaw/">plugin</a></sub>
