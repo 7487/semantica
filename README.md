@@ -1195,7 +1195,7 @@ Start with `semantica`, verify with `doctor`, build a graph, and explore the com
 
 ## Integrations
 
-Native plugin bundles for Claude Code, Cursor, Codex, Windsurf, Cline, Continue, VS Code, and OpenClaw; a full-featured MCP server for any MCP-compatible client; a comprehensive REST API; and first-class Agno, CrewAI, and LangChain support for agentic frameworks. Every major LLM provider is already supported via `semantica.llms` and LiteLLM: OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Azure, Bedrock, Ollama, DeepSeek, HuggingFace, and more.
+Native plugin bundles for Claude Code, Cursor, Codex, Windsurf, Cline, Continue, VS Code, OpenClaw, and pi; a full-featured MCP server for any MCP-compatible client; a comprehensive REST API; and first-class Agno, CrewAI, and LangChain support for agentic frameworks. Every major LLM provider is already supported via `semantica.llms` and LiteLLM: OpenAI, Anthropic, Gemini, Mistral, Llama, Groq, Cohere, Azure, Bedrock, Ollama, DeepSeek, HuggingFace, and more.
 
 MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 
@@ -1204,7 +1204,7 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 
 <table>
 <tr>
-<th colspan="3" align="left">Native Plugin Bundle</th>
+<th colspan="4" align="left">Native Plugin Bundle</th>
 <th colspan="5" align="left">MCP Server + Plugin</th>
 </tr>
 <tr>
@@ -1247,6 +1247,11 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <a href="integrations/openclaw/"><img src="https://github.com/openclaw.png?size=120" alt="OpenClaw" width="48" height="48" /></a><br/>
 <strong>OpenClaw</strong><br/>
 <sub>MCP + <a href="integrations/openclaw/">plugin</a></sub>
+</td>
+<td align="center" width="12.5%">
+<a href="https://pi.dev"><img src="https://github.com/earendil-works.png?size=120" alt="pi" width="48" height="48" /></a><br/>
+<strong>pi</strong><br/>
+<sub>Skills · <a href="plugins/.pi-plugin/">plugin</a></sub>
 </td>
 </tr>
 <tr>
