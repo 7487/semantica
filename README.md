@@ -1224,6 +1224,11 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <sub>Skills · agents</sub>
 </td>
 <td align="center" width="12.5%">
+<a href="https://pi.dev"><img src="https://github.com/earendil-works.png?size=120" alt="pi" width="48" height="48" /></a><br/>
+<strong>pi</strong><br/>
+<sub>Skills · <a href="plugins/.pi-plugin/">plugin</a></sub>
+</td>
+<td align="center" width="12.5%">
 <a href="https://windsurf.com"><img src="https://exafunction.github.io/public/brand/windsurf-black-symbol.svg" alt="Windsurf" width="48" height="48" /></a><br/>
 <strong>Windsurf</strong><br/>
 <sub><a href="plugins/.windsurf-plugin/">plugin</a></sub>
@@ -1247,11 +1252,6 @@ MCP setup takes 30 seconds — see [MCP Server](#mcp-server) below.
 <a href="integrations/openclaw/"><img src="https://github.com/openclaw.png?size=120" alt="OpenClaw" width="48" height="48" /></a><br/>
 <strong>OpenClaw</strong><br/>
 <sub>MCP + <a href="integrations/openclaw/">plugin</a></sub>
-</td>
-<td align="center" width="12.5%">
-<a href="https://pi.dev"><img src="https://github.com/earendil-works.png?size=120" alt="pi" width="48" height="48" /></a><br/>
-<strong>pi</strong><br/>
-<sub>Skills · <a href="plugins/.pi-plugin/">plugin</a></sub>
 </td>
 </tr>
 <tr>
@@ -1448,7 +1448,7 @@ curl "http://localhost:8000/api/graph/node/acme_corp/neighbors?depth=2"
 
 **Specialized agents:** `kg-assistant` · `decision-advisor` · `explainability`
 
-Bundles for Claude Code, Cursor, Codex, Windsurf, Cline, Continue, VS Code, and OpenClaw in [`plugins/`](plugins/).
+Bundles for Claude Code, Cursor, Codex, pi, Windsurf, Cline, Continue, VS Code, and OpenClaw in [`plugins/`](plugins/).
 
 ---
 
