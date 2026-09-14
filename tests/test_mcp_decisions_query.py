@@ -117,18 +117,22 @@ class TestMCPQueryDecisions(unittest.TestCase):
 
     @patch("semantica_mcp.mcp.tools.decisions.get_graph")
     def test_query_with_category_and_outcome(self, mock_get_graph):
-        """Verify natural language query passes category and filters outcome."""
+        """Verify natural language query passes category and filters outcome.
+
+        find_similar_decisions()/find_precedents_by_scenario() wrap each match as
+        {"decision": {...}, "similarity": ...} — the mock must reflect that real
+        shape, not the flat find_nodes() shape, or the test can't catch a
+        regression in the wrapper-unwrapping logic.
+        """
         mock_graph = MagicMock()
         mock_graph.find_similar_decisions.return_value = [
             {
-                "id": "dec_1",
-                "type": "decision",
-                "metadata": {"category": "infra", "outcome": "approved"},
+                "decision": {"id": "dec_1", "category": "infra", "outcome": "approved"},
+                "similarity": 0.9,
             },
             {
-                "id": "dec_2",
-                "type": "decision",
-                "metadata": {"category": "infra", "outcome": "rejected"},
+                "decision": {"id": "dec_2", "category": "infra", "outcome": "rejected"},
+                "similarity": 0.8,
             },
         ]
         mock_get_graph.return_value = mock_graph
@@ -141,13 +145,57 @@ class TestMCPQueryDecisions(unittest.TestCase):
                 "limit": 5,
             }
         )
+        # An outcome filter is present, so the handler must over-fetch (limit * 5)
+        # before filtering rather than asking the graph for only `limit` results.
         mock_graph.find_similar_decisions.assert_called_once_with(
             "database migration",
             category="infra",
-            max_results=5,
+            max_results=25,
         )
         self.assertEqual(res["count"], 1)
-        self.assertEqual(res["decisions"][0]["id"], "dec_1")
+        self.assertEqual(res["decisions"][0]["decision"]["id"], "dec_1")
+
+    @patch("semantica_mcp.mcp.tools.decisions.get_graph")
+    def test_query_outcome_filter_does_not_drop_lower_ranked_matches(
+        self, mock_get_graph
+    ):
+        """Regression: a matching decision ranked below the requested limit must
+        not be dropped by truncating to `limit` before the outcome filter runs.
+        """
+        candidates = [
+            {
+                "decision": {
+                    "id": f"dec_{i}",
+                    "category": "infra",
+                    "outcome": "rejected",
+                },
+                "similarity": 1.0 - i * 0.01,
+            }
+            for i in range(5)
+        ] + [
+            {
+                "decision": {
+                    "id": "dec_match",
+                    "category": "infra",
+                    "outcome": "approved",
+                },
+                "similarity": 0.5,
+            }
+        ]
+
+        def fake_find_similar_decisions(query, category=None, max_results=10):
+            # Mirrors the real graph: sort/slice happens inside the backend.
+            return candidates[:max_results]
+
+        mock_graph = MagicMock()
+        mock_graph.find_similar_decisions.side_effect = fake_find_similar_decisions
+        mock_get_graph.return_value = mock_graph
+
+        res = handle_query_decisions(
+            {"query": "db change", "outcome": "approved", "limit": 3}
+        )
+        self.assertEqual(res["count"], 1)
+        self.assertEqual(res["decisions"][0]["decision"]["id"], "dec_match")
 
     @patch("semantica_mcp.mcp.tools.decisions.get_graph")
     def test_query_no_match_returns_empty_list(self, mock_get_graph):

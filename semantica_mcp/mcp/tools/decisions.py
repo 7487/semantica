@@ -109,18 +109,27 @@ def handle_query_decisions(args: dict) -> dict:
     try:
         graph = get_graph()
         if query:
+            # find_similar_decisions() sorts and truncates to max_results before
+            # returning, so when an outcome filter is also applied we must
+            # over-fetch first — otherwise a matching decision ranked just
+            # below the requested limit is silently dropped.
+            fetch_limit = limit * 5 if outcome_filter else limit
             results = graph.find_similar_decisions(
                 query,
                 category=category or None,
-                max_results=limit,
+                max_results=fetch_limit,
             )
             decisions = results if isinstance(results, list) else list(results)
             if outcome_filter:
+                # Each result wraps the decision as {"decision": {...}, "similarity": ...},
+                # so the outcome must be read from the nested decision, not the wrapper.
                 decisions = [
                     d
                     for d in decisions
-                    if _get_decision_field(d, "outcome") == outcome_filter
+                    if _get_decision_field(d.get("decision", d), "outcome")
+                    == outcome_filter
                 ]
+            decisions = decisions[:limit]
         else:
             nodes = graph.find_nodes(node_type="decision")
             decisions = list(nodes)
